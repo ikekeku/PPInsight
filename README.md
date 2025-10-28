@@ -56,3 +56,6 @@ Put code and examples in this GitHub repo and update `README.md`, `.ipynb` files
 Biopython Entrez guide: [https://biopython.org/wiki/Entrez](https://biopython.org/wiki/Entrez). RCSB API docs: [https://data.rcsb.org/](https://data.rcsb.org/). DockQ: [https://github.com/bjornwallner/DockQ](https://github.com/bjornwallner/DockQ). D3: [https://d3js.org/](https://d3js.org/).
 
 ---
+
+###
+Walter A. - 
