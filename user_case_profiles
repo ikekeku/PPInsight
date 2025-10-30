@@ -1,5 +1,26 @@
 # User Case Profiles 
 
+<<<<<<< HEAD
 Stella is an undergrad in the last year of her biochemistry major working in a lab that studies PPIs. She wants to compare her models to previous work in the literature for her senior thesis. Stella wants a streamlined tool that won't take too much time to use since she is already busy with her coursework. Her protein knowledge is up to the level of a biochem BS, but she has very little familiarity with code outside of the specialized programs that she uses for computational PPI research.
 
 Gustav is an industry research scientist. He will use the software to author a metaanalysis on computational PPI research. He wants a great deal of flexibility and plenty of features and doesn't mind if it takes a while as long as he gets reliable, innovative results. He has a PhD in bioinformatics and is very familiar with Python, R, and bash.
+=======
+
+<<<<<<< HEAD
+
+
+
+
+
+
+
+
+
+Huey is a graduate student. He wants to create FASTA files for a list of proteins his lab is researching. He wants a fast and efficient way to obtain these files without spending hours searching for every single one. His project requires that he's knowledgeable in protein metadata.
+Ruth is an undergraduate student. She is interested in computational modeling for proteins, as she's heard a lot about AlphaFold and is interested in protein complex design. She wants to know the typical outputs of these models, and how they vary between each other. She's completely new to the field and is only familiar with a few proteins.
+
+=======
+### Walter's
+Ana is a structural biology graduate student researcher. She wants to predict protein-protein interactions (PPIs) between proteins of interests in her set of PDB files. Ana prefers to use PyMol to visualize her structures. Ana does not want to spend too much on searching for the right PPI tailored to her specific research question. Her background is laboratory-oriented, and she doesn't know the first thing about programming.
+>>>>>>> d310a82e92c6b2dd841199fa637be2e9817b55f6
+>>>>>>> origin/main
