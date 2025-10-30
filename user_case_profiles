@@ -1,2 +1,5 @@
 # User Case Profiles 
 
+Stella is an undergrad in the last year of her biochemistry major working in a lab that studies PPIs. She wants to compare her models to previous work in the literature for her senior thesis. Stella wants a streamlined tool that won't take too much time to use since she is already busy with her coursework. Her protein knowledge is up to the level of a biochem BS, but she has very little familiarity with code outside of the specialized programs that she uses for computational PPI research.
+
+Gustav is an industry research scientist. He will use the software to author a metaanalysis on computational PPI research. He wants a great deal of flexibility and plenty of features and doesn't mind if it takes a while as long as he gets reliable, innovative results. He has a PhD in bioinformatics and is very familiar with Python, R, and bash.
