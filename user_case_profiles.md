@@ -5,10 +5,7 @@ Shelly is a researcher that is in the field of engineering protein sensors in wh
 
 Charles is a graduate student trying to run a meta analysis evaluating which protein-protein interactions are more and less consistently represented by protein modeling platforms. He is trying to identify bias of how different proteins are modeled based on the according field. Charles wants a very clear metric of the discrepancy of how different modeling platforms represent protein-protein interactions. He is not familiar at all with FASTA files nor the biological compoenents, rather he wants to evaluate protein modeling from a meta analysis point of view. However, he understands programming and data analysis quite well. 
 
-
-
 ## Walter's User Case Profile
-
 Ana is a structural biology graduate student researcher. She wants to predict protein-protein interactions (PPIs) between proteins of interests in her set of PDB files. Ana prefers to use PyMol to visualize her structures. Ana does not want to spend too much on searching for the right PPI tailored to her specific research question. Her background is laboratory-oriented, and she doesn't know the first thing about programming.
 
 ## Ike's User Case Profile
@@ -22,3 +19,6 @@ Adam is an "independant researcher." He is interested in machine learning. He wa
 Stella is an undergrad in the last year of her biochemistry major working in a lab that studies PPIs. She wants to compare her models to previous work in the literature for her senior thesis. Stella wants a streamlined tool that won't take too much time to use since she is already busy with her coursework. Her protein knowledge is up to the level of a biochem BS, but she has very little familiarity with code outside of the specialized programs that she uses for computational PPI research.
 
 Gustav is an industry research scientist. He will use the software to author a metaanalysis on computational PPI research. He wants a great deal of flexibility and plenty of features and doesn't mind if it takes a while as long as he gets reliable, innovative results. He has a PhD in bioinformatics and is very familiar with Python, R, and bash.
+
+## Maya's user case profiles:
+Patricia is a grad student, she can code to some extent and use libraries available online, but she is not too comfortable with handeling technical issues, data formating, installations and bugs. She needs to know proteins affinities but she doesn't know which model is best for her use and she puts off cloning 5 different model and instead perfects her lab appartus, all while while the though of her procrastination in lurcking in the dark corner of her thoughts. She wishes to have a tool to determine which model to use so she can resume her anxity in differnt areas. 
