@@ -1,7 +1,11 @@
 # User Case Profiles 
 
 Rita's User Case Profile: 
-Researchers that are in the field of engineering protein sensors in which they need to use a model for molecular docking. These researchers want to evaluate which model will be best to use for their user case and see if there is any discrepancy amongst software tools. These researchers want an easy way to evaluate different models within a reasonable timeline. They are very technical but some researchers may be less fluent in the 'dry lab' sector having spent most of their expertise in the wet lab. 
+Shelly is a researcher that is in the field of engineering protein sensors in which they need to use a model for molecular docking. Shelly wants to evaluate which model will be best to use for their user case and see if there is any discrepancy amongst software tools. Shelly wants an easy way to evaluate different models within a reasonable timeline. They are very technical but Shelly is a little less fluent in the 'dry lab' sector having spent most of their expertise in the wet lab. 
+
+Charles is a graduate student trying to run a meta analysis evaluating which protien-protein interactions are more and less consistently represented by protein modeling platforms. He is trying to identify bias of how different proteins are modeled based on the according field. Charles wants a very clear metric of the discrepancy of how different modeling platforms represent protein-protein interactions. He does is not familiar at all with FASTA files and more of the biological compoenents, rather he wants to evaluate protein modeling from a meta analysis point of view. However, he understands programming and data analysis quite well. 
+
+
 
 Walter's User Case Profile:
 
