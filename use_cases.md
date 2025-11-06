@@ -1,5 +1,8 @@
 # This is the document for use cases that will be utilized by PPI 
 
+## Describe what are the inputs and outputs, and how are the inputs transformed into outputs 
+
+
 SETUP 
 - Accessing a remote server (HYAK?)  
 
