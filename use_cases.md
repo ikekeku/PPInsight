@@ -6,6 +6,7 @@ SETUP
 - Interpreting a protein name and pulling FASTA files from the internet
 - Taking in a FASTA file and outputting a sequence (?) 
 - Save the FASTA files of multiple proteins in one folder
-- Taking the designated files and putting them into models to run
+- Taking the designated FASTA files and putting them into models to run
+- Have a menu of differnt models that you can choose from, run only on the specified models chose 
 - Output of the model result and keep as a value in your local server 
   
