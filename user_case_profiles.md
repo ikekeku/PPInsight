@@ -8,6 +8,8 @@ Charles is a graduate student trying to run a meta analysis evaluating which pro
 ## Walter's User Case Profile
 Ana is a structural biology graduate student researcher. She wants to predict protein-protein interactions (PPIs) between proteins of interests in her set of PDB files. Ana prefers to use PyMol to visualize her structures. Ana does not want to spend too much on searching for the right PPI tailored to her specific research question. Her background is laboratory-oriented, and she doesn't know the first thing about programming.
 
+Sam is the CEO of a start-up biotech company that designs sensor antibody proteins to detect fentanyl in patients' blood and urine samples. They are looking for PPI software that is tailored to accurately predicting how antibody complexes interact with molecules like fentanyl. Using our tool, they hope to input several antibody+fentanyl complexes across different PPIs and see which ones output the highest scores and why. They are an experienced programmer, but have to meet deadlines and need a high-throughput tool to determine what models work best for their many protein structures.
+
 ## Ike's User Case Profile
 Huey is a graduate student. He wants to create FASTA files for a list of proteins his lab is researching. He wants a fast and efficient way to obtain these files without spending hours searching for every single one. His project requires that he's knowledgeable in protein metadata.
 
