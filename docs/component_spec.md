@@ -4,15 +4,22 @@
 
 ### 1. Database Search
 - **What it does:** Retrieves and organizes protein data.  
-- **Inputs:** Protein name (or IDs), species, optional parameters (e.g., number of search results found).  
+- **Inputs:** Protein name (or IDs), species, `Entrez.email`, optional parameters (e.g., number of search results found). Most inputs are strings.  
 - **Outputs:** `*.fasta` and/or `*.pdb` files, metadata table,  organized folders.
+- **Use of other components:** Relies on BioPython and the Entrez and UniProt databases for getting sequences, and RCSB and/or AlphaFold for structure files.
 
 ### 2. Model Selector
-- **What it does:** Pick protein-protein interaction (PPI) models to run.  
-- **Inputs:** Model of choice, chosen through a dropdown menu.  
+- **What it does:** Picks protein-protein interaction (PPI) models to run.  
+- **Inputs:** Model of choice, chosen through a dropdown menu.
 - **Outputs:** A job request to run proteins of interest through selected models.
 
-### 3. Visualization Manager
+### 3. Model Evaluator
+- **What it does:** Runs the chosen model on a pair of proteins and calculates scores that quantify the protein interaction.
+- **Inputs:** The request output by the model selector, `.fasta` and `.pdb` files output by the database search.
+- **Outputs:** For each model run, produces a delimited text file with column headers for each protein and for the score value for each score type.
+- **Use of other components:** Requires inputs from the database search and model selector components. May require use of computing cluster (Hyak) to run computationally expensive models.
+
+### 4. Visualization Manager
 - **What it does:** Generates interactive plots comparing model scores.  
 - **Inputs:** Delimited text file (e.g., `scores.tsv`) and user filters (protein pair, metric, models).  
 - **Outputs:** Vega-Lite / Altair visualizations, exportable as PNG, SVG, or PDF. Option to export raw spreadsheet values instead (e.g., download `scores.tsv`).
