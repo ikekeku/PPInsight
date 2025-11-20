@@ -29,6 +29,10 @@ Testing and edge cases:
 ## Task 2 — run PPI predictors on file pairs and store scores  
 Once you’ve retrieved the protein files in Task 1, here we swap from “getting the data” to “using models” to predict how strongly two proteins interact and then save those predictions to compare models later. You don’t need to code every model from scratch — instead, make small Python functions (“wrappers”) that take two protein files and return the model’s predicted score. This helps keep your code organized and reusable. This task wraps 2–3 PPI prediction approaches and produces a single `scores.tsv` (or CSV) in the same repo. For each protein pair and model run, write one or more score rows with clear headers (`proteinA, proteinB, model, score_type, score_value, output_path, timestamp`). Start with three complementary predictors: can include one of each or some other combination of a sequence-based model (fast local or embedding-based), a docking server (ClusPro or HADDOCK) for structural docking, and a structure-scoring tool (DockQ) for pose quality.
 
+Selected Models (of interest):
+- **Haddock** (https://github.com/haddocking; https://pmc.ncbi.nlm.nih.gov/articles/PMC3966529/)
+- **AutoDock Vina** (https://github.com/ccsb-scripps/AutoDock-Vina; https://pubs.acs.org/doi/10.1021/acs.jcim.1c00203)
+
 Key implementation notes:
 - For each protein pair, you’ll run models that predict how well two proteins fit or “dock” together — meaning how their 3D structures might align to form a stable complex. The output is a numerical score that tells you how good that fit is.
 - Make lightweight wrappers so `score_pair(a_files, b_files, model_name)` is non-repetitive and logs raw outputs. See ClusPro help and usage: [https://cluspro.org/help.php](https://cluspro.org/help.php) and HADDOCK docs: [https://wenmr.science.uu.nl/haddock2.4/](https://wenmr.science.uu.nl/haddock2.4/).  
