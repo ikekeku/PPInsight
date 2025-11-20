@@ -9,6 +9,7 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 - Rita Kamenetskiy
 - Fiona McLary: Physics PhD student developing x-ray spectroscopy techniques at the University of Washington
 - Walter Avila
+- Maya Gatt Harari
 
 ## Task 1 — fetch proteins by search term and save files  
 ### Walter will tackle this
