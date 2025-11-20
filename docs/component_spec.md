@@ -26,10 +26,15 @@
 
 ## Interactions to accomplish Use Case 1 (refer to functional_spec.md)
 1. User specifies a protein pair.  
-2. A database search is conducted to fetch and store FASTA/PDB files.  
-3. User selects models to run and results are appended to `scores.tsv`.  
-4. The visualization manager reads `scores.tsv` and renders a chart (e.g., x = model, y = score).  
-5. User inspects plot and exports results.
+2. A database search is conducted to fetch and store FASTA and PDB files.
+4. User selects models to run
+5. For each selected model:
+   - Input data is converted into the model’s required format.
+   - Necessary configuration files are generated.
+   - Jobs are dispatched to Hyak if parallel computation is required.
+8. Results from the model runs are appended to `scores.tsv`.  
+9. The visualization manager reads `scores.tsv` and renders a chart (e.g., x = model, y = score).  
+10. User inspects plot and exports results.
 
 ## Preliminary plan (priority)
 - Task 1: fetch proteins by search term and save files (i.e., implement database search)
