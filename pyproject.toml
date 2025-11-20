@@ -6,7 +6,7 @@ name = "PPI"
 version = "0.0.0"
 decription = "This is a package to pull protein data from FASTA and Uniport databases, run them through multiple modeling tools and give a final visualization to compare between models" 
 readme = "README.md" 
-license = {}
+license = { file = "LICENSE" }
 classifiers =
 requires-python = 
 dependencies = 
