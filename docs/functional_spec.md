@@ -28,6 +28,10 @@ This project builds a tool to benchmark protein–protein interaction (PPI) pred
 - **Objective:** Determine which PPI model gives the best score for a given pair (e.g., proteinA-proteinB).
 - **Interaction:** User enters protein names → system fetches FASTA/PDB → user selects 2–3 models → system runs models → writes scores to table → shows plot of scores per model
 
-## Use Case 2 - Curate protein data
+## Use Case 2 - Compare models in bulk, for many protein pairs
+- **Objective:** Determine which PPI model gives the best score for many pairs (e.g., proteinA-proteinB).
+- **Interaction:** User uploads CSV of pairs of proteins → system fetches FASTA/PDB → user selects 2–3 models → system runs models → writes scores to table → provides statistic of the different models per pair.
+  
+## Use Case 3 - Curate protein data
 - **Objective:** Generate FASTA / PDB files for a batch of proteins.  
 - **Interaction:** User uploads CSV of pairs → system fetchs FASTA/PDB file 
