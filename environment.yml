@@ -9,10 +9,6 @@ dependencies:
   - altair
   - requests
   - Biopython
-  - csv
-  - os
-  - sys
   - pytest
   - pytest-cov
-  - io
 prefix: /home/mayagh/miniforge3
