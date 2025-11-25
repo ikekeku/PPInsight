@@ -32,16 +32,22 @@ Once you’ve retrieved the protein files in Task 1, here we swap from “gettin
 
 Selected Models (of interest):
 - **Haddock** (https://github.com/haddocking; https://pmc.ncbi.nlm.nih.gov/articles/PMC3966529/)
-- **AutoDock Vina** (https://github.com/ccsb-scripps/AutoDock-Vina; https://pubs.acs.org/doi/10.1021/acs.jcim.1c00203)
+- **Rosetta** (https://github.com/RosettaCommons/rosetta; https://rosettacommons.org)
 
 Key implementation notes:
 - For each protein pair, you’ll run models that predict how well two proteins fit or “dock” together — meaning how their 3D structures might align to form a stable complex. The output is a numerical score that tells you how good that fit is.
-- Make lightweight wrappers so `score_pair(a_files, b_files, model_name)` is non-repetitive and logs raw outputs. See ClusPro help and usage: [https://cluspro.org/help.php](https://cluspro.org/help.php) and HADDOCK docs: [https://wenmr.science.uu.nl/haddock2.4/](https://wenmr.science.uu.nl/haddock2.4/).  
-- **Docking quality score (DockQ)** – a value from 0 to 1 that rates how well two proteins’ shapes align after docking. Higher = better interaction. [https://github.com/bjornwallner/DockQ](https://github.com/bjornwallner/DockQ)  
-- **RMSD (Root Mean Square Deviation)** – measures how far apart the predicted protein complex is from a reference complex. Lower = better accuracy. [https://en.wikipedia.org/wiki/Root-mean-square_deviation_of_atomic_positions](https://en.wikipedia.org/wiki/Root-mean-square_deviation_of_atomic_positions)  
-- **E-value** – used in sequence-based predictions (like BLAST). It estimates how likely a match happened by chance. Lower = more significant. [https://www.ncbi.nlm.nih.gov/BLAST/tutorial/Altschul-1.html](https://www.ncbi.nlm.nih.gov/BLAST/tutorial/Altschul-1.html)
-- You’ll want to save multiple types of scores (e.g., DockQ, RMSD, E-value) for each prediction so that later you can visualize and compare models across these different performance metrics.
-- Store multiple `score_type` values per run (e.g., `dockq`, `rmsd`, `evalue`) so visualizations can pick which metric to display.
+- Make lightweight wrappers so `score_pair(a_files, b_files, model_name)` is non-repetitive and logs raw outputs. See ClusPro help and usage: [https://cluspro.org/help.php](https://cluspro.org/help.php) and HADDOCK docs: [https://wenmr.science.uu.nl/haddock2.4/](https://wenmr.science.uu.nl/haddock2.4/).
+
+**CAPRI Metrics** (https://www.sciencedirect.com/science/article/pii/S0022283624001359, https://link.springer.com/article/10.1186/s12859-024-05991-4)
+ - **Docking quality score (DockQ)** – a value from 0 to 1 that rates how well two proteins’ shapes align after docking. Higher = better interaction. [https://github.com/bjornwallner/DockQ](https://github.com/bjornwallner/DockQ)  
+ - **RMSD (Root Mean Square Deviation)** – measures how far apart the predicted protein complex is from a reference complex. Lower = better accuracy. [https://en.wikipedia.org/wiki/Root-mean-square_deviation_of_atomic_positions](https://en.wikipedia.org/wiki/Root-mean-square_deviation_of_atomic_positions)  
+ - **Fraction of native contacts (Fnat score)** - a measure of the accuracy of a predicted protein-protein interaction model. It is calculated by dividing the number of correctly predicted residue contacts in the docked model by the total number of contacts in the original, native complex. (https://en.wikipedia.org/wiki/Native_contact)
+
+**Other values (may be normalized)**, such as:
+ - **E-value** – used in sequence-based predictions (like BLAST). It estimates how likely a match happened by chance. Lower = more significant. [https://www.ncbi.nlm.nih.gov/BLAST/tutorial/Altschul-1.html](https://www.ncbi.nlm.nih.gov/BLAST/tutorial/Altschul-1.html)
+
+You’ll want to save multiple types of scores (e.g., DockQ, RMSD, E-value) for each prediction so that later you can visualize and compare models across these different performance metrics.
+Store multiple `score_type` values per run (e.g., `dockq`, `rmsd`, `evalue`) so visualizations can pick which metric to display.
 
 Testing and reproducibility:
 - Create simple test files (like three known interacting protein pairs in a pairs.csv file).
