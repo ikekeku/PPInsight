@@ -5,5 +5,6 @@ cd examples/docking-protein-protein
 haddock3 docking-protein-protein-test.cfg
 ```
 The parent directories (e.g., '/examples' and '/docking-protein-protein') are not included in this directory.
+**The values we want are in the 'analysis' directory, stored as '.tsv' files.**
 
 Intro to HADDOCK3's workflow (very helpful for understanding/creating configuration files, HADDOCK3's input) - https://github.com/haddocking/haddock3/blob/main/docs/intro.md
