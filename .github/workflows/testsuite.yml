@@ -1,6 +1,9 @@
 name: Tests
 on: [push, pull_request]
 
+name: Lint with Ruff
+run : ruff check
+
 jobs:
   tests:
     env:
