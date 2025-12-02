@@ -33,6 +33,7 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="pdb
             sequences_data.append(response.text)
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Invalid UniProt accession ID: {accession_id}") from e
+            raise ValueError(f"Could not fetch FASTA for {accession_id}. Error: {e}")
 
     full_fasta_string = "".join(sequences_data)
 
