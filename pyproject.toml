@@ -44,4 +44,7 @@ select = [
     # "SIM", # flake8-simplify: check for code simplifications
     # "UP", # pyupgrade: check for syntax improvments in new python versions
     # "C90", # McCabe complexity
-# ]
+    ]
+
+[tool.ruff]
+line-length = 88
