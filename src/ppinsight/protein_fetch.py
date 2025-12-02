@@ -7,6 +7,7 @@ import os
 import sys
 
 
+
 def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="pdb_files"):
     """
     Unified pipeline:
