@@ -11,4 +11,5 @@ dependencies:
   - Biopython
   - pytest
   - pytest-cov
+  - ruff
 prefix: /home/mayagh/miniforge3
