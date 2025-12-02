@@ -85,14 +85,3 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="pdb
             pdb_info[accession_id] = None
 
     return structured_data, pdb_info
-
-# Example usage: VEGFA (P15692)
-accession_list = ['P15692']
-structured_info, pdb_info = get_uniprot_data(accession_list, fasta_file="vegfa.fasta", csv_file="vegfa.csv")
-
-print("\nStructured Data:")
-for protein in structured_info:
-    print(protein)
-
-print("\nPDB Info:")
-print(pdb_info)
