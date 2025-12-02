@@ -2,6 +2,9 @@ import requests
 from Bio import SeqIO
 from io import StringIO
 from Bio.PDB import PDBList
+import csv
+import os 
+import sys
 
 
 def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="pdb_files"):
