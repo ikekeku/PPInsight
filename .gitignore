@@ -5,3 +5,9 @@
 Unit-tests.ipynb
 hw3README.md
 tests/test_entropy.py
+
+# Python cache and compiled files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.so
