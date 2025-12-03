@@ -1,5 +1,6 @@
 name: ppinsight
 channels:
+  - bioconda
   - conda-forge
 dependencies:
   - python=3.11
@@ -11,4 +12,10 @@ dependencies:
   - Biopython
   - pytest
   - pytest-cov
-prefix: /home/mayagh/miniforge3
+  - ruff
+  - mpi4py
+  - zlib
+  - haddock_biobb
+  - pip
+  - pip:
+    - lightdock

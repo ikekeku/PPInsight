@@ -33,6 +33,7 @@ Once you’ve retrieved the protein files in Task 1, here we swap from “gettin
 Selected Models (of interest):
 - **Haddock** (https://github.com/haddocking; https://pmc.ncbi.nlm.nih.gov/articles/PMC3966529/)
 - **Rosetta** (https://github.com/RosettaCommons/rosetta; https://rosettacommons.org)
+- **LightDock** (https://github.com/lightdock/lightdock; https://academic.oup.com/bioinformatics/article/34/1/49/4103399)
 
 Key implementation notes:
 - For each protein pair, you’ll run models that predict how well two proteins fit or “dock” together — meaning how their 3D structures might align to form a stable complex. The output is a numerical score that tells you how good that fit is.

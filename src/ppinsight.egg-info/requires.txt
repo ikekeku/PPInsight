@@ -1,0 +1,4 @@
+requests>=2.25.0
+biopython>=1.79
+tenacity>=8.0.1
+matplotlib>=3.5.0

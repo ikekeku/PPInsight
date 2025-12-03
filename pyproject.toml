@@ -1,12 +1,52 @@
-[build system]
-requires = []
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "PPI"
-version = "0.0.0"
-decription = "This is a package to pull protein data from FASTA and Uniport databases, run them through multiple modeling tools and give a final visualization to compare between models" 
-readme = "README.md" 
+name = "ppinsight"
+version = "0.0.1"
+description = "This is a package to pull protein data from FASTA and Uniport databases, run them through multiple modeling tools and give a final visualization to compare between models"
+authors = [
+    { name = "Rita Kamenetskiy", email = "maka6830@uw.edu" },
+    { name = "Ike Keku" },
+    { name = "Fiona McLary" },
+    { name = "Walter Avila" },
+    { name = "Maya Gatt Harari" }
+]
+readme = "README.md"
 license = { file = "LICENSE" }
-classifiers =
-requires-python = 
-dependencies = 
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.25.0",
+    "biopython>=1.79",
+    "tenacity>=8.0.1",
+    "matplotlib>=3.5.0",
+    "haddock3",
+    "lightdock"
+]
+
+# Optional upgrades beyond the default ruff rules
+[tool.ruff.lint]
+select = [
+    "E", # pycodestyle: detect deviations from PEP8 rules
+    "W", # pycodestyle warnings: detect deviations from PEP8 suggestions
+    "F", # Pyflakes: detect code errors, potential bugs
+    "B", # flake8-bugbear: detect antipatterns that can lead to bugs
+    # "A", # flake8-builtins: detect overloading python builtins
+    # "N", # pep8-naming: detect deviations from PEP naming conventions
+    # "I", # isort: better import organization
+    # "D", # pydocstyle: check docstrings
+    # "C4", # flake8-comprehensions: check for code simplifications with comprehensions
+    # "SIM", # flake8-simplify: check for code simplifications
+    # "UP", # pyupgrade: check for syntax improvments in new python versions
+    # "C90", # McCabe complexity
+    ]
+
+[tool.ruff]
+line-length = 88
