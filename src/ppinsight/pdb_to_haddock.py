@@ -49,15 +49,26 @@ def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
 
 
 def copy_inputs(data_dir, rec, lig, ambig=None):
-    rec_dst = data_dir / Path(rec).name
-    lig_dst = data_dir / Path(lig).name
-    shutil.copy(rec, rec_dst)
-    shutil.copy(lig, lig_dst)
+        # Validate inputs and give helpful errors if files are missing
+    rec_path = Path(rec)
+    lig_path = Path(lig)
+    if not rec_path.exists():
+        raise FileNotFoundError(f"Receptor file not found: {rec}")
+    if not lig_path.exists():
+        raise FileNotFoundError(f"Ligand file not found: {lig}")
+
+    rec_dst = data_dir / rec_path.name
+    lig_dst = data_dir / lig_path.name
+    shutil.copy(str(rec_path), str(rec_dst))
+    shutil.copy(str(lig_path), str(lig_dst))
 
     ambig_dst = None
     if ambig:
-        ambig_dst = data_dir / Path(ambig).name
-        shutil.copy(ambig, ambig_dst)
+        ambig_path = Path(ambig)
+        if not ambig_path.exists():
+            raise FileNotFoundError(f"Ambiguous restraints file not found: {ambig}")
+        ambig_dst = data_dir / ambig_path.name
+        shutil.copy(str(ambig_path), str(ambig_dst))
 
     info("Copied input structures into data/ folder")
     return rec_dst, lig_dst, ambig_dst
