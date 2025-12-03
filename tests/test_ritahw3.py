@@ -16,6 +16,10 @@ accession_list_3 = ['P04637', 'P68871', 'Q8NEC1']
 
 def test_smoke_rita():
     """
+    author: mkamenetskiy
+    reviewer: wmavila
+    category: smoke test
+
     Simple smoke test to ensure function runs 
     """
     protein_fetch.get_uniprot_data(accession_list_simple, fasta_file="proteins.fasta", csv_file="protein")
@@ -24,6 +28,10 @@ def test_smoke_rita():
 
 def test_get_uniprot_data_p15692_structured():
     """
+    author: mkamenetskiy
+    reviewer: wmavila
+    category: one-shot test
+
     One-shot test with a known UniProt accession P15692 (VEGFA_HUMAN).
     Expected structured data should match exactly! 
     """
@@ -41,6 +49,10 @@ def test_get_uniprot_data_p15692_structured():
 
 def test_get_uniprot_data_p15692_pdbinfo():
     """
+    author: mkamenetskiy
+    reviewer: wmavila
+    category: one-shot test
+
     One-shot test using known UniProt accession P15692 (VEGFA_HUMAN).
     Expected PDB info should match exactly!
     """
@@ -52,18 +64,39 @@ def test_get_uniprot_data_p15692_pdbinfo():
 
 def test_nonexistent_protein():
     """
-    When get_uniprot_data is called with a protein that doesn't exist or that can't be downloaded, I want get_uniprot_data to do:
+    author: mkamenetskiy
+    reviewer: wmavila
+    category: edge test
+
+    When get_uniprot_data is called with a protein that doesn't exist or that 
+    can't be downloaded, I want get_uniprot_data to do:
     - Say that that protein ID was not correct within the Uniprot DataBase
     - I will want the function to stop and error out
         - raise some type of error saying that the value of the ID was bad
             - ValueError makes sense
-    - Even if there are other protein IDs that are correct, I want the function to stop
+    - Even if there are other protein IDs that are correct, I want the 
+    function to stop
     """
     with pytest.raises(ValueError, match="Could not fetch FASTA for"):
         protein_fetch.get_uniprot_data(["P000000000"])
 
 
+def test_uniprot_fasta_parsing_pattern():
+    """
+    author: mkamenetskiy
+    reviewer: wmavila
+    category: pattern test
 
+    This will be a pattern test to ensure the number of parsed records equals
+    the number of IDs that were provided.
+    """
+    def test(accession_ids):
+        structured_data, _ = protein_fetch.get_uniprot_data(accession_ids)
+        assert len(structured_data) == len(accession_ids)
+        for record in structured_data:
+            assert record["Sequence Length"] > 0  # Sequence shouldn't be empty!
+        return
 
-# edge test (1 point)
-# pattern test (1 point)
+    # Run for different sizes of accession lists
+    for accession_ids in [["P15692"], ["P15692", "P69905"], ["P15692","P69905","P68871"]]:
+        test(accession_ids)
