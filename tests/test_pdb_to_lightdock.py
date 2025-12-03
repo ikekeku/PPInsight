@@ -1,4 +1,5 @@
 """
+NOT AFFILIATED WITH HW3
 Tests for `pdb_to_lightdock.py` command construction.
 This test monkeypatches `run_command` so LightDock binaries are not invoked.
 """
