@@ -98,8 +98,11 @@ def test_edge_invalid_input_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError) as excinfo:
         pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="edge", run_haddock=False, base_root=str(work_root), method="haddock_runs")
+
+    # Ensure the error message includes the missing receptor filename for clarity
+    assert "missing_rec.pdb" in str(excinfo.value)
 
 
 def test_pattern_ncores_reflected_in_cfg(tmp_path, monkeypatch):
