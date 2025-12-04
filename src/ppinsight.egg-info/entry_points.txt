@@ -1,3 +1,0 @@
-[console_scripts]
-pdb_to_haddock = ppinsight.pdb_to_haddock:main
-pdb_to_lightdock = ppinsight.pdb_to_lightdock:main

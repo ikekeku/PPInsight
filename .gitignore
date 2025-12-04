@@ -4,7 +4,6 @@
 # Ignore local test artifacts and temporary homework files
 Unit-tests.ipynb
 hw3README.md
-tests/test_entropy.py
 
 # Python cache and compiled files
 __pycache__/
@@ -22,3 +21,6 @@ examples/ppinsight_data/output_files/
 
 # Ignore local scripts folder (runbooks, HPC scripts)
 scripts/
+
+# Build metadata / packaging artifacts
+src/ppinsight.egg-info/
