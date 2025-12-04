@@ -24,3 +24,7 @@ scripts/
 
 # Build metadata / packaging artifacts
 src/ppinsight.egg-info/
+
+# Cache and notebook checkpoints
+.pytest_cache/
+.ipynb_checkpoints/
