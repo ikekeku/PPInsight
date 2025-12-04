@@ -7,7 +7,7 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 # Team Members and Contributions
 - Ike Keku
 - Rita Kamenetskiy
-- Fiona McLary: Developed visualizer module
+- Fiona McLary: Developed visualizer module 
 - Walter Avila
 - Maya Gatt Harari
 
