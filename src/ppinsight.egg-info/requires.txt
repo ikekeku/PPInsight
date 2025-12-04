@@ -1,4 +1,11 @@
+numpy
+pandas
+matplotlib>=3.6.0
+altair
 requests>=2.25.0
 biopython>=1.79
 tenacity>=8.0.1
-matplotlib>=3.5.0
+pytest
+pytest-cov
+ruff
+lightdock

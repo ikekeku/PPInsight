@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.3"]
+requires = ["setuptools>=42.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -23,13 +23,22 @@ classifiers = [
 
 requires-python = ">=3.8"
 dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib>=3.6.0",
+    "altair",
     "requests>=2.25.0",
     "biopython>=1.79",
     "tenacity>=8.0.1",
-    "matplotlib>=3.5.0",
-    "haddock3",
+    "pytest",
+    "pytest-cov",
+    "ruff",
     "lightdock"
 ]
+
+[project.scripts]
+pdb_to_lightdock = "ppinsight.pdb_to_lightdock:main"
+pdb_to_haddock = "ppinsight.pdb_to_haddock:main"
 
 # Optional upgrades beyond the default ruff rules
 [tool.ruff.lint]

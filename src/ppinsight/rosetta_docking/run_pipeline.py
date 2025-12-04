@@ -5,8 +5,8 @@ This module provides a high-level interface for the complete docking workflow.
 """
 
 from pathlib import Path
-from .prepare import prepare_structures
-from .dock import run_docking, save_docked_structure
+from .prepare_structure import prepare_structures
+from .rosetta_dock import run_docking, save_docked_structure
 from .analyze import analyze_scores, print_top_scores, export_scores_to_csv
 
 
@@ -50,7 +50,13 @@ class DockingPipeline:
         """
         self.protein1_pdb = Path(protein1_pdb)
         self.protein2_pdb = Path(protein2_pdb)
+        if n_runs < 1:
+            raise ValueError("n_runs must be at least 1")
         self.n_runs = n_runs
+
+        if top_n < 1:
+            raise ValueError("top_n must be at least 1")
+        
         self.top_n = top_n
         self.relax = relax
         self.jump_distance = jump_distance

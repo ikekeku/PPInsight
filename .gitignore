@@ -1,2 +1,13 @@
 .DS_Store
 /images/.DS_Store
+
+# Ignore local test artifacts and temporary homework files
+Unit-tests.ipynb
+hw3README.md
+tests/test_entropy.py
+
+# Python cache and compiled files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.so

@@ -1,5 +1,5 @@
 """
-pdb_to_lightdock.ipynb
+pdb_to_lightdock.py
 -------------------
 Runs LightDock for a receptor-ligand pair.
 
@@ -11,12 +11,50 @@ Output folders:
     examples/ppinsight_data/output_files/lightdock_runs/<receptor>_vs_<ligand>/
 """
 
+from typing import Optional
+import argparse  # for CLI flags
 import glob     # to find files using wildcards
 import os        # for paths and directories
 import subprocess  # to run LightDock command-line tools
 import sys       # to read command-line arguments
-import argparse  # for CLI flags
 import shutil    # to copy files
+
+
+def _project_root():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+
+def resolve_input_path(path):
+    """Resolve an input path by returning it if it exists or searching the repo for the basename.
+
+    Accepts short names like '2UUY_rec' or '2UUY_rec.pdb' and returns the absolute path
+    of the first matching file found under the repository root.
+    """
+    if not path:
+        raise FileNotFoundError("Empty input path")
+
+    p = os.path.expanduser(path)
+    p = os.path.abspath(p)
+    if os.path.exists(p):
+        return p
+
+    # Search repo for basename (with and without .pdb)
+    base = os.path.basename(path)
+    candidates = [base]
+    if not base.lower().endswith('.pdb'):
+        candidates.append(base + '.pdb')
+
+    proj = _project_root()
+    for c in candidates:
+        pattern = os.path.join(proj, '**', c)
+        matches = glob.glob(pattern, recursive=True)
+        if matches:
+            found = os.path.abspath(matches[0])
+            print(f"Resolved '{path}' -> '{found}'")
+            return found
+
+    raise FileNotFoundError(f"Could not find input file '{path}' (searched repo {proj}).")
+
 
 
 def run_command(cmd, cwd=None):
@@ -188,18 +226,7 @@ def lightdock_pipeline(receptor_pdb, ligand_pdb,
     print("Docked models saved in:", os.path.join(working_dir, f"swarm_{swarm}"))
 
 
-if __name__ == "__main__":
-    
-    items = glob.glob("lightdock*") # find all files/folders starting with "lightdock"
-    items += glob.glob("swarm_*") # find all files/folders starting with "swarm_"
-    items += ["setup.json", "init"] # add specific files/folders to delete
-
-    for p in items: # iterate over all found items
-        if os.path.isdir(p): # if it's a directory, remove it and its contents
-            shutil.rmtree(p, ignore_errors=True) # ignore errors if directory doesn't exist
-        elif os.path.isfile(p): # if it's a file, remove it
-            os.remove(p)
-    
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Run LightDock for a receptor-ligand pair."
     )
@@ -208,14 +235,27 @@ if __name__ == "__main__":
     parser.add_argument("--swarms", type=int, default=None, help="Number of swarms (LightDock default if not set)")
     parser.add_argument("--glowworms", type=int, default=None, help="Number of glowworms (LightDock default if not set)")
     parser.add_argument("--steps", type=int, default=100, help="Number of LightDock steps (default: 100)")
-    parser.add_argument("--swarm-list", type=str, default=None, help="Comma-separated list of swarm indices to run (e.g. '0,1')")
+    parser.add_argument("--swarm-list", type=str, default="0", help="Comma-separated list of swarm indices to run (e.g. '0,1')")
     parser.add_argument("--cores", type=int, default=1, help="Number of CPU cores to use")
     parser.add_argument("--generate", action="store_true", help="If set, run lgd_generate_conformations.py at the end")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     receptor = args.receptor
     ligand = args.ligand
+    # Allow users to pass short basenames (e.g. '2UUY_rec' or '2UUY_rec.pdb').
+    # If the provided path doesn't exist, search the repository for a matching file.
+    try:
+        receptor = resolve_input_path(receptor)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
+        sys.exit(2)
+
+    try:
+        ligand = resolve_input_path(ligand)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
+        sys.exit(2)
     generate_models = args.generate
     swarms = args.swarms
     glowworms = args.glowworms
@@ -229,8 +269,25 @@ if __name__ == "__main__":
     # This will be:
     #   examples/ppinsight_data/output_files/lightdock_runs/<rec_vs_lig>/
     workdir = make_output_dir(receptor, ligand, method="lightdock_runs")
+    
+    print(f"\nCleaning previous LightDock outputs in: {workdir} (if any)")
+    items = glob.glob(os.path.join(workdir, "lightdock*")) # find all files/folders starting with "lightdock"
+    items += glob.glob(os.path.join(workdir, "swarm_*")) # find all files/folders starting with "swarm_"
+    items += [os.path.join(workdir, "setup.json"), os.path.join(workdir, "init")] # add specific files/folders to delete
 
-    # Run the LightDock pipeline with mostly default settings
+    file_count = folder_count = 0
+    for p in items: # iterate over all found items
+        if os.path.exists(p):
+            if os.path.isdir(p): # if it's a directory, remove it and its contents
+                shutil.rmtree(p, ignore_errors=True) # ignore errors if directory doesn't exist
+                folder_count += 1
+            elif os.path.isfile(p): # if it's a file, remove it
+                os.remove(p)
+                folder_count += 1
+    print(f"\nRemoved {file_count} files and {folder_count} folders.")
+
+    # Run the LightDock pipeline with mostly default settings    
+    print(f"\nRunning LightDock pipeline for:\n Receptor: {receptor}\n Ligand:   {ligand}\n Output dir: {workdir}\n")
     lightdock_pipeline(
         receptor,
         ligand,
@@ -242,3 +299,22 @@ if __name__ == "__main__":
         cores=cores,
         generate_models=generate_models,
     )
+
+    # -----------------------------
+    # Summary
+    # -----------------------------
+    summary = f"""
+    LightDock docking completed.
+    Run folder: {workdir}
+    Parameters used:
+    - Swarms: {swarms if swarms else 'default'}
+    - Glowworms: {glowworms if glowworms else 'default'}
+    - Steps: {steps}
+    - CPU cores: {cores}
+    Docked models (if generated) are in: {os.path.join(workdir, 'swarm_0')}
+    """
+    print(summary.strip())
+
+
+if __name__ == '__main__':
+    main()

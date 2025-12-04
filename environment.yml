@@ -1,15 +1,18 @@
 name: ppinsight
 channels:
-  - bioconda
   - conda-forge
+  - bioconda
+  - defaults
 dependencies:
   - python=3.11
-  - numpy
+  # vvv modern numpy compatible with many packages
+  - numpy>=1.24
   - pandas
-  - matplotlib
+  # vvv avoids very old matplotlib builds; conda-forge will provide compatible binaries
+  - matplotlib>=3.6
   - altair
   - requests
-  - Biopython
+  - biopython
   - pytest
   - pytest-cov
   - ruff

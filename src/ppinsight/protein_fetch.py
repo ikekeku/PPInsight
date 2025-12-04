@@ -2,6 +2,9 @@ import requests
 from Bio import SeqIO
 from io import StringIO
 from Bio.PDB import PDBList
+import csv
+import os 
+import sys
 
 
 def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="pdb_files"):
@@ -28,8 +31,8 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="pdb
             response.raise_for_status()
             sequences_data.append(response.text)
         except requests.exceptions.RequestException as e:
-            print(f"Warning: Could not fetch FASTA for {accession_id}. Error: {e}", file=sys.stderr)
-            continue
+            raise ValueError(f"Invalid UniProt accession ID: {accession_id}") from e
+            raise ValueError(f"Could not fetch FASTA for {accession_id}. Error: {e}")
 
     full_fasta_string = "".join(sequences_data)
 
