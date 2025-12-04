@@ -15,6 +15,39 @@ import os
 import subprocess
 import platform
 import shlex
+import glob
+from pathlib import Path
+
+
+def _project_root():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+
+def resolve_input_path(path: str) -> str:
+    """Resolve an input path by returning it if it exists or searching the repo for the basename.
+
+    Accepts short names like '2UUY_rec' or '2UUY_rec.pdb' and returns the absolute path
+    of the first matching file found under the repository root.
+    """
+    if not path:
+        raise FileNotFoundError("Empty input path")
+    p = os.path.expanduser(path)
+    p = os.path.abspath(p)
+    if os.path.exists(p):
+        return p
+    base = os.path.basename(path)
+    candidates = [base]
+    if not base.lower().endswith('.pdb'):
+        candidates.append(base + '.pdb')
+    proj = _project_root()
+    for c in candidates:
+        pattern = os.path.join(proj, '**', c)
+        matches = glob.glob(pattern, recursive=True)
+        if matches:
+            found = os.path.abspath(matches[0])
+            info(f"Resolved '{path}' -> '{found}'")
+            return found
+    raise FileNotFoundError(f"Could not find input file '{path}' (searched repo {proj}).")
 
 
 def info(msg: str):
@@ -223,7 +256,7 @@ def haddock_pipeline(rec, lig, runname="run1", mode="local", ncores=4, ambig=Non
     return run_dir, cfg_path
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Prepare HADDOCK3 config and input files (tutorial style)")
     parser.add_argument("receptor", help="Path to receptor PDB file")
     parser.add_argument("ligand", help="Path to ligand PDB file")
@@ -234,6 +267,10 @@ if __name__ == "__main__":
     parser.add_argument("--run", action="store_true", help="If set, run haddock3 with the generated config")
     parser.add_argument("--haddock-cmd", default="haddock3", help="Command to invoke HADDOCK (default: haddock3). Can be a wrapper or 'echo' for testing.")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     haddock_pipeline(args.receptor, args.ligand, runname=args.runname, mode=args.mode, ncores=args.ncores, ambig=args.ambig, run_haddock=args.run, haddock_cmd=args.haddock_cmd)
+
+
+if __name__ == '__main__':
+    main()

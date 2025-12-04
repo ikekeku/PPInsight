@@ -1,4 +1,4 @@
-Metadata-Version: 2.4
+Metadata-Version: 2.1
 Name: ppinsight
 Version: 0.0.1
 Summary: This is a package to pull protein data from FASTA and Uniport databases, run them through multiple modeling tools and give a final visualization to compare between models
@@ -32,11 +32,17 @@ Classifier: Operating System :: OS Independent
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: matplotlib>=3.6.0
+Requires-Dist: altair
 Requires-Dist: requests>=2.25.0
 Requires-Dist: biopython>=1.79
 Requires-Dist: tenacity>=8.0.1
-Requires-Dist: matplotlib>=3.5.0
-Dynamic: license-file
+Requires-Dist: pytest
+Requires-Dist: pytest-cov
+Requires-Dist: ruff
+Requires-Dist: lightdock
 
 # PPInsight
 This project seeks to streamline the evaluation of computational protein-protein interaction (PPI) prediction models. Because experimental PPI determination is time-consuming and costly, computational approaches hold promise for large-scale interactome studies. Existing models frequently lack standardised evaluation measures and instruments for comparison. To close this gap, we propose creating a Python-based benchmarking and visualization tool that automates the extraction of reference interaction data, runs various predictive models, and produces comparative performance graphs. This approach will allow researchers to easily evaluate model correctness and consistency.
