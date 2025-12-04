@@ -4,15 +4,14 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 
 ![Schematic detailling workflow for PPInsight project, grouped by task](images/CSE583_PPInsight-Schematic.png)
 
-# Team Member
+# Team Members and Contributions
 - Ike Keku
 - Rita Kamenetskiy
-- Fiona McLary: Physics PhD student developing x-ray spectroscopy techniques at the University of Washington
+- Fiona McLary: Developed visualizer module 
 - Walter Avila
 - Maya Gatt Harari
 
-## Task 1 — fetch proteins by search term and save files  
-### Walter will tackle this
+## Task 1 — fetch proteins by search term and save files
 This task builds a single function (e.g., `def create_FASTA(protein_name, species, ...)`) that takes a search string for NCBI Entrez (gene/protein name, organism, etc.) and returns matched protein sequence and structural data written to disk in FASTA, CSV/TSV (metadata), and/or PDB/mmCIF when available. The function should prefer reviewed Swiss-Prot entries, let the user choose among ambiguous hits, and write files using a consistent naming scheme (e.g., `GENEID.fasta`, `GENEID.meta.tsv`, `GENEID.pdb`). Handle rate limits and require `Entrez.email` and optional API key.
 
 Key implementation notes:
@@ -76,5 +75,4 @@ Biopython Entrez guide: [https://biopython.org/wiki/Entrez](https://biopython.or
 
 ---
 
-###
-Walter A. - 
+

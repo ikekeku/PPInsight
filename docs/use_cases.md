@@ -3,6 +3,23 @@
 ## Describe what are the inputs and outputs, and how are the inputs transformed into outputs 
 
 
+
+
+### TASK 1: Fetch proteins by search term and save files
+
+
+
+### TASK 2: Run PPI predictors on file pairs and store scores
+
+
+
+### Task 3: plot interaction scores (D3 visualizations)
+
+
+
+
+
+##### EVERYONE RESTRUCTURE THE USE CASES CLEARLY UNDER THE ACCORDING TASK!!! 
 SETUP 
 - Accessing a remote server (HYAK?)  
 
