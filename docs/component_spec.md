@@ -3,10 +3,10 @@
 ## Software components
 
 ### 1. Database Search
-- **What it does:** Retrieves and organizes protein data.  
-- **Inputs:** Protein name (or IDs), species, `Entrez.email`, optional parameters (e.g., number of search results found). Most inputs are strings.  
-- **Outputs:** `*.fasta` and/or `*.pdb` files, metadata table,  organized folders.
-- **Use of other components:** Relies on BioPython and the Entrez and UniProt databases for getting sequences, and RCSB and/or AlphaFold for structure files.
+- **What it does:** Fetches protein sequences and available 3D structures using UniProt accession IDs and organizes them for downstream modeling.  
+- **Inputs:** List of UniProt accession IDs (strings), optional output file paths for FASTA and CSV, and optional output directory for PDB files.  
+- **Outputs:** Combined FASTA file, structured CSV metadata file with fields: ID, Name, Description, Sequence Length, Sequence, and downloaded PDB structure files when available.
+- **Use of other components:** Uses the UniProt REST API for sequence and structure cross-references and Biopython’s `PDBList` for downloading PDB files.
 
 ### 2. Model Selector
 - **What it does:** Picks protein-protein interaction (PPI) models to run.  
