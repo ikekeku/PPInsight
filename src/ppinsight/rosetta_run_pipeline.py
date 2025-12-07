@@ -5,9 +5,9 @@ This module provides a high-level interface for the complete docking workflow.
 """
 
 from pathlib import Path
-from .prepare_structure import prepare_structures
-from .rosetta_dock import run_docking, save_docked_structure
-from .analyze import analyze_scores, print_top_scores, export_scores_to_csv
+from ppinsight._prepare_structure import prepare_structures
+from ppinsight._rosetta_dock import run_docking, save_docked_structure
+from ppinsight._analyze import analyze_scores, print_top_scores, export_scores_to_csv
 
 
 class DockingPipeline:
