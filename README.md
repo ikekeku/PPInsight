@@ -12,17 +12,26 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 - Maya Gatt Harari
 
 ## Task 1 — fetch proteins by search term and save files
-This task builds a single function (e.g., `def create_FASTA(protein_name, species, ...)`) that takes a search string for NCBI Entrez (gene/protein name, organism, etc.) and returns matched protein sequence and structural data written to disk in FASTA, CSV/TSV (metadata), and/or PDB/mmCIF when available. The function should prefer reviewed Swiss-Prot entries, let the user choose among ambiguous hits, and write files using a consistent naming scheme (e.g., `GENEID.fasta`, `GENEID.meta.tsv`, `GENEID.pdb`). Handle rate limits and require `Entrez.email` and optional API key.
+Implemented in `src/ppinsight/protein_fetch.py` via:
 
-Key implementation notes:
-- Use Biopython Entrez for searching and efetch. See the Biopython docs: [https://biopython.org/docs/1.76/api/Bio.Entrez.html](https://biopython.org/docs/1.76/api/Bio.Entrez.html).  
-- For structures use RCSB APIs or mmCIF downloads: [https://data.rcsb.org/](https://data.rcsb.org/). AlphaFold predicted structures are available too: [https://alphafold.ebi.ac.uk/](https://alphafold.ebi.ac.uk/).  
-- Outputs: FASTA file, `{id}.meta.tsv` or `{id}.meta.csv` (columns: id, name, organism, source_db, accession, length), and `{id}.pdb` or `{id}.cif` when present.
+`get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="fetched_data")`
 
-Testing and edge cases:
-- Test ambiguous queries (checking the function can handle vague search terms and returns a list of possible matching proteins instead of failing).
-- Test missing structures (verifying that if no PDB or structure is found, the code still saves the sequence (FASTA) and metadata without error).
-- Add unit tests that mock Entrez responses (instead of always sending real requests to Biopython’s Entrez API during testing, write tests that simulate Entrez returning specific results or errors. That way the tests run quickly, reliably, and offline, without relying on the live API).
+This function retrieves protein sequences and structures from UniProt using a user-inputted list of accession IDs. It:
+
+* Fetches FASTA sequences and saves them to a file
+* Extracts structured metadata (ID, name, description, sequence length, sequence) and saves to CSV
+* Queries UniProt JSON records for linked PDB IDs and automatically downloads the first available structure per protein into `pdb_files/`
+
+**Returns:**
+
+* `structured_data`: list of dictionaries with fields
+  `ID`, `Name`, `Description`, `Sequence Length`, `Sequence`
+* `pdb_info`: dictionary mapping
+  `accession_id → PDB_ID` (or `None` if no structure exists)
+
+**Testing:**
+
+Pytest tests cover successful runs, correct sequence length and structure availability, and invalid accession ID handling.
 
 ---
 
