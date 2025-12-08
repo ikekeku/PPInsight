@@ -89,7 +89,7 @@ def test_nonexistent_protein():
     - Even if there are other protein IDs that are correct, I want the
     function to stop
     """
-    with pytest.raises(ValueError, match="Could not fetch FASTA for"):
+    with pytest.raises(ValueError, match="Invalid UniProt accession ID"):
         protein_fetch.get_uniprot_data(["P000000000"])
 
 
