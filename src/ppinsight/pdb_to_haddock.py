@@ -16,7 +16,8 @@ import subprocess
 import platform
 import shlex
 import glob
-from pathlib import Path
+import time
+import sys
 
 
 def _project_root():
@@ -51,11 +52,19 @@ def resolve_input_path(path: str) -> str:
 
 
 def info(msg: str):
+    """Simple logger for informational messages.
+
+    Kept minimal so tests can run with predictable output.
+    """
     print(f"[INFO] {msg}")
 
 
 def run_command(cmd, cwd=None):
-    """Print and run a command. Kept small so tests can monkeypatch it."""
+    """Print and run a command.
+
+    This is a thin wrapper around subprocess.run so tests can monkeypatch
+    `run_command` to avoid executing external binaries.
+    """
     print(">>", " ".join(map(str, cmd)))
     subprocess.run(list(map(str, cmd)), cwd=cwd, check=True)
 
@@ -65,6 +74,11 @@ METHOD = "haddock_runs"
 
 
 def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
+    """Create a run directory and its data subdirectory.
+
+    If directories already exist, they are reused. Return a tuple of
+    (run_dir, data_dir).
+    """
     base_root = Path(base_root)
     base_root.mkdir(parents=True, exist_ok=True)
 
@@ -82,7 +96,12 @@ def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
 
 
 def copy_inputs(data_dir, rec, lig, ambig=None):
-        # Validate inputs and give helpful errors if files are missing
+    """Copy receptor, ligand (and optionally ambig) into the run data dir.
+
+    Accepts either full paths or short basenames; callers should resolve
+    inputs using `resolve_input_path` if they want repository searching.
+    """
+    # Validate inputs and give helpful errors if files are missing
     rec_path = Path(rec)
     lig_path = Path(lig)
     if not rec_path.exists():
@@ -169,11 +188,55 @@ top_models = 4
     info(f"Wrote config file: {cfg_path}")
 
 
-def haddock_pipeline(rec, lig, runname="run1", mode="local", ncores=4, ambig=None, base_root=BASE_ROOT, method=METHOD, run_haddock=False, haddock_cmd: str = "haddock3"):
-    # 1) Create organized output folder
-    run_dir, data_dir = make_run_dir(rec, lig, runname, base_root=base_root, method=method)
+def _choose_runname(base_dir: Path, base_name: str, overwrite: bool) -> str:
+    """Choose a runname when none is provided.
 
-    # 2) Copy input files
+    If overwrite is False and a directory with base_name exists under base_dir,
+    append a numeric suffix (_1, _2, ...) to avoid clobbering previous runs.
+    """
+    candidate = base_name
+    method_dir = base_dir
+    i = 1
+    while (method_dir / candidate).exists():
+        if overwrite:
+            # caller will remove it explicitly
+            break
+        candidate = f"{base_name}_{i}"
+        i += 1
+    return candidate
+
+
+def haddock_pipeline(rec, lig, runname: str = None, mode: str = "local", ncores: int = 4,
+                    ambig: str = None, base_root=BASE_ROOT, method=METHOD,
+                    run_haddock: bool = False, haddock_cmd: str = "haddock3",
+                    overwrite: bool = False):
+    """Prepare a HADDOCK run directory, copy inputs, write cfg, and optionally run HADDOCK.
+
+    - rec/lig may be full paths or short basenames; they will be resolved against
+      the repository if not found on the filesystem.
+    - If runname is None, a sensible default based on the receptor/ligand names
+      is chosen; if that directory already exists, a numeric suffix is appended
+      unless overwrite=True.
+    """
+    # Resolve inputs so short basenames work (search the repo)
+    rec = resolve_input_path(rec)
+    lig = resolve_input_path(lig)
+
+    # Determine runname: if not provided, base it on receptor and ligand
+    base_name = f"{Path(rec).stem}_vs_{Path(lig).stem}"
+    method_root = Path(base_root) / method
+    method_root.mkdir(parents=True, exist_ok=True)
+    chosen_runname = runname if runname else _choose_runname(method_root, base_name, overwrite)
+
+    run_dir = method_root / chosen_runname
+    if run_dir.exists() and overwrite:
+        # remove existing directory tree to allow a fresh run
+        shutil.rmtree(run_dir)
+
+    # 1) Create organized output folder
+    run_dir, data_dir = make_run_dir(rec, lig, chosen_runname, base_root=base_root, method=method)
+
+    # 2) Copy input files (they are already resolved)
     rec_dst, lig_dst, ambig_dst = copy_inputs(data_dir, rec, lig, ambig)
 
     # data-relative paths inside .cfg
@@ -182,7 +245,7 @@ def haddock_pipeline(rec, lig, runname="run1", mode="local", ncores=4, ambig=Non
     ambig_rel = f"data/{ambig_dst.name}" if ambig_dst else ""
 
     # 3) Write config
-    cfg_path = run_dir / f"{runname}.cfg"
+    cfg_path = run_dir / f"{chosen_runname}.cfg"
     # If there are existing .cfg files in the run directory, report and remove
     existing_cfgs = list(run_dir.glob("*.cfg"))
     if existing_cfgs:
@@ -196,7 +259,7 @@ def haddock_pipeline(rec, lig, runname="run1", mode="local", ncores=4, ambig=Non
                 info(f"Removed old cfg: {p.name}")
             except Exception:
                 info(f"Could not remove existing cfg: {p.name}; leaving it in place")
-    write_cfg(cfg_path, runname, mode, ncores, rec_rel, lig_rel, ambig_rel)
+    write_cfg(cfg_path, chosen_runname, mode, ncores, rec_rel, lig_rel, ambig_rel)
 
     # Optionally run haddock3 with the config file
     if run_haddock:
@@ -204,7 +267,7 @@ def haddock_pipeline(rec, lig, runname="run1", mode="local", ncores=4, ambig=Non
         # binary may be built for a different CPU architecture (e.g. arm64
         # binary on an x86_64 machine). If so, fail early with a clear message.
         try:
-            import haddock as _haddock_mod
+            import haddock as _haddock_mod  # type: ignore
             haddock_dir = Path(_haddock_mod.__file__).resolve().parent
             cns_path = haddock_dir / "bin" / "cns"
             if cns_path.exists():
@@ -250,9 +313,6 @@ def haddock_pipeline(rec, lig, runname="run1", mode="local", ncores=4, ambig=Non
                 ) from e
             raise
 
-    info("\nDone.")
-    info(f"Files staged in: {data_dir}")
-    info(f"Config file: {cfg_path}")
     return run_dir, cfg_path
 
 
@@ -260,16 +320,56 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Prepare HADDOCK3 config and input files (tutorial style)")
     parser.add_argument("receptor", help="Path to receptor PDB file")
     parser.add_argument("ligand", help="Path to ligand PDB file")
-    parser.add_argument("--runname", default="run1", help="Config run_dir name")
+    parser.add_argument("--runname", default=None, help="Config run_dir name (default: auto-increment to avoid clobbering)")
     parser.add_argument("--mode", default="local", help="HADDOCK execution mode")
     parser.add_argument("--ncores", type=int, default=4, help="CPU cores")
     parser.add_argument("--ambig", default=None, help="Path to ambiguous restraints (.tbl)")
     parser.add_argument("--run", action="store_true", help="If set, run haddock3 with the generated config")
     parser.add_argument("--haddock-cmd", default="haddock3", help="Command to invoke HADDOCK (default: haddock3). Can be a wrapper or 'echo' for testing.")
+    parser.add_argument("--overwrite", action="store_true", help="If set, overwrite an existing run directory with the same name")
 
     args = parser.parse_args(argv)
 
-    haddock_pipeline(args.receptor, args.ligand, runname=args.runname, mode=args.mode, ncores=args.ncores, ambig=args.ambig, run_haddock=args.run, haddock_cmd=args.haddock_cmd)
+    # Resolve receptor/ligand paths (accept basenames or full paths)
+    try:
+        receptor_path = resolve_input_path(args.receptor)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
+        sys.exit(2)
+
+    try:
+        ligand_path = resolve_input_path(args.ligand)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
+        sys.exit(2)
+
+    # Run the pipeline
+    run_dir, cfg_path = haddock_pipeline(
+        receptor_path,
+        ligand_path,
+        runname=args.runname,
+        mode=args.mode,
+        ncores=args.ncores,
+        ambig=args.ambig,
+        run_haddock=args.run,
+        haddock_cmd=args.haddock_cmd,
+        overwrite=args.overwrite,
+    )
+
+    # User-facing summary specific to HADDOCK
+    summary_lines = [
+        "HADDOCK staging completed.",
+        f"Run name: {run_dir.name}",
+        f"Run directory: {run_dir}",
+        f"Config file: {cfg_path}",
+        f"Mode: {args.mode}",
+        f"CPU cores: {args.ncores}",
+        f"Receptor (staged): {run_dir / 'data' / Path(receptor_path).name}",
+        f"Ligand   (staged): {run_dir / 'data' / Path(ligand_path).name}",
+        f"Ambig restraints: {args.ambig if args.ambig else 'None'}",
+        f"HADDOCK command to be executed: {args.haddock_cmd if args.run else '(not running)'}",
+    ]
+    print('\n'.join(summary_lines))
 
 
 if __name__ == '__main__':
