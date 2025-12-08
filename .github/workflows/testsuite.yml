@@ -11,7 +11,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.12"
+          python-version: "3.11"
       
       - name: Install Ruff
         run: pip install ruff
@@ -34,7 +34,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]  # it's a great idea to also include: macos-latest, windows-latest
-        python-version: ["3.12"]  # it's a great idea to also include: "3.11", "3.13"
+        python-version: ["3.11"]  # it's a great idea to also include: "3.12", "3.13"
     steps:
       - uses: actions/checkout@main
         with:
