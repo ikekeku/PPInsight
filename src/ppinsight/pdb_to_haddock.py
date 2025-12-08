@@ -9,6 +9,7 @@ and writes a config file the user can run manually or with --run.
 It mirrors the structure of the notebook version and has a small CLI.
 """
 from pathlib import Path
+from typing import Optional
 import argparse
 import shutil
 import os
@@ -71,6 +72,7 @@ def run_command(cmd, cwd=None):
 
 BASE_ROOT = Path("examples/ppinsight_data/output_files")
 METHOD = "haddock_runs"
+CONTAINER_IMAGE = "ghcr.io/haddocking/haddock3:latest"
 
 
 def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
@@ -84,8 +86,13 @@ def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
 
     method_dir = base_root / method
     method_dir.mkdir(exist_ok=True)
-
-    run_dir = method_dir / f"{Path(rec).stem}_vs_{Path(lig).stem}"
+    # Use the explicit runname when provided so the on-disk directory
+    # matches the "run_dir" value written into the HADDOCK .cfg file.
+    # Fall back to the receptor_vs_ligand pattern if runname is falsy.
+    if runname:
+        run_dir = method_dir / runname
+    else:
+        run_dir = method_dir / f"{Path(rec).stem}_vs_{Path(lig).stem}"
     run_dir.mkdir(exist_ok=True)
 
     data_dir = run_dir / "data"
@@ -209,7 +216,9 @@ def _choose_runname(base_dir: Path, base_name: str, overwrite: bool) -> str:
 def haddock_pipeline(rec, lig, runname: str = None, mode: str = "local", ncores: int = 4,
                     ambig: str = None, base_root=BASE_ROOT, method=METHOD,
                     run_haddock: bool = False, haddock_cmd: str = "haddock3",
-                    overwrite: bool = False):
+                    overwrite: bool = False,
+                    container: str = "auto", container_image: str = CONTAINER_IMAGE,
+                    workspace_root: Optional[str] = None):
     """Prepare a HADDOCK run directory, copy inputs, write cfg, and optionally run HADDOCK.
 
     - rec/lig may be full paths or short basenames; they will be resolved against
@@ -299,19 +308,89 @@ def haddock_pipeline(rec, lig, runname: str = None, mode: str = "local", ncores:
 
         # When running with cwd=run_dir, pass the filename relative to that dir
         # Allow haddock_cmd to be a wrapper or an alternate command (e.g. 'echo').
-        cmd = shlex.split(haddock_cmd) + [cfg_path.name]
-        try:
-            run_command(cmd, cwd=run_dir)
-        except subprocess.CalledProcessError as e:
-            # Inspect stderr/msg to see if it's a Bad CPU type issue and suggest fixes
-            msg = str(e)
-            if "Bad CPU type" in msg or "bad cpu" in msg.lower():
-                raise RuntimeError(
-                    "HADDOCK (CNS) failed to execute due to CPU architecture mismatch.\n"
-                    "Check that the 'cns' binary in the haddock package matches your machine architecture.\n"
-                    "If you installed haddock via conda, try installing a variant built for your platform or use a different channel."
-                ) from e
-            raise
+        # If the user requested containerized execution or it can be auto-selected,
+        # prefer running haddock3 inside a container to avoid host GLIBC/CNS ABI issues.
+
+        def _detect_container_runtime():
+            """Detect available container runtimes.
+
+            Returns 'docker', 'apptainer' (or 'singularity'), or None.
+            """
+            if shutil.which("docker"):
+                return "docker"
+            # Apptainer may be installed under 'apptainer' or legacy 'singularity'
+            if shutil.which("apptainer"):
+                return "apptainer"
+            if shutil.which("singularity"):
+                return "apptainer"
+            return None
+
+        def _run_in_container(runtime: str, image: str, host_workspace: str, run_dir_path: Path, cfg_name: str):
+            """Construct and run a container command that executes haddock3 inside the image.
+
+            This function uses run_command to preserve the testability.
+            """
+            host_workspace = os.path.abspath(host_workspace)
+            # Compute run_dir relative to the workspace root so we can `cd` correctly inside container
+            rel_run = os.path.relpath(str(run_dir_path), host_workspace)
+            # Ensure paths are safe for commands
+            rel_run_posix = rel_run.replace(os.path.sep, "/")
+            if runtime == "docker":
+                # Mount the workspace into /workspace in the container
+                workdir = f"/workspace/{os.path.dirname(rel_run_posix)}" if os.path.dirname(rel_run_posix) else "/workspace"
+                cfg_base = os.path.basename(cfg_name)
+                cmd = [
+                    "docker", "run", "--rm",
+                    "-v", f"{host_workspace}:/workspace",
+                    "-w", workdir,
+                    image,
+                    "bash", "-lc", f"haddock3 {shlex.quote(cfg_base)}"
+                ]
+            else:
+                # Apptainer can execute docker images directly via the docker:// prefix
+                image_spec = image
+                if not image_spec.startswith("docker://") and not image_spec.startswith("shub://"):
+                    image_spec = f"docker://{image_spec}"
+                # apptainer exec --bind host:/workspace --pwd /workspace docker://image bash -lc 'cd ... && haddock3 cfg'
+                cmd = [
+                    "apptainer", "exec",
+                    "--bind", f"{host_workspace}:/workspace",
+                    "--pwd", "/workspace",
+                    image_spec,
+                    "bash", "-lc", f"cd /workspace/{rel_run_posix} && haddock3 {shlex.quote(os.path.basename(cfg_name))}"
+                ]
+            run_command(cmd)
+
+        # Decide container use
+        chosen_container = None
+        if container == "auto":
+            chosen_container = _detect_container_runtime()
+        elif container in ("docker", "apptainer", "singularity"):
+            chosen_container = container if container != "singularity" else "apptainer"
+
+        if chosen_container:
+            # Determine a sensible host workspace root for binding; fall back to project root
+            host_ws = workspace_root if workspace_root else _project_root()
+            try:
+                _run_in_container(chosen_container, container_image, host_ws, run_dir, cfg_path.name)
+            except subprocess.CalledProcessError:
+                # If the container run failed, surface the error to the caller (same behavior as local run)
+                raise
+        else:
+            # No container runtime found; run locally
+            cmd = shlex.split(haddock_cmd) + [cfg_path.name]
+            try:
+                run_command(cmd, cwd=run_dir)
+            except subprocess.CalledProcessError as e:
+                # Inspect stderr/msg to see if it's a Bad CPU type issue and suggest fixes
+                msg = str(e)
+                if "Bad CPU type" in msg or "bad cpu" in msg.lower():
+                    raise RuntimeError(
+                        "HADDOCK (CNS) failed to execute due to CPU architecture mismatch.\n"
+                        "Check that the 'cns' binary in the haddock package matches your machine architecture.\n"
+                        "If you installed haddock via conda, try installing a variant built for your platform or use a different channel."
+                    ) from e
+                raise
 
     return run_dir, cfg_path
 
@@ -327,6 +406,8 @@ def main(argv=None):
     parser.add_argument("--run", action="store_true", help="If set, run haddock3 with the generated config")
     parser.add_argument("--haddock-cmd", default="haddock3", help="Command to invoke HADDOCK (default: haddock3). Can be a wrapper or 'echo' for testing.")
     parser.add_argument("--overwrite", action="store_true", help="If set, overwrite an existing run directory with the same name")
+    parser.add_argument("--container", default="auto", help="Container runtime to use: 'auto', 'docker', 'apptainer' (default: auto)")
+    parser.add_argument("--container-image", default=CONTAINER_IMAGE, help="Container image to use when running HADDOCK inside a container")
 
     args = parser.parse_args(argv)
 
@@ -354,6 +435,9 @@ def main(argv=None):
         run_haddock=args.run,
         haddock_cmd=args.haddock_cmd,
         overwrite=args.overwrite,
+        container=args.container,
+        container_image=args.container_image,
+        workspace_root=_project_root(),
     )
 
     # User-facing summary specific to HADDOCK
