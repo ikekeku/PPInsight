@@ -28,7 +28,7 @@ def test_score_type_does_not_exist():
         LookupError, match=f'The score type {score_type} does not exist for the {file} model'
     ):
         frames = pd.DataFrame(np.array([1,2,3]),columns=['a','b','c'])
-        compare_scores(frames, 'd', 'protein x', 'protein y')
+        compare_scores(frames, 'd', 'test plot title')
     return
 
 def test_smoke():
@@ -45,5 +45,5 @@ def test_output_is_df(dfs):
 
 def test_graph_dummy_models():
     """One-shot test to ensure compare_scores graphs score_a for the 3 dummy models as expected"""
-    compare_scores(to_plot(models), 'score_a', 'protein x', 'protein y')
+    compare_scores(to_plot(models), 'score_a', 'test plot title')
     return
