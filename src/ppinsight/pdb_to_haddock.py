@@ -134,6 +134,10 @@ def copy_inputs(data_dir, rec, lig, ambig=None):
 
 
 def write_cfg(cfg_path: Path, runname: str, mode: str, ncores: int, rec_rel: str, lig_rel: str, ambig_rel: str):
+    # If no ambiguous restraints are provided, enable ab-initio sampling
+    # for the rigid-body stage using `cmrest = true`.
+    abinitio_block = "" if ambig_rel else "cmrest = true\n"
+
     text = f"""# ====================================================================
 # Protein-protein docking example (auto-generated)
 
@@ -170,6 +174,7 @@ tolerance = 20
 ambig_fname = "{ambig_rel}"
 sampling = 20
 
+{abinitio_block}
 [caprieval]
 reference_fname = ""
 
