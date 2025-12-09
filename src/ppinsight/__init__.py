@@ -1,8 +1,9 @@
 """ppinsight package init"""
-__all__ = ["pdb_to_lightdock", "pdb_to_haddock", "protein_fetch"]
+__all__ = ["pdb_to_lightdock", "pdb_to_haddock", "protein_fetch", "visualizer"]
 from . import pdb_to_lightdock
 from . import pdb_to_haddock
 from . import protein_fetch
+from . import visualizer
 
 # try:
 #     subprocess.run(["rosetta" "--version"], check=True)
