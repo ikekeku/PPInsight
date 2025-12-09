@@ -126,5 +126,6 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="pdb
         except requests.exceptions.RequestException as request_error:
             print(f"Warning: Could not fetch PDB info for {accession_id}. Error: {request_error}", file=sys.stderr)
             pdb_info[accession_id] = None
+            raise ValueError(f"Warning: Could not fetch PDB info for: {accession_id}") from e
 
     return structured_data, pdb_info
