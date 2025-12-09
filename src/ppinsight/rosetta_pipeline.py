@@ -5,7 +5,7 @@ This module provides a high-level interface for the complete docking workflow.
 """
 
 from pathlib import Path
-from ppinsight._prepare_structure import prepare_structures
+from ppinsight._rosetta_prepare_structure import prepare_structures
 from ppinsight._rosetta_dock import run_docking, save_docked_structure
 from ppinsight._analyze import analyze_scores, print_top_scores, export_scores_to_csv
 
@@ -26,7 +26,9 @@ class DockingPipeline:
         top_n: Number of top scores to average for final result
         
     Example:
-        >>> pipeline = DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=50)
+        >>> path1 = "../../PPInsight/examples/ppinsight_data/input_files/2UUY_lig.pdb"
+        >>> path2 = "../../PPInsight/examples/ppinsight_data/input_files/2UUY_rec.pdb"
+        >>> pipeline = DockingPipeline(path1, path2, n_runs=50)
         >>> result = pipeline.run()
         >>> print(f"Final docking score: {result['final_score']:.2f}")
         
