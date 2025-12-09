@@ -40,7 +40,7 @@ def test_smoke_haddock_pipeline_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(pdb_to_haddock, "run_command", recorder)
 
     # Run pipeline (do not actually run haddock)
-    run_dir, cfg_path = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="smoke", run_haddock=False, base_root=str(work_root), method="haddock_runs")
+    run_dir, cfg_path, _ = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="smoke", run_haddock=False, base_root=str(work_root), method="haddock_runs")
 
     # Basic smoke assertions
     assert (run_dir / "data" / rec.name).exists()
@@ -68,7 +68,7 @@ def test_oneshot_cfg_contains_expected_entries(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
 
-    run_dir, cfg_path = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="oneshot", mode="local", ncores=3, run_haddock=False, base_root=str(work_root), method="haddock_runs")
+    run_dir, cfg_path, _ = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="oneshot", mode="local", ncores=3, run_haddock=False, base_root=str(work_root), method="haddock_runs")
 
     text = cfg_path.read_text()
     # Assert runname and molecules appear in the cfg (one-shot known output)
@@ -127,7 +127,7 @@ def test_pattern_ncores_reflected_in_cfg(tmp_path, monkeypatch):
     monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
 
     for cores in (1, 2, 4):
-        run_dir, cfg_path = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname=f"p{cores}", ncores=cores, run_haddock=False, base_root=str(work_root), method="haddock_runs")
+        run_dir, cfg_path, _ = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname=f"p{cores}", ncores=cores, run_haddock=False, base_root=str(work_root), method="haddock_runs")
         text = cfg_path.read_text()
         assert f"ncores = {cores}" in text
 
@@ -153,7 +153,7 @@ def test_cfg_custom_runname_and_filename(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
 
-    run_dir, cfg_path = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="custom_run", run_haddock=False, base_root=str(work_root), method="haddock_runs")
+    run_dir, cfg_path, _ = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="custom_run", run_haddock=False, base_root=str(work_root), method="haddock_runs")
 
     assert cfg_path.exists()
     assert cfg_path.name == "custom_run.cfg"
@@ -183,7 +183,7 @@ def test_cfg_includes_ambig_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
 
-    run_dir, cfg_path = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="withambig", ambig=str(ambig), run_haddock=False, base_root=str(work_root), method="haddock_runs")
+    run_dir, cfg_path, _ = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="withambig", ambig=str(ambig), run_haddock=False, base_root=str(work_root), method="haddock_runs")
 
     # ambig file should be copied into data/
     assert (run_dir / "data" / ambig.name).exists()
@@ -213,7 +213,7 @@ def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
 
-    run_dir, cfg_path = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="o1", run_haddock=False, base_root=str(work_root), method="custom_method")
+    run_dir, cfg_path, _ = pdb_to_haddock.haddock_pipeline(str(rec), str(lig), runname="o1", run_haddock=False, base_root=str(work_root), method="custom_method")
 
     # run_dir should be inside work_root/custom_method
     assert str(work_root.resolve()) in str(run_dir.resolve())

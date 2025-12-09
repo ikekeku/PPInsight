@@ -275,6 +275,7 @@ def haddock_pipeline(rec, lig, runname: str = None, mode: str = "local", ncores:
                 info(f"Could not remove existing cfg: {p.name}; leaving it in place")
     write_cfg(cfg_path, chosen_runname, mode, ncores, rec_rel, lig_rel, ambig_rel)
 
+    executed_cmd = "(not run)"
     # Optionally run haddock3 with the config file
     if run_haddock:
         # Before running, try to detect a common failure: an included CNS
@@ -378,6 +379,7 @@ def haddock_pipeline(rec, lig, runname: str = None, mode: str = "local", ncores:
             host_ws = workspace_root if workspace_root else _project_root()
             try:
                 _run_in_container(chosen_container, container_image, host_ws, run_dir, cfg_path.name)
+                executed_cmd = f"container:{chosen_container} image={container_image} -> haddock3 {cfg_path.name}"
             except subprocess.CalledProcessError:
                 # If the container run failed, surface the error to the caller (same behavior as local run)
                 raise
@@ -386,6 +388,7 @@ def haddock_pipeline(rec, lig, runname: str = None, mode: str = "local", ncores:
             cmd = shlex.split(haddock_cmd) + [cfg_path.name]
             try:
                 run_command(cmd, cwd=run_dir)
+                executed_cmd = " ".join(map(str, cmd))
             except subprocess.CalledProcessError as e:
                 # Inspect stderr/msg to see if it's a Bad CPU type issue and suggest fixes
                 msg = str(e)
@@ -397,7 +400,7 @@ def haddock_pipeline(rec, lig, runname: str = None, mode: str = "local", ncores:
                     ) from e
                 raise
 
-    return run_dir, cfg_path
+    return run_dir, cfg_path, executed_cmd
 
 
 def main(argv=None):
@@ -430,7 +433,7 @@ def main(argv=None):
         sys.exit(2)
 
     # Run the pipeline
-    run_dir, cfg_path = haddock_pipeline(
+    run_dir, cfg_path, executed_cmd = haddock_pipeline(
         receptor_path,
         ligand_path,
         runname=args.runname,
@@ -456,7 +459,7 @@ def main(argv=None):
         f"Receptor (staged): {run_dir / 'data' / Path(receptor_path).name}",
         f"Ligand   (staged): {run_dir / 'data' / Path(ligand_path).name}",
         f"Ambig restraints: {args.ambig if args.ambig else 'None'}",
-        f"HADDOCK command to be executed: {args.haddock_cmd if args.run else '(not running)'}",
+        f"HADDOCK executed: {executed_cmd}",
     ]
     print('\n'.join(summary_lines))
 
