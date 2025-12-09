@@ -20,9 +20,9 @@
 - **Use of other components:** Requires inputs from the database search and model selector components. May require use of computing cluster (Hyak) to run computationally expensive models.
 
 ### 4. Visualization Manager
-- **What it does:** Generates interactive plots comparing model scores.  
-- **Inputs:** Delimited text file (e.g., `scores.tsv`) and user filters (protein pair, metric, models).  
-- **Outputs:** Vega-Lite / Altair visualizations, exportable as PNG, SVG, or PDF. Option to export raw spreadsheet values instead (e.g., download `scores.tsv`).
+- **What it does:** Generates plots comparing model scores.  
+- **Inputs:** Delimited text file (e.g., `scores.csv`) and user filters (protein pair, metric, models).
+- **Outputs:** List of pandas DataFrames containing score values, one DataFrame for each model. Pyplot visualizations, exportable as PNG, SVG, or PDF.
 
 ## Interactions to accomplish Use Case 1 (refer to functional_spec.md)
 1. User specifies a protein pair.  
