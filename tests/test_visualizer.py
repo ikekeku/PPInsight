@@ -40,5 +40,5 @@ def test_output_is_df(dfs):
 
 def test_graph_dummy_models():
     """One-shot test to ensure compare_scores graphs score_a for the 3 dummy models as expected"""
-    vis.ompare_scores(vis.to_plot(models), 'score_a', 'test plot title')
+    vis.compare_scores(vis.to_plot(models), 'score_a', 'test plot title')
     return
