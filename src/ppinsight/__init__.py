@@ -12,7 +12,7 @@ __all__ = [
 from . import pdb_to_lightdock
 from . import pdb_to_haddock
 from . import protein_fetch
-# from . import visualizer
+from . import visualizer
 
 # try:
 #     subprocess.run(["rosetta" "--version"], check=True)
