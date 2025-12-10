@@ -15,7 +15,6 @@ from pyrosetta.rosetta.protocols.minimization_packing import MinMover, PackRotam
 from pyrosetta.rosetta.core.pack.task import TaskFactory
 # pylint: enable=no-member, import-error
 
-
 try:
     import pyrosetta
     from pyrosetta import rosetta
