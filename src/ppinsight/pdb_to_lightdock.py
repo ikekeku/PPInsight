@@ -85,8 +85,13 @@ def make_output_dir(receptor_pdb, ligand_pdb,
     If folders already exist, they are reused (not deleted).
     """
 
+    # Resolve base_root relative to the project root to avoid creating
+    # nested output paths when the current working directory changes
+    # (e.g. running from a different folder on shared filesystems).
+    if not os.path.isabs(base_root):
+        base_root = os.path.join(_project_root(), base_root)
     # Make sure the base root folder exists:
-    # examples/ppinsight_data/output_files/
+    # /.../PPInsight/examples/ppinsight_data/output_files/
     os.makedirs(base_root, exist_ok=True)
 
     # Inside that, make sure the method folder exists:

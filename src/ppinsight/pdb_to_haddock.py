@@ -70,7 +70,10 @@ def run_command(cmd, cwd=None):
     subprocess.run(list(map(str, cmd)), cwd=cwd, check=True)
 
 
-BASE_ROOT = Path("examples/ppinsight_data/output_files")
+# Use the repository root to derive the default output folder so the
+# output location is stable regardless of the current working directory
+# when the script is invoked (prevents nested examples/... paths).
+BASE_ROOT = Path(_project_root()) / "examples" / "ppinsight_data" / "output_files"
 METHOD = "haddock_runs"
 CONTAINER_IMAGE = "ghcr.io/haddocking/haddock3:latest"
 
@@ -269,7 +272,7 @@ def write_cfg(cfg_path: Path, runname: str, mode: str, ncores: int, rec_rel: str
     top_models = 4
     # ====================================================================
     """
-    
+
     cfg_path.write_text(text.strip() + "\n")
     info(f"Wrote config file: {cfg_path}")
 
