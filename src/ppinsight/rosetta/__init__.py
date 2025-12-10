@@ -17,8 +17,15 @@ Example usage:
     print(f"Final docking score: {result['score']:.2f}")
 """
 
+
+# easiest way to install:
+# python -c "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()"
+# ``` :contentReference[oaicite:2]{index=2}  
+# That will download and install a compatible PyRosetta build to your environment.
+
+
 from .pipeline import DockingPipeline
-from .prepare import prepare_structures, relax_structure, combine_proteins
+from .prepare_structure import prepare_structures, relax_structure, combine_proteins
 from .dock import run_docking, setup_docking_protocol
 from .analyze import analyze_scores, get_top_scores
 
