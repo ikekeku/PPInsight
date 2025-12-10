@@ -8,7 +8,7 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 - Ike Keku
 - Rita Kamenetskiy
 - Fiona McLary: Developed visualizer module 
-- Walter Avila
+- Walter Avila: Co-developed protein data fetching module (`protein_fetch.py`) and corresponding tests
 - Maya Gatt Harari
 
 ## Task 1 — fetch proteins by search term and save files
