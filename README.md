@@ -9,7 +9,7 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 - Rita Kamenetskiy: Co-developed protein data fetching module ('protein_fetch.py'), organized and functionalized the packaging, and functionalized the continuous integration tests
 - Fiona McLary: Developed visualizer module 
 - Walter Avila: Co-developed protein data fetching module (`protein_fetch.py`) and corresponding tests
-- Maya Gatt Harari
+- Maya Gatt Harari: developed Rosetta integration, allowing usage of Rosetta for protein docking via PyRosetta. Nested inside 'ppinsight/rosetta'.
 
 ## Task 1 — fetch proteins by search term and save files
 Implemented in `src/ppinsight/protein_fetch.py` via:
