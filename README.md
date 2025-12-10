@@ -6,7 +6,7 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 
 # Team Members and Contributions
 - Ike Keku
-- Rita Kamenetskiy
+- Rita Kamenetskiy: Co-developed protein data fetching module ('protein_fetch.py'), organized and functionalized the packaging, and functionalized the continuous integration tests
 - Fiona McLary: Developed visualizer module 
 - Walter Avila: Co-developed protein data fetching module (`protein_fetch.py`) and corresponding tests
 - Maya Gatt Harari
