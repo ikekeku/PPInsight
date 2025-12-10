@@ -2,7 +2,7 @@
 This project seeks to streamline the evaluation of computational protein-protein interaction (PPI) prediction models. Because experimental PPI determination is time-consuming and costly, computational approaches hold promise for large-scale interactome studies. Existing models frequently lack standardised evaluation measures and instruments for comparison. To close this gap, we propose creating a Python-based benchmarking and visualization tool that automates the extraction of reference interaction data, runs various predictive models, and produces comparative performance graphs. This approach will allow researchers to easily evaluate model correctness and consistency.
 Tasks include developing a Python tool to automate protein sequence retrieval, convert data into structural formats, and visualize interaction scores of PPI prediction models.
 
-![Schematic detailling workflow for PPInsight project, grouped by task](images/CSE583_PPInsight-Schematic.png)
+![Schematic detailling workflow for PPInsight project, grouped by task](docs/images/CSE583_PPInsight-Schematic.png)
 
 # Team Members and Contributions
 - Ike Keku
