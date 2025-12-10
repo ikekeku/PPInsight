@@ -206,83 +206,73 @@ def copy_inputs(data_dir, rec, lig, ambig=None):
     return rec_dst, lig_dst, ambig_dst
 
 
-def write_cfg(
-    cfg_path: Path,
-    runname: str,
-    mode: str,
-    ncores: int,
-    rec_rel: str,
-    lig_rel: str,
-    ambig_rel: str,
-):
+def write_cfg(cfg_path: Path, runname: str, mode: str, ncores: int, rec_rel: str, lig_rel: str, ambig_rel: str):
     # If no ambiguous restraints are provided, enable ab-initio sampling
     # for the rigid-body stage using `cmrest = true`.
-    abinitio_block = "cmrest = true" if not ambig_rel else ""
+    abinitio_block = "" if ambig_rel else "cmrest = true\n"
 
-    lines = [
-        "# ====================================================================",
-        "# Protein-protein docking example (auto-generated)",
-        "",
-        f'run_dir = "{runname}"',
-        "",
-        f'mode = "{mode}"',
-        f"ncores = {ncores}",
-        "",
-        "# molecules to be docked",
-        "molecules =  [",
-        f'    "{rec_rel}",',
-        f'    "{lig_rel}"',
-        "    ]",
-        "",
-        "# ====================================================================",
-        "# Parameters for each stage are defined below, prefer full paths",
-        "# ====================================================================",
-        "[topoaa]",
-        "autohis = false",
-        "[topoaa.mol1]",
-        "nhisd = 0",
-        "nhise = 1",
-        "hise_1 = 75",
-        "[topoaa.mol2]",
-        "nhisd = 1",
-        "hisd_1 = 76",
-        "nhise = 1",
-        "hise_1 = 15",
-        "",
-        "[rigidbody]",
-        "tolerance = 20",
-        f'ambig_fname = "{ambig_rel}"',
-        "sampling = 20",
-    ]
+    text = f"""# ====================================================================
+    # Protein-protein docking example (auto-generated)
 
-    if abinitio_block:
-        lines.append(abinitio_block)
+    # directory in which the scoring will be done
+    run_dir = "{runname}"
 
-    lines.extend([
-        "[caprieval]",
-        "reference_fname = """,
-        "",
-        "[seletop]",
-        "select = 5",
-        "",
-        "[flexref]",
-        "tolerance = 20",
-        f'ambig_fname = "{ambig_rel}"',
-        "",
-        "[emref]",
-        "tolerance = 20",
-        f'ambig_fname = "{ambig_rel}"',
-        "",
-        "[clustfcc]",
-        "min_population = 1",
-        "",
-        "[seletopclusts]",
-        "top_models = 4",
-        "# ====================================================================",
-    ])
+    # execution mode
+    mode = "{mode}"
+    ncores = {ncores}
 
-    cfg_path.write_text("\n".join(lines).strip() + "\n")
+    # molecules to be docked
+    molecules =  [
+        "{rec_rel}",
+        "{lig_rel}"
+        ]
+
+    # ====================================================================
+    # Parameters for each stage are defined below, prefer full paths
+    # ====================================================================
+    [topoaa]
+    autohis = false
+    [topoaa.mol1]
+    nhisd = 0
+    nhise = 1
+    hise_1 = 75
+    [topoaa.mol2]
+    nhisd = 1
+    hisd_1 = 76
+    nhise = 1
+    hise_1 = 15
+
+    [rigidbody]
+    tolerance = 20
+    ambig_fname = "{ambig_rel}"
+    sampling = 20
+
+    {abinitio_block}
+    [caprieval]
+    reference_fname = ""
+
+    [seletop]
+    select = 5
+
+    [flexref]
+    tolerance = 20
+    ambig_fname = "{ambig_rel}"
+
+    [emref]
+    tolerance = 20
+    ambig_fname = "{ambig_rel}"
+
+    [clustfcc]
+    min_population = 1
+
+    [seletopclusts]
+    top_models = 4
+    # ====================================================================
+    """
+    
+    cfg_path.write_text(text.strip() + "\n")
     info(f"Wrote config file: {cfg_path}")
+
 
 
 def _remove_existing_cfgs(run_dir: Path):
