@@ -1,6 +1,0 @@
-rel_path	ori_name	cluster_name	md5
-../6_emref/emref_1.pdb	flexref_1.pdb	cluster_1_model_1.pdb	None
-../6_emref/emref_4.pdb	flexref_4.pdb	cluster_1_model_2.pdb	None
-../6_emref/emref_2.pdb	flexref_2.pdb	cluster_1_model_3.pdb	None
-../6_emref/emref_3.pdb	flexref_3.pdb	cluster_2_model_1.pdb	None
-../6_emref/emref_5.pdb	flexref_5.pdb	cluster_3_model_1.pdb	None
