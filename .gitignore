@@ -30,5 +30,5 @@ src/ppinsight.egg-info/
 .ipynb_checkpoints/
 
 # Ignore example run folders sourced from respective tools
-examples/ppinsight_data/haddock3/run1-test/
-examples/ppinsight_data/lightdock/simulation/
+examples/haddock3/run1-test/
+examples/lightdock/simulation/
