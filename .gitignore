@@ -32,3 +32,4 @@ src/ppinsight.egg-info/
 # Ignore example run folders sourced from respective tools
 examples/haddock3/run1-test/
 examples/lightdock/simulation/
+examples/rosetta/Protein-Protein-Docking/
