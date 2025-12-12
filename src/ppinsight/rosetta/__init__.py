@@ -29,15 +29,7 @@ from .prepare_structure import prepare_structures, relax_structure, combine_prot
 from .dock import run_docking, setup_docking_protocol
 from .analyze import analyze_scores, get_top_scores
 
-__all__ = [
-    'DockingPipeline',
-    'prepare_structures',
-    'relax_structure',
-    'combine_proteins',
-    'run_docking',
-    'setup_docking_protocol',
-    'analyze_scores',
-    'get_top_scores'
-]
+__all__ = ['DockingPipeline']
+
 
 __version__ = '0.1.0'
