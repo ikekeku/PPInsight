@@ -4,6 +4,7 @@
 # Ignore local test artifacts and temporary homework files
 Unit-tests.ipynb
 hw3README.md
+software_design_text.txt
 
 # Python cache and compiled files
 __pycache__/

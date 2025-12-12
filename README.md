@@ -4,12 +4,76 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 
 ![Schematic detailling workflow for PPInsight project, grouped by task](docs/images/CSE583_PPInsight-Schematic.png)
 
+## Contents
+
+- [Install & quick start](#install-and-quick-start)
+- [License](#license)
+- [Resources](#resources)
+
 # Team Members and Contributions
 - Ike Keku: Co-developed PPI predictor pipelines (i.e., `pdb_to_haddock.py` and `pdb_to_lightdock.py`, as well as related files), oversaw general workflow of tools
 - Rita Kamenetskiy: Co-developed protein data fetching module ('protein_fetch.py'), organized and functionalized the packaging, and functionalized the continuous integration tests
 - Fiona McLary: Developed visualizer module 
 - Walter Avila: Co-developed protein data fetching module (`protein_fetch.py`) and corresponding tests
 - Maya Gatt Harari: developed Rosetta integration, allowing usage of Rosetta for protein docking via PyRosetta. Nested inside 'ppinsight/rosetta'.
+
+# Install and quick start
+
+1. Create the Python environment (conda recommended):
+
+```bash
+conda env create -f environment.yml
+conda activate ppinsight
+```
+
+2. Install the package in editable mode so console scripts are available:
+
+```bash
+pip install -e .
+```
+
+3. Fetch proteins (example):
+
+```bash
+# from repo root; accepts UniProt accessions
+python -m ppinsight.protein_fetch get_uniprot_data --accessions P00760,Q1EG59
+```
+
+4. Run docking pipelines (examples):
+
+```bash
+# HADDOCK staging (writes cfg under examples/...)
+pdb_to_haddock 2UUY_rec 2UUY_lig --runname example_2UUY
+
+# LightDock run + generate
+pdb_to_lightdock 2UUY_rec 2UUY_lig --generate
+
+# Rosetta (API example):
+python -c "from ppinsight.rosetta_docking.run_pipeline import DockingPipeline; p=DockingPipeline('protA.pdb','protB.pdb',n_runs=10); p.run()"
+```
+
+5. Visualize results:
+
+```bash
+# Programmatic (matplotlib)
+python -c "from ppinsight import visualizer; visualizer.compare_scores(...)"
+```
+
+### Notes
+- For HPC runs, pass an absolute `base_root` (or edit the scripts) to place
+  outputs on an HPC filesystem (e.g. `/gscratch/...`).
+- External tools (HADDOCK, LightDock, Rosetta/PyRosetta) are required for full
+  pipeline execution and some users may run into system incompatibilty (in this case, create and issue to get support or look through existing discussions for help); the HADDOCK helper supports container execution.
+- Tests monkeypatch external calls; run `pytest` to execute unit tests.
+
+### Docs & examples
+- Component spec: `docs/component_spec.md`
+- Use cases: `docs/use_cases.md`
+- Example inputs/outputs: `examples/`
+
+### License
+> See `LICENSE`.
+
 
 ## Task 1 — fetch proteins by search term and save files
 Implemented in `src/ppinsight/protein_fetch.py` via:
@@ -32,8 +96,6 @@ This function retrieves protein sequences and structures from UniProt using a us
 **Testing:**
 
 Pytest tests cover successful runs, correct sequence length and structure availability, and invalid accession ID handling.
-
----
 
 ## Task 2 — run PPI predictors on file pairs and store scores  
 Once you’ve retrieved the protein files in Task 1, here we swap from “getting the data” to “using models” to predict how strongly two proteins interact and then save those predictions to compare models later. You don’t need to code every model from scratch — instead, make small Python functions (“wrappers”) that take two protein files and return the model’s predicted score. This helps keep your code organized and reusable. This task wraps 2–3 PPI prediction approaches and produces a single `scores.tsv` (or CSV) in the same repo. For each protein pair and model run, write one or more score rows with clear headers (`proteinA, proteinB, model, score_type, score_value, output_path, timestamp`). Start with three complementary predictors: can include one of each or some other combination of a sequence-based model (fast local or embedding-based), a docking server (ClusPro or HADDOCK) for structural docking, and a structure-scoring tool (DockQ) for pose quality.
@@ -62,8 +124,6 @@ Testing and reproducibility:
 - Create simple test files (like three known interacting protein pairs in a pairs.csv file).
 - Write “test stubs” — mini functions that pretend to run a model but always return the same score. These let you test your plotting and data-handling code without needing to re-run expensive real models.
 
----
-
 ## Task 3 — plot interaction scores (D3 visualizations)  
 This task turns the `scores.tsv` table into interactive visuals. For each metric type (one chart per metric—e.g., DOCKQ, RMSD), build a D3 page where x = model name and y = score value; each protein pair is shown as a series of points/boxes, with tooltips linking to raw outputs. The default view will show a single protein pair (dropdown to switch). Possible immplenetations include allowing grouped views (multiple pairs) or aggregated summaries (boxplot/violin per model).
 
@@ -79,7 +139,7 @@ Testing and examples:
 
 ### Repo expectations  
 Put code and examples in this GitHub repo and update `README.md`, `.ipynb` files (using comments), and `examples/` (pairs.csv, example outputs) as needed. 
-### Resources (update as found/needed)
+### Resources
 Biopython Entrez guide: [https://biopython.org/wiki/Entrez](https://biopython.org/wiki/Entrez). RCSB API docs: [https://data.rcsb.org/](https://data.rcsb.org/). DockQ: [https://github.com/bjornwallner/DockQ](https://github.com/bjornwallner/DockQ). D3: [https://d3js.org/](https://d3js.org/).
 
 ---
