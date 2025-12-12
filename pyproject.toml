@@ -39,6 +39,7 @@ dependencies = [
 [project.scripts]
 pdb_to_lightdock = "ppinsight.pdb_to_lightdock:main"
 pdb_to_haddock = "ppinsight.pdb_to_haddock:main"
+ppinsight-rosetta = "ppinsight.rosetta.cli:main"
 
 # Optional upgrades beyond the default ruff rules
 [tool.ruff.lint]
