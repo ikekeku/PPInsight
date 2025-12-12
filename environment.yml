@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - bioconda
   - defaults
+  - pip
 dependencies:
   - python=3.11
   # vvv modern numpy compatible with many packages
@@ -22,3 +23,4 @@ dependencies:
   - pip
   - pip:
     - lightdock
+    - pyrosetta-installer
