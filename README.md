@@ -48,8 +48,11 @@ pdb_to_haddock 2UUY_rec 2UUY_lig --runname example_2UUY
 # LightDock run + generate
 pdb_to_lightdock 2UUY_rec 2UUY_lig --generate
 
-# Rosetta (API example):
-python -c "from ppinsight.rosetta_docking.run_pipeline import DockingPipeline; p=DockingPipeline('protA.pdb','protB.pdb',n_runs=10); p.run()"
+# how to use ppinsight.roseeta via python:
+# ppinsight-rosetta protein1.pdb protein2.pdb
+# ppinsight-rosetta runs the script in ppinsight.rosetta.cli:main. Check out the cli.py script for direct pythonic use of the package.
+# a working example is:
+ppinsight-rosetta ./examples/ppinsight_data/input_files/2UUY_lig.pdb ./examples/ppinsight_data/input_files/2UUY_rec.pdb
 ```
 
 5. Visualize results:
