@@ -53,6 +53,7 @@ class DockingPipeline:
             jump_distance: Initial separation distance in Å (default: 15.0)
             verbose: If True, print progress messages (default: True)
         """
+        self.(_ensure_pyrosetta) # make sure PyRosetta is available or else install it via installer
         self.protein1_pdb = Path(protein1_pdb)
         self.protein2_pdb = Path(protein2_pdb)
         if n_runs < 1:
@@ -71,6 +72,25 @@ class DockingPipeline:
         self.complex_pose = None
         self.docking_results = None
         self.analysis = None
+
+    def _ensure_pyrosetta():
+        try:
+            import pyrosetta
+        except ImportError:
+            try:
+                import pyrosetta_installer
+                pyrosetta_installer.install_pyrosetta()
+                import pyrosetta  # Try importing again after installation
+            except ImportError:
+                raise ImportError(
+                    "PyRosetta is required for docking but is not installed.\n"
+                    "FAILED installing it using:\n"
+                    "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()\n"
+                    "................................................................\n"
+                    "Please install PyRosetta manually following the instructions at:\n"
+                    "https://www.pyrosetta.org/downloads"
+                )
+
 
     def prepare(self):
         """
