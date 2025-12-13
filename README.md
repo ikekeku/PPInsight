@@ -13,7 +13,7 @@ Tasks include developing a Python tool to automate protein sequence retrieval, c
 # Team Members and Contributions
 - Ike Keku: Co-developed PPI predictor pipelines (i.e., `pdb_to_haddock.py` and `pdb_to_lightdock.py`, as well as related files), oversaw general workflow of tools
 - Rita Kamenetskiy: Co-developed protein data fetching module ('protein_fetch.py'), organized and functionalized the packaging, and functionalized the continuous integration tests
-- Fiona McLary: Developed visualizer module 
+- Fiona McLary: Developed visualizer module and corresponding tests
 - Walter Avila: Co-developed protein data fetching module (`protein_fetch.py`) and corresponding tests
 - Maya Gatt Harari: developed Rosetta integration, allowing usage of Rosetta for protein docking via PyRosetta. Nested inside 'ppinsight/rosetta'.
 
@@ -128,15 +128,12 @@ Testing and reproducibility:
 - Write “test stubs” — mini functions that pretend to run a model but always return the same score. These let you test your plotting and data-handling code without needing to re-run expensive real models.
 
 ## Task 3 — plot interaction scores (D3 visualizations)  
-This task turns the `scores.tsv` table into interactive visuals. For each metric type (one chart per metric—e.g., DOCKQ, RMSD), build a D3 page where x = model name and y = score value; each protein pair is shown as a series of points/boxes, with tooltips linking to raw outputs. The default view will show a single protein pair (dropdown to switch). Possible immplenetations include allowing grouped views (multiple pairs) or aggregated summaries (boxplot/violin per model).
-
-Key implementation notes:
-- Convert `scores.tsv` → `scores.json` via a small script; D3 reads the JSON. Use D3 v7: [https://d3js.org/](https://d3js.org/).  
-- UX (user experience): dropdown for protein pair, legend for models, sort controls (by median score), hover tooltip with `score_value`, `score_type`, and `output_path`. Export PNG/SVG for posters.  
-- Keep each chart focused: one metric per page (easier comparison and legend clarity).
+This task turns the `scores.tsv` table into visuals. For each metric type (one chart per metric—e.g., DOCKQ, RMSD), you can plot a matplotlib bar chart that compares the models' interaction scores for your chosen protein pair. The resulting plots can be copied or saved directly from your code editor.
 
 Testing and examples:
-- Supply `examples/plots/*.html` and a small server (e.g., `python -m http.server`) for local review. Include snapshot SVGs for visual regression if desired.
+- Make plots using three simple example `.csv` files with three score types
+- Ensure pandas DataFrame conversion is happening properly
+- Test that appropriate exceptions are thrown
 
 ---
 

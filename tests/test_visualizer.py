@@ -7,7 +7,7 @@ import pytest
 from ppinsight import visualizer as vis
 
 # setup variables
-models = ['../dummy_scores/model_1.csv','/home/fmclary/CSE583/PPInsight/dummy_scores/model_2.csv','/home/fmclary/CSE583/PPInsight/dummy_scores/model_3.csv']
+models = ['../examples/dummy_scores/model_1.csv','../examples/dummy_scores/model_2.csv','../examples/dummy_scores/model_3.csv']
 
 def test_not_a_list():
     """Edge test to ensure function throws TypeError if passed a non-list object"""
