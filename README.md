@@ -127,7 +127,7 @@ Testing and reproducibility:
 - Create simple test files (like three known interacting protein pairs in a pairs.csv file).
 - Write “test stubs” — mini functions that pretend to run a model but always return the same score. These let you test your plotting and data-handling code without needing to re-run expensive real models.
 
-## Task 3 — plot interaction scores (D3 visualizations)  
+## Task 3 — plot interaction scores
 This task turns the `scores.tsv` table into visuals. For each metric type (one chart per metric—e.g., DOCKQ, RMSD), you can plot a matplotlib bar chart that compares the models' interaction scores for your chosen protein pair. The resulting plots can be copied or saved directly from your code editor.
 
 Testing and examples:
