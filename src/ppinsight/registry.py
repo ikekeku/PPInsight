@@ -34,7 +34,10 @@ from __future__ import annotations
 import glob
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Protocol
+from typing import Callable, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 # ---------------------------------------------------------------------------

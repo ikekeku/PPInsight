@@ -7,6 +7,12 @@ hw3README.md
 software_design_text.txt
 yourprevconvo.md
 
+# Maintainer session context (not project docs — internal reasoning only).
+# ⚠️  DO NOT DELETE these files. They are intentionally kept local (gitignored)
+#     so the maintainer can reference them across future sessions.
+docs/key_decisions_log.md
+docs/non_negotiables.md
+
 # Python cache and compiled files
 __pycache__/
 **/__pycache__/
