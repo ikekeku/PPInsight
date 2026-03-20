@@ -5,12 +5,9 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  # vvv modern numpy compatible with many packages
   - numpy>=1.24
   - pandas
-  # vvv avoids very old matplotlib builds; conda-forge will provide compatible binaries
   - matplotlib>=3.6
-  - altair
   - requests
   - biopython
   - pytest
@@ -18,7 +15,8 @@ dependencies:
   - ruff
   - mpi4py
   - zlib
-  - haddock_biobb
+  - haddock_biobb==2025.5
   - pip
   - pip:
     - lightdock
+    - pyrosetta-installer

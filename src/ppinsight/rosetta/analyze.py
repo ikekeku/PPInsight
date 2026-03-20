@@ -5,10 +5,18 @@ This module handles:
 - Sorting and ranking docking results
 - Calculating average scores
 - Statistical analysis
+- Decoy clustering (optional, requires scipy + PyRosetta)
 """
 
+import logging
 import statistics
 import csv
+import warnings
+from pathlib import Path
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def get_top_scores(results, top_n=20):
@@ -187,3 +195,89 @@ def export_scores_to_csv(results, output_path):
         # Data
         for result in results:
             writer.writerow([result['run'], result['score']])
+
+
+# ---------------------------------------------------------------------------
+# Decoy clustering (optional)
+# ---------------------------------------------------------------------------
+
+def cluster_and_rank(
+    scores_csv: str | Path,
+    pdb_dir: str | Path,
+    *,
+    score_col: str = "total_score",
+    top_n: int = 200,
+    rmsd_cutoff: float = 4.0,
+    output_csv: str | Path | None = None,
+) -> pd.DataFrame | None:
+    """Cluster Rosetta decoys by Cα-RMSD and (optionally) write results.
+
+    This is a thin convenience wrapper around
+    :func:`ppinsight.rosetta.cluster.cluster_decoys` that:
+
+    * reads a CSV/TSV score file
+    * runs clustering
+    * saves the annotated DataFrame to *output_csv* (default:
+      ``clustered_scores.csv`` next to *scores_csv*)
+    * returns the clustered DataFrame
+
+    If ``scipy`` or ``pyrosetta`` are not installed the function issues a
+    warning and returns *None* instead of raising.
+
+    Parameters
+    ----------
+    scores_csv : path-like
+        Score file (CSV produced by the pipeline, or a ``.sc`` file
+        previously converted to CSV).
+    pdb_dir : path-like
+        Directory containing the decoy PDB files.
+    score_col, top_n, rmsd_cutoff
+        Forwarded to :func:`cluster_decoys`.
+    output_csv : path-like, optional
+        Where to write the clustered output.  Defaults to
+        ``<scores_csv_dir>/clustered_scores.csv``.
+
+    Returns
+    -------
+    DataFrame or None
+    """
+    try:
+        from ppinsight.rosetta.cluster import cluster_decoys
+    except ImportError as exc:
+        warnings.warn(
+            f"Cannot cluster decoys — missing dependency: {exc}. "
+            "Install scipy and pyrosetta for clustering support.",
+            stacklevel=2,
+        )
+        return None
+
+    scores_csv = Path(scores_csv)
+    pdb_dir = Path(pdb_dir)
+
+    # Read scores
+    sep = "\t" if scores_csv.suffix == ".tsv" else ","
+    df = pd.read_csv(scores_csv, sep=sep)
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    try:
+        result = cluster_decoys(
+            df, pdb_dir,
+            score_col=score_col,
+            top_n=top_n,
+            rmsd_cutoff=rmsd_cutoff,
+        )
+    except Exception as exc:
+        warnings.warn(
+            f"Clustering failed: {exc}",
+            stacklevel=2,
+        )
+        return None
+
+    # Write output — defaults to "clustered_scores.csv" next to the
+    # original scores file, which is what collect_scores looks for first.
+    if output_csv is None:
+        output_csv = scores_csv.parent / "clustered_scores.csv"
+    result.to_csv(output_csv, index=False)
+    logger.info("Clustered scores written to %s", output_csv)
+
+    return result

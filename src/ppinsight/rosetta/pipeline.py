@@ -28,8 +28,8 @@ class DockingPipeline:
         top_n: Number of top scores to average for final result
 
     Example:
-        >>> path1 = "../../PPInsight/examples/ppinsight_data/input_files/2UUY_lig.pdb"
-        >>> path2 = "../../PPInsight/examples/ppinsight_data/input_files/2UUY_rec.pdb"
+        >>> path1 = "data/input/2UUY_lig.pdb"
+        >>> path2 = "data/input/2UUY_rec.pdb"
         >>> pipeline = DockingPipeline(path1, path2, n_runs=50)
         >>> result = pipeline.run()
         >>> print(f"Final docking score: {result['final_score']:.2f}")
@@ -40,7 +40,8 @@ class DockingPipeline:
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     def __init__(self, protein1_pdb, protein2_pdb, n_runs=10, top_n=20,
-                 relax=True, jump_distance=15.0, verbose=True):
+                 relax=True, jump_distance=15.0, verbose=True,
+                 cluster=True, cluster_top_n=200, rmsd_cutoff=4.0):
         """
         Initialize the docking pipeline.
 
@@ -52,6 +53,9 @@ class DockingPipeline:
             relax: If True, relax structures before docking (default: True)
             jump_distance: Initial separation distance in Å (default: 15.0)
             verbose: If True, print progress messages (default: True)
+            cluster: If True, cluster decoys after docking (default: True)
+            cluster_top_n: Number of top decoys to cluster (default: 200)
+            rmsd_cutoff: Cα-RMSD cutoff in Å for clustering (default: 4.0)
         """
         self.protein1_pdb = Path(protein1_pdb)
         self.protein2_pdb = Path(protein2_pdb)
@@ -66,11 +70,15 @@ class DockingPipeline:
         self.relax = relax
         self.jump_distance = jump_distance
         self.verbose = verbose
+        self.cluster = cluster
+        self.cluster_top_n = cluster_top_n
+        self.rmsd_cutoff = rmsd_cutoff
 
         # Results storage
         self.complex_pose = None
         self.docking_results = None
         self.analysis = None
+        self.clustered_df = None
 
     def prepare(self):
         """
@@ -165,7 +173,9 @@ class DockingPipeline:
         Run the complete docking pipeline.
 
         Returns:
-            Analysis dictionary with final score and statistics
+            Analysis dictionary with final score and statistics.
+            If clustering is enabled, the result also includes
+            ``'clustered_df'`` with the annotated DataFrame.
         """
         self.prepare()
         self.dock()

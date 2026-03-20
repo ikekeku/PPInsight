@@ -1,35 +1,49 @@
+"""Tests for the Rosetta docking pipeline.
+
+These tests require PyRosetta. If it is not installed, the entire module
+is skipped automatically.
+"""
+
 import pytest
+
+pyrosetta = pytest.importorskip("pyrosetta", reason="PyRosetta not installed")
 
 from ppinsight.docking import DockingPipeline
 
 
+# ── edge test (no real files needed) ──────────────────────────────
 
-def test_smoke():
-    pipeline = DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=10)
-    result = pipeline.run()
-    print(f"Score: {result['final_score']}")
-    return
-
-
-# one-shot test: test againts known value
-def test_oneshot():
-    pipeline = DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=10)
-    result = pipeline.run()
-    expected_score = -15.0  # hypothetical expected score
-    assert abs(result['final_score'] - expected_score) < 1.0
-    return
-
-# edge test 
 def test_edge_cases():
-    # Test with zero runs
+    """n_runs < 1 must raise ValueError."""
     with pytest.raises(ValueError, match="n_runs must be at least 1"):
-        pipeline = DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=0)
-        pipeline.run()
-    return
+        DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=0)
 
-# pattern test
-def test_pattern():
-    for n_runs in [5, 10, 20]:
-        pipeline = DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=n_runs)
-        complex_pose = pipeline.prepare()
-        assert complex_pose is not None
+
+# ── smoke test: structures load and pipeline starts ───────────────
+
+def test_smoke(pdb_rec, pdb_lig):
+    """Pipeline initialises and prepare() loads real PDBs."""
+    pipeline = DockingPipeline(pdb_rec, pdb_lig, n_runs=1, verbose=False)
+    pose = pipeline.prepare()
+    assert pose is not None
+
+
+# ── one-shot test: a single docking run completes ────────────────
+
+def test_oneshot(pdb_rec, pdb_lig):
+    """A single-run pipeline executes end-to-end."""
+    pipeline = DockingPipeline(pdb_rec, pdb_lig, n_runs=1, top_n=1, verbose=False)
+    result = pipeline.run()
+    assert "final_score" in result
+    # Score should be a finite number
+    assert isinstance(result["final_score"], (int, float))
+
+
+# ── pattern test: prepare works for various n_runs ───────────────
+
+def test_pattern(pdb_rec, pdb_lig):
+    """prepare() succeeds regardless of the n_runs value."""
+    for n_runs in [1, 2, 3]:
+        pipeline = DockingPipeline(pdb_rec, pdb_lig, n_runs=n_runs, verbose=False)
+        pose = pipeline.prepare()
+        assert pose is not None

@@ -2,7 +2,7 @@ import ppinsight
 from ppinsight import protein_fetch
 import pytest
 
-def test_smoke_walter():
+def test_smoke_walter(tmp_path, monkeypatch):
     """
     author: wmavila
     reviewer: mkamenetskiy
@@ -10,13 +10,14 @@ def test_smoke_walter():
 
     This test ensures that the get_uniprot_data() function runs without raising exceptions.
     """
+    monkeypatch.chdir(tmp_path)
     accession_ids = ["P69905", "P68871"] # human hemoglobin alpha and beta chains
     ppinsight.protein_fetch.get_uniprot_data(accession_ids, 
                                              fasta_file = "proteins.fasta",
                                              csv_file = "protein")
     return
 
-def test_oneshot_walter():
+def test_oneshot_walter(tmp_path, monkeypatch):
     """
     author: wmavila
     reviewer: mkamenetskiy
@@ -26,6 +27,7 @@ def test_oneshot_walter():
     This the human hemoglobin alpha chain, which we know houses 142 amino acids in its 
     sequence and corresponds to at least one structure (PDB) file.
     """
+    monkeypatch.chdir(tmp_path)
     accession_ids = ["P69905"]
     structured_data, pdb_info = ppinsight.protein_fetch.get_uniprot_data(accession_ids)
     expected_length = 142
@@ -35,7 +37,7 @@ def test_oneshot_walter():
     
     assert pdb_info["P69905"] is not None, "Expected a PDB ID for P69905"
 
-def test_edgecase_walter():
+def test_edgecase_walter(tmp_path, monkeypatch):
     """
     author: wmavila
     reviewer: mkamenetskiy
@@ -45,12 +47,13 @@ def test_edgecase_walter():
     raise a ValueError instead of continuing silently and creating empty output folders.
 
     """
+    monkeypatch.chdir(tmp_path)
     accession_ids = ["fake_id"]
     with pytest.raises(ValueError) as excinfo:
         ppinsight.protein_fetch.get_uniprot_data(accession_ids)
     assert "Invalid UniProt accession ID" in str(excinfo.value)
 
-def test_pattern_walter():
+def test_pattern_walter(tmp_path, monkeypatch):
     """
     author: wmavila
     reviewer: mkamenetskiy
@@ -62,6 +65,7 @@ def test_pattern_walter():
     1. The sequence must not be empty.
     2. The ID should appear in the Description.
     """
+    monkeypatch.chdir(tmp_path)
     accession_ids = ["P69905", "P68871"]
     sequence_data, pdb_info = ppinsight.protein_fetch.get_uniprot_data(accession_ids)
 

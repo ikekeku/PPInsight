@@ -15,7 +15,7 @@ accession_list_3 = ['P04637', 'P68871', 'Q8NEC1']
 # csv_file="protein")
 
 
-def test_smoke_rita():
+def test_smoke_rita(tmp_path, monkeypatch):
     """
     author: mkamenetskiy
     reviewer: wmavila
@@ -23,6 +23,7 @@ def test_smoke_rita():
 
     Simple smoke test to ensure function runs
     """
+    monkeypatch.chdir(tmp_path)
     protein_fetch.get_uniprot_data(accession_list_simple,
                                    fasta_file="proteins.fasta",
                                    csv_file="protein")
@@ -30,7 +31,7 @@ def test_smoke_rita():
 
 
 # Taking out this test because with PEP8 structure things got weird with code
-def test_get_uniprot_data_p15692_structured():
+def test_get_uniprot_data_p15692_structured(tmp_path, monkeypatch):
     """
     author: mkamenetskiy
     reviewer: wmavila
@@ -39,6 +40,7 @@ def test_get_uniprot_data_p15692_structured():
     One-shot test with a known UniProt accession P15692 (VEGFA_HUMAN).
     Expected structured data should match exactly!
     """
+    monkeypatch.chdir(tmp_path)
     expected_structured_data = [{
         'ID': 'sp|P15692|VEGFA_HUMAN',
         'Name': 'sp|P15692|VEGFA_HUMAN',
@@ -53,7 +55,7 @@ def test_get_uniprot_data_p15692_structured():
     assert actual_structured_data == expected_structured_data
 
 
-def test_get_uniprot_data_p15692_pdbinfo():
+def test_get_uniprot_data_p15692_pdbinfo(tmp_path, monkeypatch):
     """
     author: mkamenetskiy
     reviewer: wmavila
@@ -62,6 +64,7 @@ def test_get_uniprot_data_p15692_pdbinfo():
     One-shot test using known UniProt accession P15692 (VEGFA_HUMAN).
     Expected PDB info should match exactly!
     """
+    monkeypatch.chdir(tmp_path)
     expected_pdb_info = {'P15692': '1BJ1'}
     actual_structured_data, actual_pdb_info = protein_fetch.get_uniprot_data(
         ["P15692"])
@@ -69,7 +72,7 @@ def test_get_uniprot_data_p15692_pdbinfo():
     assert actual_pdb_info == expected_pdb_info
 
 
-def test_nonexistent_protein():
+def test_nonexistent_protein(tmp_path, monkeypatch):
     """
     author: mkamenetskiy
     reviewer: wmavila
@@ -84,11 +87,12 @@ def test_nonexistent_protein():
     - Even if there are other protein IDs that are correct, I want the
     function to stop
     """
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="Invalid UniProt accession ID"):
         protein_fetch.get_uniprot_data(["P000000000"])
 
 
-def test_uniprot_fasta_parsing_pattern():
+def test_uniprot_fasta_parsing_pattern(tmp_path, monkeypatch):
     """
     author: mkamenetskiy
     reviewer: wmavila
@@ -97,6 +101,8 @@ def test_uniprot_fasta_parsing_pattern():
     This will be a pattern test to ensure the number of parsed records equals
     the number of IDs that were provided.
     """
+    monkeypatch.chdir(tmp_path)
+
     def test(accession_ids):
         structured_data, _ = protein_fetch.get_uniprot_data(accession_ids)
         assert len(structured_data) == len(accession_ids)

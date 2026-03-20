@@ -63,5 +63,4 @@ jobs:
 
       - name: Run Tests
         run: |
-          # Added ignores to the rosetta docking and test_visualizer since they were not intended to completely pass 
-          python -m pytest --cov=ppinsight --cov-report=term-missing --ignore=tests/test_rosetta_docking.py --ignore=tests/test_visualizer.py  # CHANGED: Added --ignore flags to skip failing tests
+          python -m pytest --cov=ppinsight --cov-report=term-missing

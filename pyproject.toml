@@ -21,24 +21,42 @@ classifiers = [
     "Operating System :: OS Independent"
 ]
 
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 dependencies = [
     "numpy",
     "pandas",
     "matplotlib>=3.6.0",
-    "altair",
     "requests>=2.25.0",
     "biopython>=1.79",
-    "tenacity>=8.0.1",
+    "lightdock",
+    "networkx",       # required by DockQ and by Rosetta clustering
+]
+
+[project.optional-dependencies]
+# DockQ enables the ppinsight.quality module (CAPRI quality assessment).
+# We install from a fork that supports numpy ≥ 2.0 (upstream PR #61).
+# Once upstream DockQ releases a numpy-2-compatible version, replace this
+# with a simple:  "dockq>=2.2"
+quality = [
+    "dockq @ git+https://github.com/nrontsis/DockQ.git@update-to-numpy>2",
+]
+dev = [
     "pytest",
     "pytest-cov",
     "ruff",
-    "lightdock"
 ]
 
 [project.scripts]
+ppinsight = "ppinsight.cli:main"
+protein_fetch = "ppinsight.protein_fetch:main"
 pdb_to_lightdock = "ppinsight.pdb_to_lightdock:main"
 pdb_to_haddock = "ppinsight.pdb_to_haddock:main"
+pdb_to_rosetta = "ppinsight.pdb_to_rosetta:main"
+compare_scores = "ppinsight.visualizer:main"
+collect_scores = "ppinsight.collect_scores:main"
+parse_pairs = "ppinsight.parse_pairs:main"
+batch_dock = "ppinsight.batch_dock:main"
+ppinsight_quality = "ppinsight.quality:main"
 
 # Optional upgrades beyond the default ruff rules
 [tool.ruff.lint]
