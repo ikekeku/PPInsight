@@ -101,28 +101,11 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
-        "--jump-distance", type=float, default=15.0,
-        help=(
-            "Initial rigid-body separation distance in Å (default: 15.0).  "
-            "Controls how far apart the partners start before the docking "
-            "search.  15 Å is standard; increase for very large proteins "
-            "or decrease for local refinement of near-native poses."
-        ),
-    )
-    parser.add_argument(
         "--save-top", type=int, default=0,
         help=(
             "Save the top N docked structures as PDB files (default: 0 = "
             "don't save).  Enable when you need to visualise or further "
             "analyse the best poses (e.g. in PyMOL or for DockQ evaluation)."
-        ),
-    )
-    parser.add_argument(
-        "--save-scores", action="store_true",
-        help=(
-            "Save all per-decoy docking scores to a CSV file.  Required "
-            "for downstream clustering (--no-cluster is implicit without "
-            "this) and for 'ppinsight collect' to parse Rosetta results."
         ),
     )
     parser.add_argument(
@@ -219,7 +202,6 @@ def main(argv=None):
         n_runs=args.n_runs,
         top_n=args.top_n,
         relax=not args.no_relax,
-        jump_distance=args.jump_distance,
         verbose=verbose,
     )
     result = pipeline.run()
@@ -228,16 +210,16 @@ def main(argv=None):
     if args.save_top > 0:
         pipeline.save_top_structures(output_dir, top_n=args.save_top)
 
-    if args.save_scores:
-        csv_path = os.path.join(output_dir, "docking_scores.csv")
-        pipeline.save_scores(csv_path)
+    # Always save per-decoy scores — needed for downstream clustering
+    # and for 'ppinsight collect' to parse Rosetta results.
+    csv_path = os.path.join(output_dir, "docking_scores.csv")
+    pipeline.save_scores(csv_path)
 
     # ── optional clustering ──────────────────────────────────────
     # After docking, cluster decoys by Cα-RMSD to identify distinct
     # binding modes.  The best-scoring member of the largest cluster
     # is the recommended prediction (standard Rosetta best practice).
-    if not args.no_cluster and args.save_scores:
-        csv_path = os.path.join(output_dir, "docking_scores.csv")
+    if not args.no_cluster:
         if os.path.isfile(csv_path):
             try:
                 from ppinsight.rosetta.analyze import cluster_and_rank

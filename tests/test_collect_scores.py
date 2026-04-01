@@ -273,8 +273,9 @@ class TestCLI:
         assert (df["proteinB"] == "ligB").all()
 
     def test_summary_flag(self, haddock_dir, tmp_path, capsys):
+        """Summary is now always printed (no flag needed)."""
         out = str(tmp_path / "out.tsv")
-        collect_scores.main([haddock_dir, "-o", out, "--summary"])
+        collect_scores.main([haddock_dir, "-o", out])
         captured = capsys.readouterr()
         assert "Summary" in captured.out
 

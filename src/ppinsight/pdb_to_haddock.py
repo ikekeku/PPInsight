@@ -581,15 +581,6 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
-        "--haddock-cmd",
-        default="haddock3",
-        help=(
-            "Command to invoke HADDOCK (default: 'haddock3').  Override to "
-            "point at a wrapper script, a conda-run prefix, or 'echo' for "
-            "dry-run testing without HADDOCK installed."
-        ),
-    )
-    parser.add_argument(
         "--overwrite",
         action="store_true",
         help=(
@@ -603,18 +594,11 @@ def main(argv=None):
         "--container",
         default="auto",
         help=(
-            "Container runtime: 'auto', 'docker', or 'apptainer' "
-            "(default: 'auto').  'auto' probes the system for an available "
-            "runtime.  Use this when HADDOCK3 is distributed as a container "
-            "image rather than a native install."
-        ),
-    )
-    parser.add_argument(
-        "--container-image",
-        default=CONTAINER_IMAGE,
-        help=(
-            "Container image to use when running HADDOCK inside a container.  "
-            "Override this if you host a custom or newer image."
+            "Container runtime or image.  Accepted values: 'auto' (default, "
+            "probes for docker/apptainer), 'docker', 'apptainer', or a full "
+            "container image URI (e.g. 'ghcr.io/haddocking/haddock3:latest') "
+            "which implies auto-detected runtime.  Use this when HADDOCK3 is "
+            "distributed as a container image rather than a native install."
         ),
     )
     parser.add_argument(
@@ -646,6 +630,17 @@ def main(argv=None):
               "your PDB files.", file=sys.stderr)
         sys.exit(2)
 
+    # Parse --container: if value contains '/' or ':', treat as a custom
+    # image URI with auto-detected runtime.  Otherwise it's a runtime name.
+    _RUNTIMES = {"auto", "docker", "apptainer", "singularity"}
+    container_val = args.container
+    if container_val in _RUNTIMES:
+        container_runtime = container_val
+        container_image = CONTAINER_IMAGE
+    else:
+        container_runtime = "auto"
+        container_image = container_val
+
     # Run the pipeline
     try:
         run_dir, cfg_path, executed_cmd = haddock_pipeline(
@@ -656,10 +651,10 @@ def main(argv=None):
             ncores=args.ncores,
             ambig=args.ambig,
             run_haddock=args.run,
-            haddock_cmd=args.haddock_cmd,
+            haddock_cmd="haddock3",
             overwrite=args.overwrite,
-            container=args.container,
-            container_image=args.container_image,
+            container=container_runtime,
+            container_image=container_image,
             workspace_root=_project_root(),
         )
     except FileExistsError as e:

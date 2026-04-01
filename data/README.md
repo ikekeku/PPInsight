@@ -116,7 +116,7 @@ ppinsight batch data/input/pairs/pairs.csv \
 
 # 4. Collect scores
 ppinsight collect data/output/lightdock_runs data/output/haddock_runs \
-    --pairs data/input/pairs/pairs.csv -o scores.tsv --summary
+    --pairs data/input/pairs/pairs.csv -o scores.tsv
 
 # 5. Compare / classify / plot
 ppinsight compare scores.tsv -m dockq --classify

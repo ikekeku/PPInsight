@@ -80,7 +80,7 @@ ppinsight haddock 2UUY_rec 2UUY_lig --run              # also execute
 ppinsight lightdock 2UUY_rec 2UUY_lig --steps 100 --generate
 
 # Rosetta (requires PyRosetta)
-ppinsight rosetta 2UUY_rec 2UUY_lig --n-runs 5 --save-scores
+ppinsight rosetta 2UUY_rec 2UUY_lig --n-runs 5
 ```
 
 All docking CLIs accept `--input-dir <dir>` to restrict file search to a
@@ -92,7 +92,7 @@ Aggregate docking outputs into a single unified scores file:
 
 ```bash
 ppinsight collect examples/haddock3/run1-test examples/lightdock/simulation \
-    --pair e2aP:hpr -o scores.tsv --summary
+    --pair e2aP:hpr -o scores.tsv
 # standalone:
 collect_scores examples/haddock3/run1-test -o scores.tsv
 ```
@@ -100,19 +100,26 @@ collect_scores examples/haddock3/run1-test -o scores.tsv
 ### 4. Visualise & compare
 
 ```bash
-# Bar chart comparing a metric across models
+# Violin plot (default) — always prints a tabular summary first
 ppinsight compare scores.tsv --metric dockq
 
 # Filter by protein pair and save to PNG
 ppinsight compare scores.tsv --metric dockq --pair 2UUY_rec:2UUY_lig -o plot.png
+
+# Tabular summary only (no plot)
+ppinsight compare scores.tsv --metric dockq --table
+
+# CAPRI quality classification (high/medium/acceptable/incorrect)
+ppinsight compare scores.tsv --capri-quality
+ppinsight compare scores.tsv --plot-type quality_bar -o quality.png
 
 # Compare per-model files side by side
 ppinsight compare haddock_scores.tsv rosetta_scores.csv \
     --metric score --names HADDOCK Rosetta
 
 # Discover what's in a scores file
-ppinsight compare scores.tsv --metric dockq --list-metrics
-ppinsight compare scores.tsv --metric dockq --list-pairs
+ppinsight compare scores.tsv --list-metrics
+ppinsight compare scores.tsv --list-pairs
 ```
 
 ### 5. Parse interaction tables & batch-dock
@@ -237,3 +244,14 @@ See [LICENSE](LICENSE).
 - [HADDOCK docs](https://wenmr.science.uu.nl/haddock2.4/)
 - [LightDock](https://github.com/lightdock/lightdock)
 - [Rosetta / PyRosetta](https://rosettacommons.org)
+
+### CAPRI quality classification thresholds
+
+The `--capri-quality` flag and `quality_bar` plot classify docked
+predictions into four tiers (high / medium / acceptable / incorrect)
+using published community thresholds:
+
+| Source | DOI | Used for |
+|--------|-----|----------|
+| Lensink MF, Velankar S, Wodak SJ (2016). *Proteins* 84(S1):323-348 | [10.1002/prot.25007](https://doi.org/10.1002/prot.25007) | fnat + Lrms + irms thresholds (Table 3) |
+| Basu S, Wallner B (2016). *PLoS ONE* 11(8):e0161879 | [10.1371/journal.pone.0161879](https://doi.org/10.1371/journal.pone.0161879) | DockQ fallback thresholds |

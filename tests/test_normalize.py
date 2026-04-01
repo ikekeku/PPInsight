@@ -12,7 +12,7 @@ from ppinsight.visualizer import (
     violin_plot,
     score_heatmap,
     roc_curve_plot,
-    rank_comparison_scatter,
+    model_agreement_scatter,
 )
 from ppinsight.collect_scores import (
     _parse_lightdock_clusters,
@@ -445,8 +445,9 @@ class TestROCCurve:
         assert os.path.isfile(out)
 
 
-class TestRankScatter:
+class TestModelAgreementScatter:
     def test_basic(self):
+        """Two models scoring the same pairs on the same metric."""
         df = pd.DataFrame({
             "model": ["m1"] * 3 + ["m2"] * 3,
             "score_type": ["s"] * 6,
@@ -454,10 +455,11 @@ class TestRankScatter:
             "proteinA": ["A", "B", "C"] * 2,
             "proteinB": ["X", "Y", "Z"] * 2,
         })
-        fig = rank_comparison_scatter(df, metric="s", model_x="m1", model_y="m2")
+        fig = model_agreement_scatter(df, metric="s", model_x="m1", model_y="m2")
         assert fig is not None
 
     def test_no_common_pairs_raises(self):
+        """Models with disjoint pairs should raise ValueError."""
         df = pd.DataFrame({
             "model": ["m1", "m2"],
             "score_type": ["s", "s"],
@@ -466,4 +468,29 @@ class TestRankScatter:
             "proteinB": ["B", "D"],
         })
         with pytest.raises(ValueError, match="No common pairs"):
-            rank_comparison_scatter(df, metric="s", model_x="m1", model_y="m2")
+            model_agreement_scatter(df, metric="s", model_x="m1", model_y="m2")
+
+    def test_save_to_file(self, tmp_path):
+        df = pd.DataFrame({
+            "model": ["m1"] * 3 + ["m2"] * 3,
+            "score_type": ["s"] * 6,
+            "score_value": [1.0, 2.0, 3.0, 3.5, 4.5, 5.5],
+            "proteinA": ["A", "B", "C"] * 2,
+            "proteinB": ["X", "Y", "Z"] * 2,
+        })
+        out = str(tmp_path / "scatter.png")
+        model_agreement_scatter(df, metric="s", model_x="m1", model_y="m2", output=out)
+        assert os.path.isfile(out)
+
+    def test_with_labels(self):
+        """Points should be coloured by label when available."""
+        df = pd.DataFrame({
+            "model": ["m1"] * 4 + ["m2"] * 4,
+            "score_type": ["s"] * 8,
+            "score_value": [1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5],
+            "proteinA": ["A", "B", "C", "D"] * 2,
+            "proteinB": ["X", "Y", "Z", "W"] * 2,
+            "label": ["interaction", "interaction", "non-interaction", "non-interaction"] * 2,
+        })
+        fig = model_agreement_scatter(df, metric="s", model_x="m1", model_y="m2")
+        assert fig is not None

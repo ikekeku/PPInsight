@@ -191,8 +191,15 @@ def _run_lightdock_ranking(working_dir, steps):
     Runs ``lgd_rank.py`` which reads all ``cluster.repr`` files and writes
     a ``rank_by_scoring.list`` (or ``rank_by_luciferin.list``) at the
     simulation root.
+
+    ``lgd_rank.py`` requires two positional arguments: ``num_swarms`` and
+    ``steps``.
     """
-    cmd = ["lgd_rank.py", str(steps), "-c", "1"]
+    num_swarms = len(glob.glob(os.path.join(working_dir, "swarm_*")))
+    if num_swarms == 0:
+        warnings.warn("No swarm_* directories found — skipping ranking.")
+        return
+    cmd = ["lgd_rank.py", str(num_swarms), str(steps), "-c", "1"]
     run_command(cmd, cwd=working_dir)
 
 
@@ -340,17 +347,6 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
-        "--swarm-list",
-        type=str,
-        default=None,
-        help=(
-            "Comma-separated list of swarm indices to run (e.g. '0,1,2').  "
-            "Use this to re-run only specific swarms after inspecting "
-            "preliminary results, or to parallelise across machines by "
-            "assigning different swarm ranges to each node."
-        ),
-    )
-    parser.add_argument(
         "--cores",
         type=int,
         default=1,
@@ -442,11 +438,7 @@ def main(argv=None):
         "swarms": args.swarms,
         "glowworms": args.glowworms,
         "steps": args.steps,
-        "swarm_list": (
-            [int(x) for x in args.swarm_list.split(",") if x.strip()]
-            if args.swarm_list
-            else None
-        ),
+        "swarm_list": None,
         "cores": args.cores,
         "anm": not args.no_anm,
         "scoring": args.scoring,

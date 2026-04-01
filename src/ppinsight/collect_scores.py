@@ -765,15 +765,6 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
-        "--summary",
-        action="store_true",
-        help=(
-            "Print a summary table (count, mean, min, max per score type) "
-            "after writing the file.  Handy for a quick sanity check that "
-            "scores are in the expected range."
-        ),
-    )
-    parser.add_argument(
         "--pairs",
         default=None,
         help=(
@@ -882,14 +873,14 @@ def main(argv=None):
     df.to_csv(out, sep=sep, index=False)
     print(f"Wrote {len(df)} score rows to {out}")
 
-    if args.summary:
-        print("\n── Summary ──")
-        summary = (
-            df.groupby(["model", "score_type"])["score_value"]
-            .agg(["count", "mean", "min", "max"])
-            .reset_index()
-        )
-        print(summary.to_string(index=False))
+    # Always print a summary so the user can sanity-check score ranges.
+    print("\n── Summary ──")
+    summary = (
+        df.groupby(["model", "score_type"])["score_value"]
+        .agg(["count", "mean", "min", "max"])
+        .reset_index()
+    )
+    print(summary.to_string(index=False))
 
 
 if __name__ == "__main__":

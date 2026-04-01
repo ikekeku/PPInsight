@@ -30,6 +30,43 @@ import sys
 
 from matplotlib import pyplot as plt
 import pandas as pd
+import seaborn as sns
+
+
+# ---------------------------------------------------------------------------
+# Theme configuration
+# ---------------------------------------------------------------------------
+
+# Available themes the user can pick from via --theme.
+THEMES: dict[str, dict] = {
+    "whitegrid-Set2":     {"style": "whitegrid",  "palette": "Set2"},
+    "whitegrid-husl":     {"style": "whitegrid",  "palette": "husl"},
+    "whitegrid-deep":     {"style": "whitegrid",  "palette": "deep"},
+    "whitegrid-muted":    {"style": "whitegrid",  "palette": "muted"},
+    "white-pastel":       {"style": "white",      "palette": "pastel"},
+    "ticks-colorblind":   {"style": "ticks",      "palette": "colorblind"},
+    "darkgrid-Set2":      {"style": "darkgrid",   "palette": "Set2"},
+    "white-rocket":       {"style": "white",      "palette": "rocket_r"},
+    "ticks-viridis":      {"style": "ticks",      "palette": "viridis"},
+}
+
+DEFAULT_THEME = "whitegrid-Set2"
+
+
+def apply_theme(name: str = DEFAULT_THEME) -> None:
+    """Apply a named PPInsight theme (seaborn style + palette).
+
+    Parameters
+    ----------
+    name : str
+        Key in :data:`THEMES`.  Falls back to :data:`DEFAULT_THEME` if
+        *name* is not recognised.
+    """
+    cfg = THEMES.get(name, THEMES[DEFAULT_THEME])
+    sns.set_theme(style=cfg["style"], palette=cfg["palette"],
+                  font_scale=1.05,
+                  rc={"figure.dpi": 150, "savefig.dpi": 180,
+                      "axes.edgecolor": ".3", "axes.linewidth": 0.8})
 
 
 # ---------------------------------------------------------------------------
@@ -143,11 +180,29 @@ def compare_scores(
         means.append(col.mean())
         stds.append(col.std() if len(col) > 1 else 0.0)
 
-    fig, ax = plt.subplots()
-    ax.bar(models, means, yerr=stds, capsize=5, edgecolor="black")
+    # Warn if error bars dwarf the bars — bar chart is the wrong
+    # visualisation for high-variance data.
+    import warnings as _warnings
+    for m_val, s_val, name in zip(means, stds, models):
+        if m_val != 0 and abs(s_val / m_val) > 1.5:
+            _warnings.warn(
+                f"'{name}' has std ({s_val:.2f}) much larger than the mean "
+                f"({m_val:.2f}).  Consider --plot-type box for a compact "
+                "summary (median + quartiles), or --plot-type violin for "
+                "the full distribution.",
+                stacklevel=2,
+            )
+
+    palette = sns.color_palette(n_colors=len(models))
+    bar_width = max(0.45, min(0.8, 0.65 * len(models)))
+    fig, ax = plt.subplots(figsize=(max(6, len(models) * 2.5), 5))
+    bars = ax.bar(models, means, width=bar_width, yerr=stds, capsize=6,
+                  color=palette, edgecolor="white", linewidth=0.8,
+                  error_kw={"linewidth": 1.5})
     ax.set_xlabel("Interaction model")
     ax.set_ylabel(f"{score_type}")
     ax.set_title(plot_title or f"{score_type} by model")
+    sns.despine(ax=ax)
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -166,6 +221,10 @@ def compare_scores_unified(
     output: str | None = None,
 ) -> plt.Figure:
     """Bar chart from a **unified** scores DataFrame.
+
+    When the data contains **≥ 2 protein pairs** (and no ``--pair`` filter
+    is active), each pair gets its own side-by-side subplot so bars are
+    never averaged across different interactions.
 
     Parameters
     ----------
@@ -205,12 +264,56 @@ def compare_scores_unified(
             + (f" pair={pair}" if pair else "")
         )
 
-    # Build per-model frames for compare_scores
+    pa, pb, pair_tuples = _detect_pairs(df)
+    n_pairs = len(pair_tuples)
+
+    # ── Facet by pair when ≥ 2 pairs and no explicit --pair filter ─
+    if n_pairs >= 2 and pair is None:
+        fig, axes = plt.subplots(1, n_pairs,
+                                 figsize=(max(5, 3 * n_pairs) * 1.2, 5),
+                                 sharey=True)
+        if n_pairs == 1:
+            axes = [axes]
+        for idx, (a, b) in enumerate(pair_tuples):
+            ax = axes[idx]
+            sub = df[(df[pa] == a) & (df[pb] == b)]
+            grouped = sub.groupby("model")
+            model_names = sorted(grouped.groups.keys())
+            means = [pd.to_numeric(grouped.get_group(m)["score_value"],
+                                   errors="coerce").dropna().mean()
+                     for m in model_names]
+            stds = [pd.to_numeric(grouped.get_group(m)["score_value"],
+                                  errors="coerce").dropna().std()
+                    if len(grouped.get_group(m)) > 1 else 0.0
+                    for m in model_names]
+            palette = sns.color_palette(n_colors=len(model_names))
+            bar_w = max(0.45, min(0.8, 0.65 * len(model_names)))
+            ax.bar(model_names, means, width=bar_w, yerr=stds,
+                   capsize=6, color=palette, edgecolor="white",
+                   linewidth=0.8, error_kw={"linewidth": 1.5})
+            ax.set_title(_pair_label(a, b), fontsize=10)
+            ax.set_xlabel("")
+            ax.set_ylabel(metric if idx == 0 else "")
+            sns.despine(ax=ax)
+
+        suptitle = plot_title or f"{metric} by model"
+        fig.suptitle(suptitle, fontsize=13, y=1.02)
+        fig.tight_layout()
+        # Shared x-label centred across all facets
+        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=11)
+
+        if output:
+            fig.savefig(output, bbox_inches="tight", dpi=150)
+            print(f"Plot saved to {output}")
+        else:
+            plt.show()
+        return fig
+
+    # ── Single pair / explicit --pair — single-panel bar chart ────
     grouped = df.groupby("model")
     frames: list[pd.DataFrame] = []
     model_names: list[str] = []
     for name, group in grouped:
-        # Create a tiny DataFrame with a column named after the metric
         frame = pd.DataFrame({metric: pd.to_numeric(group["score_value"], errors="coerce")})
         frames.append(frame.reset_index(drop=True))
         model_names.append(str(name))
@@ -273,8 +376,6 @@ def compare_scores_by_label(
     -------
     matplotlib.figure.Figure
     """
-    import numpy as np
-
     df = scores_df.copy()
     if "score_type" in df.columns:
         df = df[df["score_type"].str.lower() == metric.lower()]
@@ -288,56 +389,21 @@ def compare_scores_by_label(
         )
 
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
-    labels_present = sorted(df["label"].dropna().unique())
     models = sorted(df["model"].unique())
-
-    # Compute means and stds per (model, label)
-    grouped = df.groupby(["model", "label"])["score_value"]
-    stats = grouped.agg(["mean", "std", "count"]).reset_index()
-
-    n_labels = len(labels_present)
     n_models = len(models)
-    x = np.arange(n_models)
-    width = 0.35
-    offsets = np.linspace(-width * (n_labels - 1) / 2, width * (n_labels - 1) / 2, n_labels)
 
-    # Colour map for labels
-    label_colors = {
-        "interaction": "#2196F3",       # blue
-        "non-interaction": "#FF5722",   # red-orange
-        "unknown": "#9E9E9E",           # grey
-    }
+    fig, ax = plt.subplots(figsize=(max(8, n_models * 2), 6))
+    sns.barplot(
+        data=df, x="model", y="score_value", hue="label",
+        order=models, errorbar="sd", capsize=0.08,
+        edgecolor="white", linewidth=0.8, ax=ax,
+    )
 
-    fig, ax = plt.subplots(figsize=(max(8, n_models * 1.5), 6))
-
-    for j, lbl in enumerate(labels_present):
-        means = []
-        stds = []
-        counts = []
-        for m in models:
-            sub = stats[(stats["model"] == m) & (stats["label"] == lbl)]
-            if len(sub):
-                means.append(sub["mean"].values[0])
-                stds.append(sub["std"].values[0] if sub["count"].values[0] > 1 else 0)
-                counts.append(int(sub["count"].values[0]))
-            else:
-                means.append(0)
-                stds.append(0)
-                counts.append(0)
-
-        color = label_colors.get(lbl, f"C{j}")
-        bars = ax.bar(
-            x + offsets[j], means, width, yerr=stds,
-            capsize=4, label=f"{lbl} (n={sum(counts)})",
-            color=color, edgecolor="black", alpha=0.85,
-        )
-
-    ax.set_xlabel("Docking Model")
+    ax.set_xlabel("Docking Engine")
     ax.set_ylabel(metric)
     ax.set_title(plot_title or f"{metric} — interaction vs non-interaction")
-    ax.set_xticks(x)
-    ax.set_xticklabels(models)
-    ax.legend()
+    ax.legend(title="Label", frameon=True, fancybox=True, framealpha=0.9)
+    sns.despine(ax=ax)
     fig.tight_layout()
 
     if output:
@@ -353,6 +419,27 @@ def compare_scores_by_label(
 # Additional plot types
 # ---------------------------------------------------------------------------
 
+def _detect_pairs(df: pd.DataFrame) -> tuple[str, str, list[tuple[str, str]]]:
+    """Return (colA, colB, pair_tuples) from a DataFrame.
+
+    Handles both lowercase and camelCase column names.  Returns empty
+    list when pair columns are absent.
+    """
+    if "proteina" in df.columns and "proteinb" in df.columns:
+        pa, pb = "proteina", "proteinb"
+    elif "proteinA" in df.columns and "proteinB" in df.columns:
+        pa, pb = "proteinA", "proteinB"
+    else:
+        return "", "", []
+    tuples = [tuple(r) for r in df[[pa, pb]].drop_duplicates().values.tolist()]
+    return pa, pb, tuples
+
+
+def _pair_label(a: str, b: str) -> str:
+    """Human-readable pair label for subplot titles."""
+    return f"{a} vs {b}"
+
+
 def violin_plot(
     scores_df: pd.DataFrame,
     metric: str,
@@ -362,10 +449,13 @@ def violin_plot(
 ) -> plt.Figure:
     """Violin plot showing the full score distribution per model.
 
-    Unlike a bar chart (which only shows the mean), a violin plot reveals
-    the **shape** of each model's score distribution — you can see whether
-    scores are tightly clustered or spread out, and whether there are
-    multiple peaks.
+    When the data contains **≥ 2 protein pairs**, each pair gets its own
+    side-by-side subplot so distributions are never merged across
+    different interactions.
+
+    Uses seaborn for rich rendering: inner quartile lines, optional
+    split by interaction label, and automatic pair annotation so the
+    user always knows which protein pair(s) are being evaluated.
 
     Parameters
     ----------
@@ -384,61 +474,253 @@ def violin_plot(
     -------
     matplotlib.figure.Figure
     """
-    import numpy as np
-
     df = scores_df.copy()
     if "score_type" in df.columns:
         df = df[df["score_type"].str.lower() == metric.lower()]
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
     df = df.dropna(subset=["score_value"])
 
-    models = sorted(df["model"].unique())
-    has_label = "label" in df.columns and split_by_label
+    if df.empty:
+        raise ValueError(f"No rows match metric='{metric}'")
 
-    fig, ax = plt.subplots(figsize=(max(8, len(models) * 2), 6))
+    models = sorted(df["model"].unique())
+    pa, pb, pair_tuples = _detect_pairs(df)
+    has_label = "label" in df.columns and split_by_label and df["label"].notna().any()
+
+    # ── Facet by pair when ≥ 2 pairs ──────────────────────────────
+    n_pairs = len(pair_tuples)
+    if n_pairs >= 2:
+        n_models = len(models)
+        panel_w = max(5, n_models * 2.0)
+        fig, axes = plt.subplots(1, n_pairs,
+                                 figsize=(panel_w * n_pairs, 6),
+                                 sharey=True)
+        if n_pairs == 1:
+            axes = [axes]
+        for idx, (a, b) in enumerate(pair_tuples):
+            ax = axes[idx]
+            sub = df[(df[pa] == a) & (df[pb] == b)]
+            sub_models = sorted(sub["model"].unique())
+            if has_label:
+                sns.violinplot(
+                    data=sub, x="model", y="score_value", hue="label",
+                    split=True, inner="quart", ax=ax, linewidth=0.8,
+                    density_norm="width", order=sub_models,
+                )
+                if idx == n_pairs - 1:
+                    ax.legend(title="Label", fontsize=8, title_fontsize=9)
+                else:
+                    ax.legend_.remove() if ax.get_legend() else None
+            else:
+                sns.violinplot(
+                    data=sub, x="model", y="score_value",
+                    inner="quart", ax=ax, linewidth=0.8,
+                    density_norm="width", order=sub_models,
+                )
+                sns.stripplot(
+                    data=sub, x="model", y="score_value",
+                    size=1.0, alpha=0.04, jitter=True, ax=ax,
+                    color=".2", order=sub_models, zorder=0,
+                )
+            ax.set_title(_pair_label(a, b), fontsize=10)
+            ax.set_xlabel("")
+            ax.set_ylabel(metric if idx == 0 else "")
+            sns.despine(ax=ax)
+
+        suptitle = plot_title or f"{metric} distribution by model"
+        fig.suptitle(suptitle, fontsize=13, y=1.02)
+        fig.tight_layout()
+        # Shared x-label centred across all facets
+        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=11)
+
+        if output:
+            fig.savefig(output, bbox_inches="tight", dpi=180)
+            print(f"Plot saved to {output}")
+        else:
+            plt.show()
+        return fig
+
+    # ── Single pair (or no pair columns) — single-panel plot ──────
+    pairs = [_pair_label(a, b) for a, b in pair_tuples]
+    n_models = len(models)
+    fig_w = max(7, n_models * 2.2)
+    fig, ax = plt.subplots(figsize=(fig_w, 6))
 
     if has_label:
-        labels_present = sorted(df["label"].dropna().unique())
-        label_colors = {"interaction": "#4CAF50", "non-interaction": "#F44336"}
-        positions = np.arange(len(models))
-
-        for i, lbl in enumerate(labels_present):
-            data = [
-                df[(df["model"] == m) & (df["label"] == lbl)]["score_value"].values
-                for m in models
-            ]
-            # Only plot if there's data
-            data = [d if len(d) > 0 else np.array([0.0]) for d in data]
-            offset = -0.2 + i * 0.4
-            parts = ax.violinplot(
-                data, positions=positions + offset,
-                showmeans=True, showmedians=True, widths=0.35,
-            )
-            color = label_colors.get(lbl, f"C{i}")
-            for pc in parts["bodies"]:
-                pc.set_facecolor(color)
-                pc.set_alpha(0.7)
-            # Dummy patch for legend
-            ax.bar([], [], color=color, label=lbl, alpha=0.7)
-
-        ax.set_xticks(positions)
-        ax.set_xticklabels(models)
-        ax.legend()
+        sns.violinplot(
+            data=df, x="model", y="score_value", hue="label",
+            split=True, inner="quart", ax=ax, linewidth=0.8,
+            density_norm="width", order=models,
+        )
+        ax.legend(title="Label", fontsize=8, title_fontsize=9)
     else:
-        data = [
-            df[df["model"] == m]["score_value"].values for m in models
-        ]
-        parts = ax.violinplot(data, showmeans=True, showmedians=True)
-        ax.set_xticks(range(1, len(models) + 1))
-        ax.set_xticklabels(models)
+        sns.violinplot(
+            data=df, x="model", y="score_value",
+            inner="quart", ax=ax, linewidth=0.8,
+            density_norm="width", order=models,
+        )
+        sns.stripplot(
+            data=df, x="model", y="score_value",
+            size=1.0, alpha=0.04, jitter=True, ax=ax,
+            color=".2", order=models, zorder=0,
+        )
 
-    ax.set_xlabel("Docking Model")
+    ax.set_xlabel("Docking Engine")
     ax.set_ylabel(metric)
-    ax.set_title(plot_title or f"{metric} distribution by model")
+
+    if plot_title:
+        title = plot_title
+    elif len(pairs) == 1:
+        title = f"{metric} distribution by model — {pairs[0]}"
+    else:
+        title = f"{metric} distribution by model"
+    ax.set_title(title)
+
+    sns.despine(ax=ax)
     fig.tight_layout()
 
     if output:
-        fig.savefig(output, bbox_inches="tight", dpi=150)
+        fig.savefig(output, bbox_inches="tight", dpi=180)
+        print(f"Plot saved to {output}")
+    else:
+        plt.show()
+    return fig
+
+
+def box_plot(
+    scores_df: pd.DataFrame,
+    metric: str,
+    split_by_label: bool = False,
+    plot_title: str | None = None,
+    output: str | None = None,
+) -> plt.Figure:
+    """Box plot showing median, quartiles, and outliers per model.
+
+    When the data contains **≥ 2 protein pairs**, each pair gets its own
+    side-by-side subplot so distributions are never merged across
+    different interactions.
+
+    A compact alternative to a violin plot — ideal when the data has
+    high variance and a bar chart's error bars would be misleading.
+    Shows the median (line), interquartile range (box), whiskers at
+    1.5 × IQR, and individual outliers beyond the whiskers.
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+        Unified scores file.
+    metric : str
+        Which ``score_type`` to plot.
+    split_by_label : bool
+        If True and a ``label`` column exists, draw separate boxes per
+        label (interaction vs non-interaction) for each model.
+    plot_title : str | None
+    output : str | None
+        Save path.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    df = scores_df.copy()
+    if "score_type" in df.columns:
+        df = df[df["score_type"].str.lower() == metric.lower()]
+    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
+    df = df.dropna(subset=["score_value"])
+
+    if df.empty:
+        raise ValueError(f"No rows match metric='{metric}'")
+
+    models = sorted(df["model"].unique())
+    pa, pb, pair_tuples = _detect_pairs(df)
+    has_label = "label" in df.columns and split_by_label and df["label"].notna().any()
+
+    flier_kw = {"marker": "o", "markersize": 3, "alpha": 0.4}
+
+    # ── Facet by pair when ≥ 2 pairs ──────────────────────────────
+    n_pairs = len(pair_tuples)
+    if n_pairs >= 2:
+        n_models = len(models)
+        panel_w = max(5, n_models * 2.0)
+        fig, axes = plt.subplots(1, n_pairs,
+                                 figsize=(panel_w * n_pairs, 6),
+                                 sharey=True)
+        if n_pairs == 1:
+            axes = [axes]
+        for idx, (a, b) in enumerate(pair_tuples):
+            ax = axes[idx]
+            sub = df[(df[pa] == a) & (df[pb] == b)]
+            sub_models = sorted(sub["model"].unique())
+            if has_label:
+                sns.boxplot(
+                    data=sub, x="model", y="score_value", hue="label",
+                    order=sub_models, ax=ax, linewidth=0.8,
+                    flierprops=flier_kw,
+                )
+                if idx == n_pairs - 1:
+                    ax.legend(title="Label", fontsize=8, title_fontsize=9)
+                else:
+                    ax.legend_.remove() if ax.get_legend() else None
+            else:
+                sns.boxplot(
+                    data=sub, x="model", y="score_value",
+                    order=sub_models, ax=ax, linewidth=0.8,
+                    flierprops=flier_kw,
+                )
+            ax.set_title(_pair_label(a, b), fontsize=10)
+            ax.set_xlabel("")
+            ax.set_ylabel(metric if idx == 0 else "")
+            sns.despine(ax=ax)
+
+        suptitle = plot_title or f"{metric} by model"
+        fig.suptitle(suptitle, fontsize=13, y=1.02)
+        fig.tight_layout()
+        # Shared x-label centred across all facets
+        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=11)
+
+        if output:
+            fig.savefig(output, bbox_inches="tight", dpi=180)
+            print(f"Plot saved to {output}")
+        else:
+            plt.show()
+        return fig
+
+    # ── Single pair (or no pair columns) — single-panel plot ──────
+    pairs = [_pair_label(a, b) for a, b in pair_tuples]
+    n_models = len(models)
+    fig_w = max(7, n_models * 2.2)
+    fig, ax = plt.subplots(figsize=(fig_w, 6))
+
+    if has_label:
+        sns.boxplot(
+            data=df, x="model", y="score_value", hue="label",
+            order=models, ax=ax, linewidth=0.8,
+            flierprops=flier_kw,
+        )
+        ax.legend(title="Label", fontsize=8, title_fontsize=9)
+    else:
+        sns.boxplot(
+            data=df, x="model", y="score_value",
+            order=models, ax=ax, linewidth=0.8,
+            flierprops=flier_kw,
+        )
+
+    ax.set_xlabel("Docking Engine")
+    ax.set_ylabel(metric)
+
+    if plot_title:
+        title = plot_title
+    elif len(pairs) == 1:
+        title = f"{metric} by model — {pairs[0]}"
+    else:
+        title = f"{metric} by model"
+    ax.set_title(title)
+
+    sns.despine(ax=ax)
+    fig.tight_layout()
+
+    if output:
+        fig.savefig(output, bbox_inches="tight", dpi=180)
         print(f"Plot saved to {output}")
     else:
         plt.show()
@@ -477,28 +759,30 @@ def score_heatmap(
     import numpy as np
 
     df = scores_df.copy()
+    # Normalize column names to lowercase (load_scores does this, but
+    # DataFrames built manually or in tests may use camelCase).
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     if "score_type" in df.columns:
         df = df[df["score_type"].str.lower() == metric.lower()]
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
     df = df.dropna(subset=["score_value"])
 
-    if "proteinA" not in df.columns or "proteinB" not in df.columns:
+    if "proteina" not in df.columns or "proteinb" not in df.columns:
         raise ValueError("Need proteinA and proteinB columns for heatmap")
 
-    df["pair"] = df["proteinA"] + " vs " + df["proteinB"]
+    df["pair"] = df["proteina"] + " vs " + df["proteinb"]
     pivot = df.pivot_table(
         index="pair", columns="model", values="score_value", aggfunc=agg,
     )
 
     fig, ax = plt.subplots(figsize=(max(6, len(pivot.columns) * 2),
-                                     max(4, len(pivot) * 0.4)))
-    im = ax.imshow(pivot.values, aspect="auto", cmap="RdYlGn")
-    ax.set_xticks(range(len(pivot.columns)))
-    ax.set_xticklabels(pivot.columns, rotation=45, ha="right")
-    ax.set_yticks(range(len(pivot.index)))
-    ax.set_yticklabels(pivot.index)
-    fig.colorbar(im, ax=ax, label=f"{metric} ({agg})")
+                                     max(4, len(pivot) * 0.6 + 1)))
+    sns.heatmap(
+        pivot, annot=True, fmt=".2f", cmap="RdYlGn", linewidths=0.5,
+        linecolor="white", ax=ax, cbar_kws={"label": f"{metric} ({agg})"},
+    )
     ax.set_title(plot_title or f"{metric} heatmap ({agg})")
+    ax.set_ylabel("")
     fig.tight_layout()
 
     if output:
@@ -540,6 +824,7 @@ def roc_curve_plot(
     import numpy as np
 
     df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     if "score_type" in df.columns:
         df = df[df["score_type"].str.lower() == metric.lower()]
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
@@ -553,14 +838,15 @@ def roc_curve_plot(
 
     # Aggregate to one score per (model, pair)
     agg = df.groupby(
-        ["model", "proteinA", "proteinB", "label"], as_index=False,
+        ["model", "proteina", "proteinb", "label"], as_index=False,
     )["score_value"].mean()
     agg["actual"] = (agg["label"].str.lower() == "interaction").astype(int)
 
     fig, ax = plt.subplots(figsize=(7, 7))
-    ax.plot([0, 1], [0, 1], "k--", alpha=0.3, label="Random (AUC=0.50)")
+    ax.plot([0, 1], [0, 1], "--", color=".6", alpha=0.5, label="Random (AUC=0.50)")
 
-    for model, grp in agg.groupby("model"):
+    palette = sns.color_palette(n_colors=len(agg["model"].unique()))
+    for idx, (model, grp) in enumerate(agg.groupby("model")):
         y_true = grp["actual"].values
         y_score = grp["score_value"].values
         if not higher_is_better:
@@ -587,14 +873,16 @@ def roc_curve_plot(
         # np.trapezoid.  We try the new name first for forward-compat.
         _trapz = getattr(np, "trapezoid", None) or np.trapz
         auc = _trapz(tpr_list, fpr_list)
-        ax.plot(fpr_list, tpr_list, label=f"{model} (AUC={auc:.3f})", linewidth=2)
+        ax.plot(fpr_list, tpr_list, label=f"{model} (AUC={auc:.3f})",
+                linewidth=2.2, color=palette[idx])
 
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
     ax.set_title(f"ROC Curve — {metric}")
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower right", frameon=True, fancybox=True, framealpha=0.9)
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
+    sns.despine(ax=ax)
     fig.tight_layout()
 
     if output:
@@ -605,62 +893,124 @@ def roc_curve_plot(
     return fig
 
 
-def rank_comparison_scatter(
+def model_agreement_scatter(
     scores_df: pd.DataFrame,
     metric: str,
     model_x: str,
     model_y: str,
     output: str | None = None,
 ) -> plt.Figure:
-    """Scatter plot comparing how two models rank the same protein pairs.
+    """Scatter plot: same metric, same pairs, one model per axis.
 
-    Each point is one pair.  Points are coloured by label (if available).
-    If both models agree on which pairs score high, points will cluster
-    along the diagonal.
+    Each point is one protein pair.  The x-coordinate is model A's mean
+    score for that pair; the y-coordinate is model B's.  If the two
+    engines rank pairs the same way, points cluster along the diagonal
+    — indicating harmonious scoring.
+
+    Pearson *r* is annotated on the plot so users can immediately
+    quantify the agreement.  Points are coloured by label when
+    interaction annotations are available.
 
     Parameters
     ----------
     scores_df : DataFrame
+        Unified scores (long format with ``score_type`` / ``score_value``).
     metric : str
+        Quality measure present in both models (e.g. ``"dockq"``).
     model_x, model_y : str
         Names of the two models to compare.
     output : str | None
     """
+    import numpy as np
+
     df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
     if "score_type" in df.columns:
         df = df[df["score_type"].str.lower() == metric.lower()]
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
     df = df.dropna(subset=["score_value"])
 
-    agg = df.groupby(
-        ["model", "proteinA", "proteinB"] + (["label"] if "label" in df.columns else []),
-        as_index=False,
-    )["score_value"].mean()
+    # Need pair columns to align rows across models
+    if "proteina" not in df.columns or "proteinb" not in df.columns:
+        raise ValueError(
+            "Need proteinA and proteinB columns to align pairs across "
+            "models.  Re-run 'ppinsight collect' with --pair."
+        )
 
-    dx = agg[agg["model"] == model_x].set_index(["proteinA", "proteinB"])
-    dy = agg[agg["model"] == model_y].set_index(["proteinA", "proteinB"])
+    # Aggregate to one score per (model, pair)
+    group_cols = ["model", "proteina", "proteinb"]
+    extra = ["label"] if "label" in df.columns else []
+    agg = df.groupby(group_cols + extra, as_index=False)["score_value"].mean()
+
+    dx = agg[agg["model"].str.lower() == model_x.lower()].set_index(
+        ["proteina", "proteinb"]
+    )
+    dy = agg[agg["model"].str.lower() == model_y.lower()].set_index(
+        ["proteina", "proteinb"]
+    )
+
+    if dx.empty:
+        raise ValueError(f"No rows for model '{model_x}' with metric '{metric}'")
+    if dy.empty:
+        raise ValueError(f"No rows for model '{model_y}' with metric '{metric}'")
+
     common = dx.index.intersection(dy.index)
     if len(common) == 0:
-        raise ValueError(f"No common pairs between {model_x} and {model_y}")
+        raise ValueError(
+            f"No common pairs between {model_x} and {model_y} for "
+            f"metric '{metric}'.  Both models must have scored the same "
+            f"protein pairs."
+        )
 
-    fig, ax = plt.subplots(figsize=(7, 7))
     x_vals = dx.loc[common, "score_value"].values
     y_vals = dy.loc[common, "score_value"].values
 
+    fig, ax = plt.subplots(figsize=(7, 7))
+
+    # Colour by label if available
     if "label" in dx.columns:
         labels = dx.loc[common, "label"].values
-        color_map = {"interaction": "#4CAF50", "non-interaction": "#F44336"}
-        colors = [color_map.get(str(l).lower(), "grey") for l in labels]
-        for lbl, c in color_map.items():
-            ax.scatter([], [], c=c, label=lbl, s=50)
-        ax.scatter(x_vals, y_vals, c=colors, alpha=0.7, s=40, edgecolors="black", linewidths=0.5)
-        ax.legend()
+        plot_df = pd.DataFrame({
+            model_x: x_vals, model_y: y_vals, "label": labels,
+        })
+        sns.scatterplot(
+            data=plot_df, x=model_x, y=model_y, hue="label",
+            ax=ax, alpha=0.7, s=45, edgecolor="white", linewidth=0.5,
+        )
+        ax.legend(frameon=True, fancybox=True, framealpha=0.9)
     else:
-        ax.scatter(x_vals, y_vals, alpha=0.7, s=40, edgecolors="black", linewidths=0.5)
+        ax.scatter(
+            x_vals, y_vals, alpha=0.7, s=45,
+            edgecolors="white", linewidths=0.5,
+        )
+
+    # Diagonal reference line (perfect agreement)
+    lo = min(x_vals.min(), y_vals.min())
+    hi = max(x_vals.max(), y_vals.max())
+    margin = (hi - lo) * 0.05 or 0.1
+    ax.plot(
+        [lo - margin, hi + margin], [lo - margin, hi + margin],
+        "--", color=".6", alpha=0.5, zorder=0, label="y = x",
+    )
+
+    # Pearson r
+    if len(common) >= 2:
+        r = np.corrcoef(x_vals, y_vals)[0, 1]
+        r_text = f"r = {r:.3f}" if not np.isnan(r) else "r = n/a"
+    else:
+        r_text = "r = n/a (< 2 points)"
+    ax.annotate(
+        f"{r_text}  (n = {len(common)} pairs)",
+        xy=(0.05, 0.95), xycoords="axes fraction",
+        fontsize=10, va="top",
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+    )
 
     ax.set_xlabel(f"{model_x} — {metric}")
     ax.set_ylabel(f"{model_y} — {metric}")
-    ax.set_title(f"Pair-level agreement: {model_x} vs {model_y}")
+    ax.set_title(f"Model agreement: {model_x} vs {model_y} ({metric})")
+    sns.despine(ax=ax)
     fig.tight_layout()
 
     if output:
@@ -793,6 +1143,476 @@ def get_metric_direction(metric: str) -> bool:
     if meta is not None:
         return meta["higher_is_better"]
     return True  # safe default
+
+
+# ---------------------------------------------------------------------------
+# CAPRI four-tier quality classification
+# ---------------------------------------------------------------------------
+#
+# Standard thresholds from the CAPRI assessment protocol.
+#
+# Reference:
+#   Lensink MF, Velankar S, Wodak SJ. (2016). "Prediction of homoprotein
+#   and heteroprotein complexes by protein docking and template-based
+#   modeling: A CASP-CAPRI experiment." Proteins, 84(Suppl 1):323-348.
+#   DOI: 10.1002/prot.25007  (Table 3)
+#
+# The table defines four quality tiers based on f(nat), L-rms, and I-rms:
+#
+#   High (★★★):     f(nat) ≥ 0.5  AND (Lrms ≤ 1.0  OR irms ≤ 1.0)
+#   Medium (★★):    f(nat) ≥ 0.3  AND (Lrms ≤ 5.0  OR irms ≤ 2.0)
+#   Acceptable (★): f(nat) ≥ 0.1  AND (Lrms ≤ 10.0 OR irms ≤ 4.0)
+#   Incorrect:      everything else
+#
+# PPInsight also supports DockQ-only classification when Lrms/irms are
+# unavailable, using thresholds from:
+#
+#   Basu S, Wallner B. (2016). "DockQ: A Quality Measure for
+#   Protein-Protein Docking Models." PLoS ONE 11(8):e0161879.
+#   DOI: 10.1371/journal.pone.0161879
+#
+#   High:       DockQ ≥ 0.80
+#   Medium:     DockQ ≥ 0.49
+#   Acceptable: DockQ ≥ 0.23
+#   Incorrect:  DockQ < 0.23
+
+CAPRI_QUALITY_TIERS = ("high", "medium", "acceptable", "incorrect")
+
+
+def capri_quality(
+    fnat: float | None = None,
+    lrmsd: float | None = None,
+    irmsd: float | None = None,
+    dockq: float | None = None,
+) -> str:
+    """Classify a single docking model into a CAPRI quality tier.
+
+    Uses the three-metric CAPRI protocol (f(nat) + Lrms + irms) when all
+    three values are available.  Falls back to DockQ-only classification
+    when RMSD values are missing.
+
+    Parameters
+    ----------
+    fnat : float or None
+        Fraction of native contacts (0–1).
+    lrmsd : float or None
+        Ligand RMSD in Å.
+    irmsd : float or None
+        Interface RMSD in Å.
+    dockq : float or None
+        DockQ score (0–1).  Used as fallback when RMSD values are None.
+
+    Returns
+    -------
+    str
+        One of ``"high"``, ``"medium"``, ``"acceptable"``, ``"incorrect"``.
+    """
+    # Full CAPRI protocol: fnat + at least one RMSD metric
+    if fnat is not None and (lrmsd is not None or irmsd is not None):
+        _lrmsd = lrmsd if lrmsd is not None else float("inf")
+        _irmsd = irmsd if irmsd is not None else float("inf")
+
+        if fnat >= 0.5 and (_lrmsd <= 1.0 or _irmsd <= 1.0):
+            return "high"
+        if fnat >= 0.3 and (_lrmsd <= 5.0 or _irmsd <= 2.0):
+            return "medium"
+        if fnat >= 0.1 and (_lrmsd <= 10.0 or _irmsd <= 4.0):
+            return "acceptable"
+        return "incorrect"
+
+    # DockQ-only fallback
+    if dockq is not None:
+        if dockq >= 0.80:
+            return "high"
+        if dockq >= 0.49:
+            return "medium"
+        if dockq >= 0.23:
+            return "acceptable"
+        return "incorrect"
+
+    return "incorrect"
+
+
+def classify_capri(
+    scores_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add a ``capri_quality`` column to a unified scores DataFrame.
+
+    The function pivots the long-format scores so that each
+    (model, proteinA, proteinB) group has access to fnat, lrmsd, irmsd,
+    and/or dockq values, then applies :func:`capri_quality` row-wise.
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+        Unified scores (long format).
+
+    Returns
+    -------
+    DataFrame
+        A copy with an added ``capri_quality`` column containing one of
+        ``"high"``, ``"medium"``, ``"acceptable"``, ``"incorrect"`` per
+        row based on the model+pair combination.
+    """
+    df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
+
+    if "score_type" not in df.columns:
+        df["capri_quality"] = "incorrect"
+        return df
+
+    # Build a lookup: (model, proteinA, proteinB) → {metric: value}
+    group_cols = ["model"]
+    if "proteina" in df.columns and "proteinb" in df.columns:
+        group_cols += ["proteina", "proteinb"]
+
+    pivot = df.pivot_table(
+        index=group_cols,
+        columns="score_type",
+        values="score_value",
+        aggfunc="mean",
+    )
+    pivot.columns = [c.lower() for c in pivot.columns]
+
+    def _row_quality(row):
+        fnat = row.get("fnat") if "fnat" in row.index else None
+        lrmsd = row.get("lrmsd") if "lrmsd" in row.index else None
+        irmsd = row.get("irmsd") if "irmsd" in row.index else None
+        dockq = row.get("dockq") if "dockq" in row.index else None
+        # Also try quality_ prefixed metrics from ppinsight.quality
+        if fnat is None:
+            fnat = row.get("quality_fnat") if "quality_fnat" in row.index else None
+        if lrmsd is None:
+            lrmsd = row.get("quality_lrmsd") if "quality_lrmsd" in row.index else None
+        if irmsd is None:
+            irmsd = row.get("quality_irmsd") if "quality_irmsd" in row.index else None
+        if dockq is None:
+            dockq = row.get("quality_dockq") if "quality_dockq" in row.index else None
+
+        # Convert NaN to None
+        import math
+        fnat = None if fnat is not None and (isinstance(fnat, float) and math.isnan(fnat)) else fnat
+        lrmsd = None if lrmsd is not None and (isinstance(lrmsd, float) and math.isnan(lrmsd)) else lrmsd
+        irmsd = None if irmsd is not None and (isinstance(irmsd, float) and math.isnan(irmsd)) else irmsd
+        dockq = None if dockq is not None and (isinstance(dockq, float) and math.isnan(dockq)) else dockq
+
+        return capri_quality(fnat=fnat, lrmsd=lrmsd, irmsd=irmsd, dockq=dockq)
+
+    quality_map = pivot.apply(_row_quality, axis=1)
+    quality_map.name = "capri_quality"
+
+    # Join back to original DataFrame
+    df = df.join(quality_map, on=group_cols)
+    return df
+
+
+def capri_summary_table(
+    scores_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Summary table: count of models in each CAPRI quality tier per engine.
+
+    Analogous to the ranked summary tables in CAPRI assessments that
+    report how many acceptable / medium / high models each group produced.
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+        Unified scores (long format).  Must have metrics that
+        :func:`classify_capri` can use (fnat, irmsd, lrmsd, or dockq).
+
+    Returns
+    -------
+    DataFrame
+        Columns: ``model``, ``high``, ``medium``, ``acceptable``,
+        ``incorrect``, ``total``, ``pct_acceptable_plus``.
+    """
+    classified = classify_capri(scores_df)
+    if "capri_quality" not in classified.columns:
+        raise ValueError("Could not classify — no quality metrics found")
+
+    # De-duplicate to one quality per (model, pair)
+    group_cols = ["model"]
+    if "proteina" in classified.columns and "proteinb" in classified.columns:
+        group_cols += ["proteina", "proteinb"]
+    dedup = classified.drop_duplicates(subset=group_cols + ["capri_quality"])
+
+    rows: list[dict] = []
+    for model, grp in dedup.groupby("model"):
+        counts = grp["capri_quality"].value_counts()
+        h = int(counts.get("high", 0))
+        m = int(counts.get("medium", 0))
+        a = int(counts.get("acceptable", 0))
+        i = int(counts.get("incorrect", 0))
+        total = h + m + a + i
+        pct = round((h + m + a) / total * 100, 1) if total else 0.0
+        rows.append({
+            "model": model,
+            "high": h,
+            "medium": m,
+            "acceptable": a,
+            "incorrect": i,
+            "total": total,
+            "pct_acceptable+": pct,
+        })
+
+    result = pd.DataFrame(rows)
+    # Sort by pct_acceptable+ descending, then by high count
+    result = result.sort_values(
+        ["pct_acceptable+", "high", "medium"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
+    return result
+
+
+def quality_bar_chart(
+    scores_df: pd.DataFrame,
+    plot_title: str | None = None,
+    output: str | None = None,
+) -> plt.Figure:
+    """Stacked bar chart: number of models in each CAPRI quality tier per engine.
+
+    Each engine gets one bar.  The bar is segmented into four
+    colour-coded tiers (incorrect, acceptable, medium, high) so the
+    user can see at a glance which engine produces the most high-quality
+    models.
+
+    Inspired by the cumulative bar charts used in CAPRI assessments to
+    summarise prediction quality across groups.
+
+    Reference:
+        Lensink MF, Velankar S, Wodak SJ. (2016). Proteins 84(S1):323-348.
+        DOI: 10.1002/prot.25007 — stacked bars showing per-group quality
+        tier counts.
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+        Unified scores with quality-relevant metrics (fnat, irmsd, lrmsd,
+        and/or dockq).
+    plot_title : str or None
+    output : str or None
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    import numpy as np
+
+    summary = capri_summary_table(scores_df)
+    if summary.empty:
+        raise ValueError("No classifiable data for quality bar chart")
+
+    models = summary["model"].tolist()
+    n = len(models)
+
+    # Tier colours: incorrect=grey, acceptable=gold, medium=dodgerblue, high=limegreen
+    tier_colours = {
+        "incorrect": "#b0b0b0",
+        "acceptable": "#f0c040",
+        "medium": "#4090e0",
+        "high": "#40c040",
+    }
+
+    fig, ax = plt.subplots(figsize=(max(6, n * 2), 5))
+    x = np.arange(n)
+    width = 0.55
+
+    bottom = np.zeros(n)
+    for tier in ["incorrect", "acceptable", "medium", "high"]:
+        values = summary[tier].values.astype(float)
+        ax.bar(
+            x, values, width, bottom=bottom,
+            label=tier.capitalize(), color=tier_colours[tier],
+            edgecolor="white", linewidth=0.8,
+        )
+        # Annotate non-zero segments
+        for i, v in enumerate(values):
+            if v > 0:
+                ax.text(
+                    x[i], bottom[i] + v / 2, str(int(v)),
+                    ha="center", va="center", fontsize=9, fontweight="bold",
+                )
+        bottom += values
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, rotation=30 if n > 4 else 0, ha="right" if n > 4 else "center")
+    ax.set_xlabel("Docking Engine")
+    ax.set_ylabel("Targets assessed")
+    ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax.set_title(plot_title or "CAPRI Quality Tier Distribution by Engine")
+    ax.legend(loc="upper right", frameon=True, fancybox=True, framealpha=0.9)
+
+    # Brief description so a new user understands the plot at a glance.
+    ax.annotate(
+        "Each protein pair is classified into a CAPRI quality tier\n"
+        "based on fnat, L-RMSD, i-RMSD (or DockQ as fallback).",
+        xy=(0.5, -0.18), xycoords="axes fraction",
+        ha="center", va="top", fontsize=7.5, fontstyle="italic",
+        color="grey",
+    )
+
+    sns.despine(ax=ax)
+    fig.tight_layout()
+
+    if output:
+        fig.savefig(output, bbox_inches="tight", dpi=150)
+        print(f"Plot saved to {output}")
+    else:
+        plt.show()
+    return fig
+
+
+def ranking_table(
+    scores_df: pd.DataFrame,
+    metric: str,
+) -> pd.DataFrame:
+    """Per-pair ranking table: which engine scores best on each pair.
+
+    For each protein pair and the given metric, ranks engines from best
+    to worst (respecting score direction from :data:`METRIC_METADATA`).
+    Returns a tidy DataFrame with columns: ``pair``, ``rank``, ``model``,
+    ``mean_score``.
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+        Unified scores (long format).
+    metric : str
+        Which ``score_type`` to rank by.
+
+    Returns
+    -------
+    DataFrame
+        Columns: ``pair``, ``rank``, ``model``, ``mean_score``.
+    """
+    df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+    if "score_type" in df.columns:
+        df = df[df["score_type"].str.lower() == metric.lower()]
+    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
+    df = df.dropna(subset=["score_value"])
+
+    if df.empty:
+        raise ValueError(f"No rows match metric='{metric}'")
+
+    higher_is_better = get_metric_direction(metric)
+
+    group_cols = ["model"]
+    if "proteina" in df.columns and "proteinb" in df.columns:
+        group_cols = ["proteina", "proteinb", "model"]
+
+    agg = df.groupby(group_cols, as_index=False)["score_value"].mean()
+
+    if "proteina" in agg.columns and "proteinb" in agg.columns:
+        agg["pair"] = agg["proteina"] + " vs " + agg["proteinb"]
+    else:
+        agg["pair"] = "all"
+
+    rows: list[dict] = []
+    for pair_name, grp in agg.groupby("pair"):
+        sorted_grp = grp.sort_values(
+            "score_value", ascending=not higher_is_better,
+        ).reset_index(drop=True)
+        for rank_idx, (_, row) in enumerate(sorted_grp.iterrows(), start=1):
+            rows.append({
+                "pair": pair_name,
+                "rank": rank_idx,
+                "model": row["model"],
+                "mean_score": round(row["score_value"], 4),
+            })
+
+    return pd.DataFrame(rows)
+
+
+def tabular_summary(
+    scores_df: pd.DataFrame,
+    metric: str,
+) -> pd.DataFrame:
+    """Aggregated summary table: per-model, per-pair statistics.
+
+    Produces a table with mean, std, median, min, max, and count for
+    the given metric, grouped by model and pair.  This is the tabular
+    complement to the graphical plots — every CAPRI assessment paper
+    leads with summary tables before showing figures.
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+        Unified scores (long format).
+    metric : str
+        Which ``score_type`` to summarise.
+
+    Returns
+    -------
+    DataFrame
+        Columns: ``model``, ``pair``, ``count``, ``mean``, ``std``,
+        ``median``, ``min``, ``max``.
+    """
+    df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+    if "score_type" in df.columns:
+        df = df[df["score_type"].str.lower() == metric.lower()]
+    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
+    df = df.dropna(subset=["score_value"])
+
+    if df.empty:
+        raise ValueError(f"No rows match metric='{metric}'")
+
+    if "proteina" in df.columns and "proteinb" in df.columns:
+        df["pair"] = df["proteina"] + " vs " + df["proteinb"]
+        group_cols = ["model", "pair"]
+    else:
+        df["pair"] = "all"
+        group_cols = ["model", "pair"]
+
+    agg = df.groupby(group_cols)["score_value"].agg(
+        ["count", "mean", "std", "median", "min", "max"]
+    ).reset_index()
+
+    # Round numeric columns
+    for col in ["mean", "std", "median", "min", "max"]:
+        agg[col] = agg[col].round(4)
+    agg["count"] = agg["count"].astype(int)
+
+    return agg.sort_values(["pair", "model"]).reset_index(drop=True)
+
+
+def _print_tabular_summary(scores_df: pd.DataFrame, metric: str) -> pd.DataFrame:
+    """Print the tabular summary to stdout with a clear header.
+
+    Returns the summary DataFrame so it can be reused (e.g. for plot tags).
+    """
+    tbl = tabular_summary(scores_df, metric)
+    direction = get_metric_direction(metric)
+    direction_label = "higher is better" if direction else "lower is better"
+    print()
+    print(f"── Tabular Summary: {metric} ({direction_label}) ──")
+    print(tbl.to_string(index=False))
+    print()
+    return tbl
+
+
+def _annotate_plot_source(
+    fig: plt.Figure,
+    metric: str,
+    summary_df: pd.DataFrame,
+) -> None:
+    """Add a small footnote to the figure referencing the tabular summary.
+
+    Provides traceability: every plot documents its source data at a
+    glance — metric name, model count, and total observations.
+    """
+    n_models = summary_df["model"].nunique()
+    n_obs = int(summary_df["count"].sum())
+    note = f"metric: {metric}  |  {n_models} engine(s)  |  {n_obs} observations  |  see tabular summary"
+    fig.text(
+        0.5, -0.01, note,
+        ha="center", va="top", fontsize=7, fontstyle="italic",
+        color="grey",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -971,6 +1791,161 @@ def classification_summary(
 # CLI helpers
 # ---------------------------------------------------------------------------
 
+def _print_plot_guide(scores_df: pd.DataFrame) -> None:
+    """Inspect *scores_df* and print which plot types are applicable.
+
+    Checks the data for the prerequisites each plot type needs (number
+    of models, number of pairs, presence of labels, etc.) and prints a
+    concise table so the user can plan their analysis.
+    """
+    models = sorted(scores_df["model"].dropna().unique()) if "model" in scores_df.columns else []
+    n_models = len(models)
+
+    pairs = available_pairs(scores_df)
+    n_pairs = len(pairs)
+
+    has_labels = "label" in scores_df.columns and scores_df["label"].notna().any()
+
+    metrics = available_metrics(scores_df)
+    n_metrics = len(metrics)
+
+    # For scatter: need ≥2 models sharing a metric on the same pairs
+    metrics_per_model: dict[str, set[str]] = {}
+    pairs_per_model: dict[str, set[tuple[str, str]]] = {}
+    if "score_type" in scores_df.columns:
+        for model in models:
+            model_df = scores_df[scores_df["model"] == model]
+            metrics_per_model[model] = set(
+                model_df["score_type"].dropna().str.lower().unique()
+            )
+            if "proteina" in scores_df.columns and "proteinb" in scores_df.columns:
+                pairs_per_model[model] = set(
+                    zip(model_df["proteina"].dropna(), model_df["proteinb"].dropna())
+                )
+    shared_metrics: set[str] = set()
+    shared_pairs: set[tuple[str, str]] = set()
+    if len(metrics_per_model) >= 2:
+        model_list = list(metrics_per_model.values())
+        shared_metrics = model_list[0]
+        for s in model_list[1:]:
+            shared_metrics = shared_metrics & s
+    if len(pairs_per_model) >= 2:
+        pair_list = list(pairs_per_model.values())
+        shared_pairs = pair_list[0]
+        for s in pair_list[1:]:
+            shared_pairs = shared_pairs & s
+
+    # ── Header ────────────────────────────────────────────────────
+    print()
+    print("═══ ppinsight compare — plot-type guide ═══")
+    print()
+    print(f"  Models   : {n_models}  ({', '.join(models) if n_models <= 5 else ', '.join(models[:5]) + ', …'})")
+    print(f"  Pairs    : {n_pairs}  ", end="")
+    if n_pairs == 0:
+        print("(no proteinA/proteinB columns)")
+    elif n_pairs <= 4:
+        print("(" + ", ".join(f"{a}:{b}" for a, b in pairs) + ")")
+    else:
+        print(f"({pairs[0][0]}:{pairs[0][1]}, … +{n_pairs - 1} more)")
+    print(f"  Labels   : {'yes' if has_labels else 'no'}")
+    print(f"  Metrics  : {n_metrics}  ({', '.join(metrics[:6])}" + (", …" if n_metrics > 6 else "") + ")")
+    print()
+
+    # ── Per-plot-type assessment ──────────────────────────────────
+    rows: list[tuple[str, str, str]] = []
+
+    # bar — requires ≥2 models (comparing engines) or ≥2 pairs (comparing pairs)
+    if n_models >= 2:
+        rows.append(("bar", "✅ yes", f"{n_models} models — compare engines on the same pair(s)."))
+    elif n_pairs >= 2:
+        rows.append(("bar", "✅ yes", f"{n_pairs} pairs — compare pairs within one engine."))
+    else:
+        rows.append(("bar", "❌ no", "Needs ≥ 2 models or ≥ 2 pairs. Use violin for single-model/single-pair data."))
+
+    # violin
+    rows.append(("violin", "✅ yes", "Works with any setup — full distributions + individual points."))
+
+    # box
+    rows.append(("box", "✅ yes", "Works with any setup — median, quartiles, and outliers."))
+
+    # heatmap
+    if n_pairs >= 2:
+        rows.append(("heatmap", "✅ yes", f"{n_pairs} pairs available — pair × model grid."))
+    elif n_pairs == 1:
+        rows.append(("heatmap", "❌ no", "Needs ≥ 2 protein pairs (you have 1). Add more pairs to your scores file."))
+    else:
+        rows.append(("heatmap", "❌ no", "Needs proteinA/proteinB columns. Re-run 'ppinsight collect' with --pair."))
+
+    # roc
+    if has_labels:
+        rows.append(("roc", "✅ yes", "Labels present — ROC with AUC per model."))
+    else:
+        rows.append(("roc", "❌ no", "Needs a 'label' column. Re-run 'ppinsight collect' with --pairs <pairs_file>."))
+
+    # scatter — needs ≥2 models sharing a metric on the same pairs
+    if n_models < 2:
+        rows.append(("scatter", "❌ no", f"Needs ≥ 2 models (you have {n_models}). Use --models MODEL_A MODEL_B."))
+    elif shared_metrics and shared_pairs:
+        rows.append((
+            "scatter",
+            "✅ yes",
+            f"Shared metrics: {', '.join(sorted(shared_metrics)[:5])}.  "
+            f"Shared pairs: {len(shared_pairs)}.  Use --models to pick two."
+        ))
+    elif not shared_pairs:
+        rows.append(("scatter", "❌ no", "Models have no common pairs — both must score the same protein pairs."))
+    elif not shared_metrics:
+        rows.append(("scatter", "⚠️  limited", "Models share pairs but no common metric name. Try --normalize first."))
+    else:
+        rows.append(("scatter", "❌ no", "Needs proteinA/proteinB columns. Re-run 'ppinsight collect' with --pair."))
+
+    # quality_bar — needs fnat/irmsd/lrmsd or dockq metrics
+    has_quality_metrics = False
+    if "score_type" in scores_df.columns:
+        st_lower = set(scores_df["score_type"].dropna().str.lower().unique())
+        quality_metrics = {"fnat", "irmsd", "lrmsd", "dockq",
+                           "quality_fnat", "quality_irmsd", "quality_lrmsd", "quality_dockq"}
+        has_quality_metrics = bool(st_lower & quality_metrics)
+    if has_quality_metrics:
+        rows.append(("quality_bar", "✅ yes", "CAPRI quality tiers (fnat/RMSD/dockq detected). No --metric needed."))
+    else:
+        rows.append(("quality_bar", "❌ no", "Needs fnat + irmsd/lrmsd, or dockq metrics for CAPRI quality tiers."))
+
+    # ── Print table ───────────────────────────────────────────────
+    col_w = [max(len(r[i]) for r in rows) for i in range(3)]
+    col_w[0] = max(col_w[0], len("plot type"))
+    col_w[1] = max(col_w[1], len("available?"))
+    col_w[2] = max(col_w[2], len("details"))
+
+    hdr = f"  {'plot type':<{col_w[0]}}  {'available?':<{col_w[1]}}  {'details'}"
+    sep = f"  {'─' * col_w[0]}  {'─' * col_w[1]}  {'─' * col_w[2]}"
+    print(hdr)
+    print(sep)
+    for name, status, detail in rows:
+        print(f"  {name:<{col_w[0]}}  {status:<{col_w[1]}}  {detail}")
+
+    # ── Extras ────────────────────────────────────────────────────
+    print()
+    extras: list[str] = []
+    if has_labels:
+        extras.append("--classify       Print confusion-matrix summaries (uses labels).")
+        extras.append("--split-label    Split bars/violins by interaction label.")
+    else:
+        extras.append("--classify       ❌ needs labels (collect with --pairs).")
+        extras.append("--split-label    ❌ needs labels (collect with --pairs).")
+    extras.append("--normalize      Normalise scores for cross-engine comparison (always available).")
+    extras.append("--table          Tabular summary (mean, std, median, min, max) for a metric.")
+    extras.append("--rank           Per-pair ranking: which engine scores best on each pair.")
+    if has_quality_metrics:
+        extras.append("--capri-quality  CAPRI quality tier summary (high/medium/acceptable/incorrect).")
+    else:
+        extras.append("--capri-quality  ❌ needs fnat/irmsd/lrmsd or dockq metrics.")
+    print("  Additional flags:")
+    for e in extras:
+        print(f"    {e}")
+    print()
+
+
 def _cli_error_with_hint(msg: str, metric: str, scores_df) -> None:
     """Print an error message with a context-aware hint, then exit.
 
@@ -1044,12 +2019,14 @@ def main(argv=None):
     )
     parser.add_argument(
         "--metric", "-m",
-        required=True,
+        default=None,
         help=(
             "Score type to analyse (e.g. 'dockq', 'score', 'irmsd', "
             "'luciferin_score', 'i_sc').  Must match a value in the "
             "'score_type' column of the scores file.  Use --list-metrics "
-            "to see what is available."
+            "to see what is available.  Required for plotting and "
+            "classification; not needed for --list-metrics, --list-pairs, "
+            "or --guide."
         ),
     )
     parser.add_argument(
@@ -1073,11 +2050,6 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
-        "--title", "-t",
-        default=None,
-        help="Custom plot title (default: auto-generated from metric name).",
-    )
-    parser.add_argument(
         "--output", "-o",
         default=None,
         help=(
@@ -1099,6 +2071,16 @@ def main(argv=None):
         help=(
             "Print all available proteinA:proteinB pairs in the scores file "
             "and exit.  Use this to discover pair names for --pair filtering."
+        ),
+    )
+    parser.add_argument(
+        "--guide",
+        action="store_true",
+        help=(
+            "Inspect the scores file and print which plot types are "
+            "applicable given your data (number of models, pairs, labels, "
+            "metrics).  Useful before choosing --plot-type.  Exit after "
+            "printing."
         ),
     )
     parser.add_argument(
@@ -1148,54 +2130,73 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
-        "--normalize-global",
-        action="store_true",
-        help=(
-            "With --normalize: normalise across all models jointly (instead "
-            "of per-model, which is the default).  Use global normalisation "
-            "when you want an absolute ranking across engines; use per-model "
-            "(default) when each engine's internal distribution matters more."
-        ),
-    )
-    parser.add_argument(
         "--plot-type",
-        choices=["bar", "violin", "heatmap", "roc", "scatter"],
-        default="bar",
+        choices=["bar", "box", "violin", "heatmap", "roc", "scatter", "quality_bar"],
+        default="violin",
         help=(
-            "Plot style.  'bar' (default): mean ± std per model — good for "
-            "a quick overview.  'violin': full score distributions — reveals "
-            "bimodality or outliers.  'heatmap': pair × model grid — useful "
-            "when you have many pairs.  'roc': ROC curves with AUC — the "
-            "gold standard for binary classification (needs labels).  "
-            "'scatter': head-to-head rank comparison of two models (use "
-            "with --models)."
+            "Plot style.  'violin' (default): full score distributions "
+            "with individual data points — reveals bimodality or outliers.  "
+            "'box': compact summary showing median, quartiles, and "
+            "outliers — good when variance is high.  "
+            "'bar': mean ± std per model — requires ≥ 2 models or ≥ 2 "
+            "pairs (use violin for single-model/single-pair setups).  "
+            "'heatmap': pair × model grid — useful when you have many "
+            "pairs.  'roc': ROC curves with AUC — the gold standard for "
+            "binary classification (needs labels).  'scatter': model-"
+            "agreement plot — same metric, same pairs, one model per axis "
+            "(use with --models).  'quality_bar': stacked bar chart "
+            "showing CAPRI quality tier counts (high/medium/acceptable/"
+            "incorrect) per engine — requires fnat+RMSD or dockq metrics."
         ),
     )
     parser.add_argument(
         "--models",
         nargs=2,
+        metavar=("MODEL_A", "MODEL_B"),
         default=None,
         help=(
             "Two model names for --plot-type scatter (e.g. --models "
-            "lightdock haddock).  Each pair is plotted as a point with "
-            "one model's score on each axis, revealing agreement or "
-            "disagreement between engines."
+            "haddock rosetta).  Each protein pair becomes one point: "
+            "x = model A's score, y = model B's.  Points along the "
+            "diagonal mean the engines agree.  Pearson r is annotated."
         ),
     )
     parser.add_argument(
-        "--agg",
-        choices=["best", "topN_mean", "median", "mean"],
-        default=None,
+        "--table",
+        action="store_true",
         help=(
-            "Aggregate multiple poses per pair before plotting.  Same "
-            "strategies as 'ppinsight collect --agg' — direction-aware, so "
-            "'best' correctly picks the lowest HADDOCK score or the highest "
-            "LightDock luciferin score.  Use 'best' or 'topN_mean' when "
-            "comparing top predictions; omit for full-distribution plots."
+            "Print the tabular summary only (no plot).  The tabular "
+            "summary is always printed before any plot — this flag "
+            "suppresses the plot if you only need the numbers."
+        ),
+    )
+    parser.add_argument(
+        "--rank",
+        action="store_true",
+        help=(
+            "Print a per-pair ranking table: which engine scores best on "
+            "each protein pair for the given --metric.  Respects score "
+            "direction (lower HADDOCK score = rank 1, higher DockQ = rank 1)."
+        ),
+    )
+    parser.add_argument(
+        "--capri-quality",
+        action="store_true",
+        help=(
+            "Print a CAPRI quality tier summary: count of models classified "
+            "as high / medium / acceptable / incorrect for each engine.  "
+            "Uses the standard CAPRI protocol: f(nat) + Lrms + irms "
+            "thresholds (Lensink et al. 2016, DOI: 10.1002/prot.25007, "
+            "Table 3).  Falls back to DockQ thresholds (Basu & Wallner 2016, "
+            "DOI: 10.1371/journal.pone.0161879) when RMSD values are absent.  "
+            "Does not require --metric."
         ),
     )
 
     args = parser.parse_args(argv)
+
+    # Apply the default theme before any plotting
+    apply_theme()
 
     # ── unified file mode (single file) ──────────────────────────
     if len(args.files) == 1:
@@ -1206,19 +2207,15 @@ def main(argv=None):
             scores_df = None
 
         if scores_df is not None:
-            # Apply aggregation if requested
-            if args.agg:
-                from ppinsight.collect_scores import aggregate_scores
-                scores_df = aggregate_scores(scores_df, strategy=args.agg)
-
             # Apply normalization if requested.  Direction-aware flipping
             # is always enabled — the pipeline knows which metrics are
-            # lower-is-better from METRIC_METADATA.
+            # lower-is-better from METRIC_METADATA.  Per-model normalization
+            # is the default (each engine's internal distribution is preserved).
             if args.normalize:
                 scores_df = normalize_scores(
                     scores_df,
                     method=args.normalize,
-                    per_model=not args.normalize_global,
+                    per_model=True,
                     direction_aware=True,
                 )
 
@@ -1232,10 +2229,54 @@ def main(argv=None):
                     print(f"{a}:{b}")
                 return
 
+            if args.guide:
+                _print_plot_guide(scores_df)
+                return
+
+            # --capri-quality does NOT need --metric
+            if args.capri_quality:
+                try:
+                    summary = capri_summary_table(scores_df)
+                except ValueError as exc:
+                    print(f"ERROR: {exc}", file=sys.stderr)
+                    sys.exit(1)
+                print(summary.to_string(index=False))
+                return
+
+            # --metric is required for everything below this point
+            # (unless --plot-type quality_bar, which also doesn't need it).
+            if args.plot_type == "quality_bar":
+                try:
+                    quality_bar_chart(
+                        scores_df,
+                        plot_title=None,
+                        output=args.output,
+                    )
+                except ValueError as exc:
+                    print(f"ERROR: {exc}", file=sys.stderr)
+                    sys.exit(1)
+                return
+
+            if not args.metric:
+                print(
+                    "ERROR: --metric is required for plotting and "
+                    "classification.  Use --list-metrics to see available "
+                    "values, or --guide to see which plot types work with "
+                    "your data.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+
+            # ── Mandatory tabular summary ─────────────────────────
+            # Always printed before any metric-based output.  Every
+            # plot is a *visualisation* of this summary — the table is
+            # the canonical data reference.
+            try:
+                summary_tbl = _print_tabular_summary(scores_df, args.metric)
+            except ValueError as exc:
+                _cli_error_with_hint(str(exc), args.metric, scores_df)
+
             if args.classify:
-                # Always auto-detect direction from METRIC_METADATA.
-                # The pipeline knows which scoring functions are
-                # lower-is-better vs higher-is-better.
                 try:
                     summary = classification_summary(
                         scores_df,
@@ -1247,37 +2288,77 @@ def main(argv=None):
                 print(summary.to_string(index=False))
                 return
 
+            # --table: tabular summary only (already printed above)
+            if args.table:
+                return
+
+            if args.rank:
+                try:
+                    rnk = ranking_table(scores_df, metric=args.metric)
+                except ValueError as exc:
+                    _cli_error_with_hint(str(exc), args.metric, scores_df)
+                print(rnk.to_string(index=False))
+                return
+
             pair = tuple(args.pair.split(":", 1)) if args.pair else None
 
-            # Dispatch by plot type
+            # Dispatch by plot type.
+            # Plot functions are called with output=None so the
+            # annotation tag is added *before* the single save.
             pt = args.plot_type
+
+            def _save_or_show(fig):
+                """Annotate with source tag, then save or show."""
+                _annotate_plot_source(fig, args.metric, summary_tbl)
+                if args.output:
+                    fig.savefig(args.output, bbox_inches="tight", dpi=180)
+                    print(f"Plot saved to {args.output}")
+                else:
+                    plt.show()
 
             try:
                 if pt == "violin":
-                    violin_plot(
+                    fig = violin_plot(
                         scores_df,
                         metric=args.metric,
                         split_by_label=args.split_label,
-                        plot_title=args.title,
-                        output=args.output,
+                        plot_title=None,
+                        output=None,
                     )
+                    _save_or_show(fig)
+                    return
+
+                if pt == "box":
+                    fig = box_plot(
+                        scores_df,
+                        metric=args.metric,
+                        split_by_label=args.split_label,
+                        plot_title=None,
+                        output=None,
+                    )
+                    _save_or_show(fig)
                     return
 
                 if pt == "heatmap":
-                    score_heatmap(
+                    fig = score_heatmap(
                         scores_df,
                         metric=args.metric,
-                        plot_title=args.title,
-                        output=args.output,
+                        plot_title=None,
+                        output=None,
                     )
+                    _save_or_show(fig)
                     return
 
                 if pt == "roc":
-                    roc_curve_plot(
+                    fig = roc_curve_plot(
                         scores_df,
                         metric=args.metric,
-                        output=args.output,
+                        output=None,
                     )
+                    _save_or_show(fig)
+                    return
+                    if args.output:
+                        fig.savefig(args.output, bbox_inches="tight", dpi=180)
                     return
 
                 if pt == "scatter":
@@ -1288,42 +2369,71 @@ def main(argv=None):
                             file=sys.stderr,
                         )
                         print(
-                            "Hint: pass two model names from the 'model' "
-                            "column of your scores file.",
+                            "Hint: pass two model names that both "
+                            "scored the same pairs, e.g. "
+                            "--models haddock rosetta",
                             file=sys.stderr,
                         )
                         sys.exit(2)
-                    rank_comparison_scatter(
+                    fig = model_agreement_scatter(
                         scores_df,
                         metric=args.metric,
                         model_x=args.models[0],
                         model_y=args.models[1],
-                        output=args.output,
+                        output=None,
                     )
+                    _save_or_show(fig)
                     return
 
-                # Default: bar chart
+                # Default: bar chart (with guard)
+                n_bar_models = scores_df["model"].nunique()
+                n_bar_pairs = len(available_pairs(scores_df))
+                bar_ok = (n_bar_models >= 2) or (n_bar_pairs >= 2)
+                if not bar_ok:
+                    print(
+                        "ERROR: --plot-type bar needs ≥ 2 models (to "
+                        "compare engines on the same pair) or ≥ 2 pairs "
+                        "(to compare pairs within one engine).  You have "
+                        f"{n_bar_models} model(s) and {n_bar_pairs} pair(s).",
+                        file=sys.stderr,
+                    )
+                    print(
+                        "Hint: use --plot-type violin to see the full "
+                        "score distribution instead.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
+
                 if args.split_label:
-                    compare_scores_by_label(
+                    fig = compare_scores_by_label(
                         scores_df,
                         metric=args.metric,
-                        plot_title=args.title,
-                        output=args.output,
+                        plot_title=None,
+                        output=None,
                     )
+                    _save_or_show(fig)
                     return
 
-                compare_scores_unified(
+                fig = compare_scores_unified(
                     scores_df,
                     metric=args.metric,
                     pair=pair,
-                    plot_title=args.title,
-                    output=args.output,
+                    plot_title=None,
+                    output=None,
                 )
+                _save_or_show(fig)
             except ValueError as exc:
                 _cli_error_with_hint(str(exc), args.metric, scores_df)
             return
 
     # ── per-model file mode (multiple files) ─────────────────────
+    if not args.metric:
+        print(
+            "ERROR: --metric is required for plotting.  Pass a column name "
+            "from your score files.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     frames = to_plot(args.files)
     names = args.names
     if not names:
@@ -1336,7 +2446,7 @@ def main(argv=None):
         )
         sys.exit(1)
 
-    compare_scores(frames, names, args.metric, plot_title=args.title, output=args.output)
+    compare_scores(frames, names, args.metric, plot_title=None, output=args.output)
 
 
 # ---------------------------------------------------------------------------
