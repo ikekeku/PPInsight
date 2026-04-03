@@ -613,7 +613,7 @@ def main(argv=None):
             # Top-5 models
             valid = df.dropna(subset=["DockQ"]).sort_values("DockQ", ascending=False)
             if len(valid) > 0:
-                print(f"\n── Top-5 models by DockQ ──")
+                print("\n── Top-5 models by DockQ ──")
                 for _, row in valid.head(5).iterrows():
                     print(
                         f"  {os.path.basename(row['model_path']):30s}  "

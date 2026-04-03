@@ -6,8 +6,8 @@ Combines:
   - Rosetta global dock   (COL_D vs IMM_D, expected output)
 
 Produces:
-  examples/all_scores.tsv   — unified scores for all 3 engines + 3 pairs
-  examples/demo_pairs.tsv   — pairs file with interaction labels (for ROC)
+  tutorials/all_scores.tsv   — unified scores for all 3 engines + 3 pairs
+  tutorials/demo_pairs.tsv   — pairs file with interaction labels (for ROC)
 """
 
 import os
@@ -20,7 +20,7 @@ rows: list[dict] = []
 # ══════════════════════════════════════════════════════════════════
 # 1. LightDock — from walkthrough_scores.tsv (already collected)
 # ══════════════════════════════════════════════════════════════════
-wt = os.path.join(ROOT, "walkthrough_scores.tsv")
+wt = os.path.join(ROOT, "tutorials", "walkthrough_scores.tsv")
 if os.path.exists(wt):
     df_wt = pd.read_csv(wt, sep="\t")
     # Keep only LightDock rows (HADDOCK in walkthrough was from a
@@ -118,9 +118,42 @@ print(f"Models: {sorted(df['model'].unique())}")
 print(f"Pairs: {df[['proteinA','proteinB']].drop_duplicates().values.tolist()}")
 print(f"Metrics: {sorted(df['score_type'].unique())}")
 
-out_scores = os.path.join(ROOT, "examples", "all_scores.tsv")
+out_scores = os.path.join(ROOT, "tutorials", "all_scores.tsv")
 df.to_csv(out_scores, sep="\t", index=False)
 print(f"\nSaved {out_scores}")
+
+# ── Provenance sidecar ───────────────────────────────────────────
+# Record where this demo data came from so users can trace it.
+from ppinsight.provenance import make_run_id, write_sidecar
+import datetime
+
+now = datetime.datetime.now()
+provenance = {}
+
+# LightDock provenance
+ld_sim = os.path.join(ROOT, "examples", "lightdock", "simulation")
+if os.path.isdir(ld_sim):
+    from ppinsight.provenance import extract_run_metadata
+    rid = make_run_id("lightdock", ("2UUY_rec", "2UUY_lig"), timestamp=now)
+    provenance[rid] = extract_run_metadata("lightdock", ld_sim)
+
+# HADDOCK provenance
+hd_run = os.path.join(ROOT, "examples", "haddock3", "run1-test")
+if os.path.isdir(hd_run):
+    from ppinsight.provenance import extract_run_metadata
+    rid = make_run_id("haddock", ("e2aP_1F3G", "hpr_ensemble"), timestamp=now)
+    provenance[rid] = extract_run_metadata("haddock", hd_run)
+
+# Rosetta provenance
+ros_dir = os.path.join(ROOT, "examples", "rosetta", "Protein-Protein-Docking")
+if os.path.isdir(ros_dir):
+    from ppinsight.provenance import extract_run_metadata
+    rid = make_run_id("rosetta", ("COL_D", "IMM_D"), timestamp=now)
+    provenance[rid] = extract_run_metadata("rosetta", ros_dir)
+
+if provenance:
+    sc = write_sidecar(out_scores, provenance)
+    print(f"Saved {sc}")
 
 # ── Pairs file with interaction labels ────────────────────────────
 # 2UUY is a known interacting complex, e2aP/hpr is known interacting,
@@ -133,6 +166,6 @@ pairs_rows = [
     {"proteinA": "COL_D", "proteinB": "IMM_D", "label": "interaction"},
 ]
 pairs_df = pd.DataFrame(pairs_rows)
-out_pairs = os.path.join(ROOT, "examples", "demo_pairs.tsv")
+out_pairs = os.path.join(ROOT, "tutorials", "demo_pairs.tsv")
 pairs_df.to_csv(out_pairs, sep="\t", index=False)
 print(f"Saved {out_pairs}")

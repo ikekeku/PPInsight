@@ -28,7 +28,6 @@ Usage::
 
 import argparse
 import os
-import sys
 import time
 
 import pandas as pd
@@ -109,10 +108,8 @@ def batch_dock(
         from ppinsight.utils import _project_root
         output_root = os.path.join(_project_root(), "data", "output")
 
-    required = {"proteinA", "proteinB"}
     # Normalize column names for matching — handles whitespace and casing
     # differences from different spreadsheet exports.
-    col_map = {c.lower().replace(" ", ""): c for c in pairs_df.columns}
     norm_cols = {c.lower().replace(" ", "") for c in pairs_df.columns}
     if not {"proteina", "proteinb"}.issubset(norm_cols):
         raise ValueError(
@@ -274,11 +271,13 @@ def main(argv=None):
     )
     parser.add_argument(
         "-o", "--output",
-        default="batch_results.csv",
+        default=os.path.join("data", "output", "scores", "batch_results.csv"),
         help=(
-            "Output results table (default: batch_results.csv).  Contains "
+            "Output results table "
+            "(default: data/output/scores/batch_results.csv).  Contains "
             "one row per (pair, engine) with status (success/error) and "
-            "paths to output directories."
+            "paths to output directories.  Parent directories are created "
+            "automatically."
         ),
     )
     parser.add_argument(
@@ -333,6 +332,7 @@ def main(argv=None):
 
     # Write results
     out_sep = "\t" if args.output.endswith(".tsv") else ","
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     results_df.to_csv(args.output, sep=out_sep, index=False)
     print(f"\nWrote {len(results_df)} results to {args.output}")
 

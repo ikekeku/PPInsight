@@ -195,11 +195,10 @@ def main(argv=None):
     )
     parser.add_argument(
         "--pdb-dir",
-        default="pdb_files",
+        default="data/input",
         help=(
-            "Directory for downloaded PDB files (default: pdb_files).  "
-            "These PDB files become inputs for the docking subcommands "
-            "(lightdock, haddock, rosetta)."
+            "Directory for downloaded PDB files (default: data/input).  "
+            "These PDB files become inputs for the docking subcommands."
         ),
     )
 

@@ -6,10 +6,10 @@ Usage::
     collect_scores examples/haddock3/run1-test examples/lightdock/simulation -o scores.tsv
     collect_scores path/to/rosetta_run --model-label rosetta -o scores.tsv
 
-Each positional argument is a directory produced by one of the supported
-docking pipelines (HADDOCK, LightDock, Rosetta).  The tool auto-detects
-the docking engine and extracts relevant scores, then writes a unified
-TSV/CSV that :func:`ppinsight.visualizer.load_scores` can consume.
+Each positional argument is a directory produced by a supported
+docking pipeline.  The tool auto-detects the docking engine and
+extracts relevant scores, then writes a unified TSV/CSV that
+:func:`ppinsight.visualizer.load_scores` can consume.
 
 Unified output columns
 ----------------------
@@ -17,7 +17,7 @@ model, score_type, score_value, proteinA, proteinB
 """
 
 import argparse
-import csv
+import datetime
 import glob
 import os
 import re
@@ -25,6 +25,11 @@ import sys
 
 import pandas as pd
 
+from ppinsight.provenance import (
+    extract_run_metadata,
+    make_run_id,
+    write_sidecar,
+)
 
 # ---------------------------------------------------------------------------
 # HADDOCK parser
@@ -603,7 +608,7 @@ def collect(directories: list[str],
             labels: list[str] | None = None,
             pair: tuple[str, str] | None = None,
             use_clusters: bool = False,
-            no_haddock_clusters: bool = False) -> pd.DataFrame:
+            no_haddock_clusters: bool = False) -> tuple[pd.DataFrame, dict]:
     """Parse multiple docking output directories into a unified DataFrame.
 
     Parameters
@@ -626,33 +631,45 @@ def collect(directories: list[str],
 
     Returns
     -------
-    pd.DataFrame
-        Unified scores with columns ``model``, ``score_type``,
-        ``score_value``, ``proteinA``, ``proteinB``.
+    (pd.DataFrame, dict)
+        The unified scores DataFrame and a provenance dict mapping each
+        ``run_id`` to its metadata.  Provenance is written to a JSON
+        sidecar by the CLI — the DataFrame itself stays lean (no
+        per-row provenance columns).  DataFrame columns: ``model``,
+        ``score_type``, ``score_value``, ``proteinA``, ``proteinB``.
     """
     if labels and len(labels) != len(directories):
         raise ValueError(
             f"Got {len(labels)} labels but {len(directories)} directories"
         )
 
+    now = datetime.datetime.now()
     frames: list[pd.DataFrame] = []
+    provenance: dict[str, dict] = {}
+
     for i, d in enumerate(directories):
         engine = detect_engine(d)
         label = labels[i] if labels else engine
+
+        # --- parse scores as before ---
         if use_clusters and engine == "lightdock":
-            frames.append(_parse_lightdock_clusters(d, pair=pair, label=label))
+            frame = _parse_lightdock_clusters(d, pair=pair, label=label)
         elif engine == "haddock":
-            frames.append(
-                _parse_haddock(d, pair=pair, label=label,
-                               no_clusters=no_haddock_clusters)
-            )
+            frame = _parse_haddock(d, pair=pair, label=label,
+                                   no_clusters=no_haddock_clusters)
         else:
             parser = _get_parser(engine)
-            frames.append(parser(d, pair=pair, label=label))
+            frame = parser(d, pair=pair, label=label)
+
+        # --- provenance: one run_id per (directory, engine) ---
+        rid = make_run_id(engine, pair=pair, timestamp=now)
+        provenance[rid] = extract_run_metadata(engine, d)
+
+        frames.append(frame)
 
     if not frames:
         raise ValueError("No directories processed")
-    return pd.concat(frames, ignore_index=True)
+    return pd.concat(frames, ignore_index=True), provenance
 
 
 def annotate_with_labels(scores_df: pd.DataFrame,
@@ -722,8 +739,8 @@ def main(argv=None):
     """CLI entrypoint for collecting docking scores into a unified TSV/CSV."""
     parser = argparse.ArgumentParser(
         description=(
-            "Aggregate docking scores from HADDOCK, LightDock, and/or Rosetta "
-            "output directories into a single unified scores file."
+            "Aggregate docking scores from one or more engine output "
+            "directories into a single unified scores file."
         ),
     )
     parser.add_argument(
@@ -736,11 +753,13 @@ def main(argv=None):
     )
     parser.add_argument(
         "-o", "--output",
-        default="scores.tsv",
+        default=os.path.join("data", "output", "scores", "scores.tsv"),
         help=(
-            "Output file path (default: scores.tsv).  Extension determines "
-            "the format: .tsv → tab-separated, .csv → comma-separated.  "
-            "This unified file is the input for 'ppinsight compare'."
+            "Output file path (default: data/output/scores/scores.tsv).  "
+            "Extension determines the format: .tsv → tab-separated, "
+            ".csv → comma-separated.  Parent directories are created "
+            "automatically.  This unified file is the input for "
+            "'ppinsight compare'."
         ),
     )
     parser.add_argument(
@@ -833,9 +852,11 @@ def main(argv=None):
         pair = (parts[0], parts[1])
 
     try:
-        df = collect(args.directories, labels=args.labels, pair=pair,
-                     use_clusters=args.use_clusters,
-                     no_haddock_clusters=args.no_haddock_clusters)
+        df, provenance = collect(
+            args.directories, labels=args.labels, pair=pair,
+            use_clusters=args.use_clusters,
+            no_haddock_clusters=args.no_haddock_clusters,
+        )
     except FileNotFoundError as exc:
         msg = str(exc)
         print(f"ERROR: {msg}", file=sys.stderr)
@@ -869,9 +890,15 @@ def main(argv=None):
 
     # Write output
     out = args.output
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     sep = "\t" if out.endswith(".tsv") else ","
     df.to_csv(out, sep=sep, index=False)
     print(f"Wrote {len(df)} score rows to {out}")
+
+    # Write provenance sidecar
+    if provenance:
+        sc = write_sidecar(out, provenance)
+        print(f"Wrote provenance to {sc}")
 
     # Always print a summary so the user can sanity-check score ranges.
     print("\n── Summary ──")

@@ -8,7 +8,6 @@ import pytest
 
 from ppinsight import collect_scores
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — tiny fake output directories
 # ---------------------------------------------------------------------------
@@ -232,11 +231,14 @@ class TestParseHaddockClusters:
 
 class TestCollect:
     def test_mixed(self, haddock_dir, lightdock_dir):
-        df = collect_scores.collect([haddock_dir, lightdock_dir])
+        df, prov = collect_scores.collect([haddock_dir, lightdock_dir])
         assert set(df["model"].unique()) == {"haddock", "lightdock"}
+        assert len(prov) >= 1  # at least one provenance entry
+        # Provenance lives in sidecar, not in DataFrame columns
+        assert "run_id" not in df.columns
 
     def test_labels_override(self, haddock_dir, lightdock_dir):
-        df = collect_scores.collect(
+        df, _prov = collect_scores.collect(
             [haddock_dir, lightdock_dir], labels=["h1", "ld1"]
         )
         assert set(df["model"].unique()) == {"h1", "ld1"}
@@ -258,6 +260,22 @@ class TestCLI:
         df = pd.read_csv(out, sep="\t")
         assert "model" in df.columns
         assert "score_value" in df.columns
+
+    def test_provenance_sidecar(self, haddock_dir, tmp_path):
+        """CLI should write a .provenance.json sidecar next to the scores."""
+        import json
+        out = str(tmp_path / "out.tsv")
+        collect_scores.main([haddock_dir, "-o", out])
+        sidecar = out + ".provenance.json"
+        assert os.path.isfile(sidecar)
+        with open(sidecar) as fh:
+            prov = json.load(fh)
+        assert len(prov) >= 1
+        # Every entry should have the standard keys
+        for _rid, meta in prov.items():
+            assert "engine" in meta
+            assert "source_dir" in meta
+            assert "collected_at" in meta
 
     def test_csv_output(self, rosetta_dir, tmp_path):
         out = str(tmp_path / "out.csv")

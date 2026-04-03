@@ -44,7 +44,23 @@ def run_command(cmd, cwd=None):
     - cwd: directory in which to run the command
     """
     print(">>", " ".join(cmd))
-    subprocess.run(cmd, cwd=cwd, check=True)
+    try:
+        subprocess.run(cmd, cwd=cwd, check=True)
+    except FileNotFoundError:
+        exe = cmd[0]
+        print(
+            f"\nERROR: '{exe}' not found on $PATH.",
+            file=sys.stderr,
+        )
+        print(
+            "Hint: LightDock CLI tools (lightdock3_setup.py, lightdock3.py, "
+            "lgd_generate_conformations.py, lgd_cluster_bsas.py, lgd_rank.py) "
+            "must be installed and on your PATH.\n"
+            "Install: pip install lightdock  (included with ppinsight)\n"
+            "Verify:  which lightdock3_setup.py",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def make_output_dir(receptor_pdb, ligand_pdb,

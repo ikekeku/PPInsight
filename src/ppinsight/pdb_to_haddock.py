@@ -17,7 +17,6 @@ import subprocess
 import importlib
 import platform
 import shlex
-import glob
 import sys
 
 from ppinsight.utils import _project_root, resolve_input_path  # noqa: F401
@@ -38,7 +37,21 @@ def run_command(cmd, cwd=None):
     `run_command` to avoid executing external binaries.
     """
     print(">>", " ".join(map(str, cmd)))
-    subprocess.run(list(map(str, cmd)), cwd=cwd, check=True)
+    try:
+        subprocess.run(list(map(str, cmd)), cwd=cwd, check=True)
+    except FileNotFoundError:
+        exe = cmd[0]
+        print(
+            f"\nERROR: '{exe}' not found on $PATH.",
+            file=sys.stderr,
+        )
+        print(
+            "Hint: The 'haddock3' CLI must be installed and on your PATH.\n"
+            "Install: pip install haddock3   (or use --container docker)\n"
+            "Verify:  which haddock3",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
 
 
 # Use the repository root to derive the default output folder so the

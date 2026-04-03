@@ -15,10 +15,8 @@ Usage::
 """
 
 import argparse
-import csv
 import os
 import re
-import sys
 
 import pandas as pd
 
@@ -224,7 +222,7 @@ def main(argv=None):
         n_int = (df["label"] == "interaction").sum()
         n_non = (df["label"] == "non-interaction").sum()
         n_proteins = len(set(df["proteinA"]) | set(df["proteinB"]))
-        print(f"\n── Statistics ──")
+        print("\n── Statistics ──")
         print(f"  Interactions:       {n_int}")
         print(f"  Non-interactions:   {n_non}")
         print(f"  Unique proteins:    {n_proteins}")

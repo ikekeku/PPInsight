@@ -4,7 +4,8 @@ visualizer – compare docking scores across PPI prediction models.
 Supports three input modes (from simplest to most flexible):
 
 1. **Unified scores file** (``scores.tsv`` / ``scores.csv``)
-   Columns: ``proteinA, proteinB, model, score_type, score_value[, output_path, timestamp]``
+   Columns: ``proteinA, proteinB, model, score_type, score_value``
+   Provenance: companion ``.provenance.json`` sidecar (written by ``collect_scores``)
    → :func:`load_scores` → :func:`compare_scores`
 
 2. **Per-model score files** (one CSV/TSV per model, each with a numeric
@@ -37,7 +38,8 @@ import seaborn as sns
 # Theme configuration
 # ---------------------------------------------------------------------------
 
-# Available themes the user can pick from via --theme.
+# Available themes for programmatic use (e.g. apply_theme("ticks-colorblind")).
+# The CLI always uses the default theme.
 THEMES: dict[str, dict] = {
     "whitegrid-Set2":     {"style": "whitegrid",  "palette": "Set2"},
     "whitegrid-husl":     {"style": "whitegrid",  "palette": "husl"},
@@ -196,9 +198,9 @@ def compare_scores(
     palette = sns.color_palette(n_colors=len(models))
     bar_width = max(0.45, min(0.8, 0.65 * len(models)))
     fig, ax = plt.subplots(figsize=(max(6, len(models) * 2.5), 5))
-    bars = ax.bar(models, means, width=bar_width, yerr=stds, capsize=6,
-                  color=palette, edgecolor="white", linewidth=0.8,
-                  error_kw={"linewidth": 1.5})
+    ax.bar(models, means, width=bar_width, yerr=stds, capsize=6,
+           color=palette, edgecolor="white", linewidth=0.8,
+           error_kw={"linewidth": 1.5})
     ax.set_xlabel("Interaction model")
     ax.set_ylabel(f"{score_type}")
     ax.set_title(plot_title or f"{score_type} by model")
@@ -334,7 +336,8 @@ def available_metrics(scores_df: pd.DataFrame) -> list[str]:
     if "score_type" not in scores_df.columns:
         return sorted(
             c for c in scores_df.columns
-            if c not in ("model", "proteina", "proteinb", "output_path", "timestamp")
+            if c not in ("model", "proteina", "proteinb", "output_path", "timestamp",
+                        "run_id", "label", "family", "source")
         )
     return sorted(scores_df["score_type"].dropna().unique())
 
@@ -756,8 +759,6 @@ def score_heatmap(
     -------
     matplotlib.figure.Figure
     """
-    import numpy as np
-
     df = scores_df.copy()
     # Normalize column names to lowercase (load_scores does this, but
     # DataFrames built manually or in tests may use camelCase).
@@ -2054,7 +2055,9 @@ def main(argv=None):
         default=None,
         help=(
             "Save the plot to a file (png/svg/pdf) instead of showing "
-            "interactively.  Useful for batch report generation."
+            "interactively.  The recommended location is "
+            "data/output/plots/ (e.g. -o data/output/plots/violin.png).  "
+            "Parent directories are created automatically."
         ),
     )
     parser.add_argument(
@@ -2311,6 +2314,7 @@ def main(argv=None):
                 """Annotate with source tag, then save or show."""
                 _annotate_plot_source(fig, args.metric, summary_tbl)
                 if args.output:
+                    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
                     fig.savefig(args.output, bbox_inches="tight", dpi=180)
                     print(f"Plot saved to {args.output}")
                 else:
@@ -2356,9 +2360,6 @@ def main(argv=None):
                         output=None,
                     )
                     _save_or_show(fig)
-                    return
-                    if args.output:
-                        fig.savefig(args.output, bbox_inches="tight", dpi=180)
                     return
 
                 if pt == "scatter":
