@@ -47,3 +47,4 @@ src/ppinsight.egg-info/
 # Cache and notebook checkpoints
 .pytest_cache/
 .ipynb_checkpoints/
+.ruff_cache/
