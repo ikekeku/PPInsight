@@ -11,6 +11,30 @@ if SRC not in sys.path:
 import pytest
 
 
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip tests that require unavailable external tools.
+
+    - ``requires_rosetta``: skipped unless ``ROSETTA_AVAILABLE=1`` is set
+      *and* PyRosetta can actually be imported.
+    - ``integration``: skipped unless ``RUN_INTEGRATION_TESTS=1`` is set.
+    """
+    rosetta_available = os.environ.get("ROSETTA_AVAILABLE", "0") == "1"
+    run_integration = os.environ.get("RUN_INTEGRATION_TESTS", "0") == "1"
+
+    skip_rosetta = pytest.mark.skip(
+        reason="PyRosetta not available; set ROSETTA_AVAILABLE=1 to run"
+    )
+    skip_integration = pytest.mark.skip(
+        reason="Integration tests disabled; set RUN_INTEGRATION_TESTS=1 to run"
+    )
+
+    for item in items:
+        if item.get_closest_marker("requires_rosetta") and not rosetta_available:
+            item.add_marker(skip_rosetta)
+        if item.get_closest_marker("integration") and not run_integration:
+            item.add_marker(skip_integration)
+
+
 @pytest.fixture
 def sample_input_dirs(tmp_path):
     """Create a small input and output directory structure for tests.

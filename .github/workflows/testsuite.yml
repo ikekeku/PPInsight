@@ -63,4 +63,10 @@ jobs:
 
       - name: Run Tests
         run: |
-          python -m pytest --cov=ppinsight --cov-report=term-missing
+          # Exclude tests that require external engines (PyRosetta, etc.) or large
+          # optional dependencies.  Those are gated by the `requires_rosetta` and
+          # `integration` marks and auto-skipped via conftest unless the
+          # corresponding env vars are set (ROSETTA_AVAILABLE=1,
+          # RUN_INTEGRATION_TESTS=1).
+          python -m pytest -m "not requires_rosetta and not integration" \
+            --cov=ppinsight --cov-report=term-missing

@@ -1,10 +1,17 @@
 """Tests for the Rosetta docking pipeline.
 
-These tests require PyRosetta. If it is not installed, the entire module
-is skipped automatically.
+These tests require PyRosetta. If it is not installed, or if the
+``ROSETTA_AVAILABLE`` environment variable is not set to ``1``, the
+entire module is skipped automatically.
+
+To run these tests locally with PyRosetta installed::
+
+    ROSETTA_AVAILABLE=1 pytest tests/test_rosetta_docking.py
 """
 
 import pytest
+
+pytestmark = pytest.mark.requires_rosetta
 
 pyrosetta = pytest.importorskip("pyrosetta", reason="PyRosetta not installed")
 

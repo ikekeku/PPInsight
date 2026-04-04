@@ -59,6 +59,12 @@ parse_pairs = "ppinsight.parse_pairs:main"
 batch_dock = "ppinsight.batch_dock:main"
 ppinsight_quality = "ppinsight.quality:main"
 
+[tool.pytest.ini_options]
+markers = [
+    "requires_rosetta: tests that need PyRosetta (set ROSETTA_AVAILABLE=1 to enable)",
+    "integration: tests that need external engines or large optional deps (set RUN_INTEGRATION_TESTS=1 to enable)",
+]
+
 # Optional upgrades beyond the default ruff rules
 [tool.ruff.lint]
 select = [
