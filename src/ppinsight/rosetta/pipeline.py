@@ -57,6 +57,7 @@ class DockingPipeline:
             cluster_top_n: Number of top decoys to cluster (default: 200)
             rmsd_cutoff: Cα-RMSD cutoff in Å for clustering (default: 4.0)
         """
+        self._ensure_pyrosetta() # make sure PyRosetta is available or else install it via installer
         self.protein1_pdb = Path(protein1_pdb)
         self.protein2_pdb = Path(protein2_pdb)
         if n_runs < 1:
@@ -79,6 +80,25 @@ class DockingPipeline:
         self.docking_results = None
         self.analysis = None
         self.clustered_df = None
+
+    def _ensure_pyrosetta(self):
+        try:
+            import pyrosetta
+        except ImportError:
+            try:
+                import pyrosetta_installer
+                pyrosetta_installer.install_pyrosetta()
+                import pyrosetta  # Try importing again after installation
+            except ImportError:
+                raise ImportError(
+                    "PyRosetta is required for docking but is not installed.\n"
+                    "FAILED installing it using:\n"
+                    "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()\n"
+                    "................................................................\n"
+                    "Please install PyRosetta manually following the instructions at:\n"
+                    "https://www.pyrosetta.org/downloads"
+                )
+
 
     def prepare(self):
         """
