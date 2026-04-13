@@ -29,11 +29,14 @@ def initialize_pyrosetta(verbose=False):
     Returns:
         True if successful
     """
-    # Initialize with flags to handle disulfides properly
-    init_flags = "-mute all -detect_disulf true -ignore_unrecognized_res true"
+    # Initialize with flags suitable for docking.
+    # -detect_disulf false: prevents RuntimeError when docking perturbation
+    #   separates chains that share a disulfide bond (the scoring
+    #   function cannot find the partner after rigid-body moves).
+    init_flags = "-mute all -detect_disulf false -ignore_unrecognized_res true"
 
     if verbose:
-        init_flags = "-detect_disulf true -ignore_unrecognized_res true"
+        init_flags = "-detect_disulf false -ignore_unrecognized_res true"
 
     pyrosetta.init(init_flags) # pylint: disable=no-member, import-error
     return True
@@ -59,12 +62,8 @@ def load_structure(pdb_path):
 
     pose = pyrosetta.pose_from_pdb(str(pdb_path))
 
-    # Fix disulfides if present
-    try:
-        rosetta.core.conformation.fix_disulfides(pose)  # pylint: disable=no-member
-    except KeyError:
-        # No disulfides or already fixed
-        pass
+    # Disulfide detection is handled by the -detect_disulf init flag.
+    # No additional fix_disulfides call is needed.
 
     return pose
 
@@ -106,11 +105,8 @@ def fix_structure_issues(pose):
     Returns:
         Fixed Pose object
     """
-    # Fix disulfide bonds
-    try:
-        rosetta.core.conformation.fix_disulfides(pose)  # pylint: disable=no-member
-    except (KeyError, RuntimeError) as e:
-        print(f"Warning: Could not auto-fix disulfides: {e}")
+    # Disulfide detection is handled by the -detect_disulf init flag
+    # passed during pyrosetta.init(). Nothing else to fix here.
 
     return pose
 
@@ -142,10 +138,7 @@ def combine_proteins(pose1, pose2, jump_distance=15.0):
         new_chain=True
     )
 
-    try:
-        rosetta.core.conformation.fix_disulfides(combined_pose)  # pylint: disable=no-member
-    except KeyError:
-        pass
+    # Disulfide detection already handled by -detect_disulf init flag.
 
     # Setup fold tree for docking
     chain1_end = pose1.total_residue()
@@ -166,7 +159,10 @@ def combine_proteins(pose1, pose2, jump_distance=15.0):
     return combined_pose
 
 
-def prepare_structures(protein1_pdb, protein2_pdb, relax=True, jump_distance=15.0, verbose=False):
+def prepare_structures(
+    protein1_pdb, protein2_pdb,
+    relax=True, jump_distance=15.0, verbose=False,
+):
     """
     Complete structure preparation pipeline.
 

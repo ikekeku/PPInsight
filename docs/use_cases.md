@@ -56,6 +56,37 @@ success criteria.
 - Outputs: images and interactive HTML visualizations
 - Success criteria: plots render without errors and reflect `scores.tsv` data.
 
+
+### USE CASE D: *Batch-dock all pairs from an interaction table*
+- User: Researcher
+- System: PPInsight batch pipeline (`parse_pairs.py`, `batch_dock.py`,
+  `collect_scores.py`, `visualizer.py`)
+- Preconditions: an annotation table listing protein pairs with
+  interaction / non-interaction labels; network access (or pre-fetched PDB
+  files); at least one docking engine installed (LightDock, HADDOCK, or
+  Rosetta)
+- Steps:
+  1. Parse the annotation table into a flat pairs file:
+     `ppinsight parse table.tsv -o pairs.csv --stats`
+  2. Run docking for every pair across one or more engines:
+     `ppinsight batch pairs.csv --engines lightdock haddock --pdb-dir pdb_files/`
+     (use `--dry-run` first to verify resolution and `--limit N` for testing)
+  3. Collect scores from all output directories into a unified scores file,
+     annotated with interaction labels:
+     `ppinsight collect output_dirs... -o scores.tsv --pairs pairs.csv --summary`
+  4. Compare engines with classification metrics and ROC curves:
+     `ppinsight compare scores.tsv -m luciferin_score --classify`
+     `ppinsight compare scores.tsv -m score --plot-type roc`
+  5. Optionally normalise and aggregate for cross-engine comparison:
+     `ppinsight compare scores.tsv -m score --normalize minmax --agg best`
+- Outputs: `pairs.csv`, `batch_results.csv`, `scores.tsv`, confusion-matrix
+  tables, ROC plots, bar/violin/heatmap visualisations
+- Success criteria: every pair × engine combination produces a row in
+  `batch_results.csv` with status `success` or a logged error;
+  `scores.tsv` contains labelled scores for all successful runs; ROC AUC
+  is computable for engines with both interaction and non-interaction pairs.
+
+
 <!-- ##### EVERYONE RESTRUCTURE THE USE CASES CLEARLY UNDER THE ACCORDING TASK!!! 
 SETUP 
 - Accessing a remote server (HYAK?)  

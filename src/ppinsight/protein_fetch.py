@@ -2,7 +2,7 @@
 protein_fetch.py
 ----------------
 
-Tools for retrieving protein sequence and structure data from UniProt and 
+Tools for retrieving protein sequence and structure data from UniProt and
 the Protein Data Bank (PDB).
 
 The module provides a single pipeline that:
@@ -17,8 +17,12 @@ Dependencies:
 - biopython: sequence parsing (SeqIO) and PDB handling (Bio.PDB)
 - csv, os, sys: file and system utilities
 
-Example:
-    >>> from protein_fetch import get_uniprot_data
+Example (CLI):
+    protein_fetch P69905 P68871
+    protein_fetch P69905 P68871 --fasta hemoglobin.fasta --csv hemoglobin.csv
+
+Example (API):
+    >>> from ppinsight.protein_fetch import get_uniprot_data
     >>> data, pdb_info = get_uniprot_data(
     ...     ["P69905", "P68871"],
     ...     fasta_file="hemoglobin.fasta",
@@ -27,6 +31,7 @@ Example:
     ... )
 """
 
+import argparse
 import csv
 import os
 import sys
@@ -141,9 +146,82 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
                 print(f"No PDB IDs found for {accession_id}")
         except requests.exceptions.RequestException as request_error:
             print(f"Warning: Could not fetch PDB info for {accession_id}."
-                  f"Error: {request_error}", file=sys.stderr)
+                  f"Error: {request_error}",
+                  file=sys.stderr,
+                 )
             pdb_info[accession_id] = None
             raise ValueError(
-                f"Warning: Could not fetch PDB info for: {accession_id}")
+                f"Warning: Could not fetch PDB info for: {accession_id}"
+            ) from request_error
 
     return structured_data, pdb_info
+
+
+# ── CLI ──────────────────────────────────────────────────────────────
+
+def main(argv=None):
+    """CLI entrypoint for fetching protein data from UniProt.
+
+    Usage matches the style of the other PPInsight scripts::
+
+        protein_fetch P69905 P68871
+        protein_fetch P69905 P68871 --fasta hemoglobin.fasta --csv hemoglobin.csv
+    """
+    parser = argparse.ArgumentParser(
+        description="Fetch protein sequence and structure data from UniProt / PDB."
+    )
+    parser.add_argument(
+        "accessions",
+        nargs="+",
+        help=(
+            "One or more UniProt accession IDs (e.g. P69905 P68871).  "
+            "The pipeline fetches sequence data and resolves PDB structures "
+            "for each accession."
+        ),
+    )
+    parser.add_argument(
+        "--fasta",
+        default=None,
+        help=(
+            "Save combined FASTA sequences to this file.  Useful for "
+            "sequence alignment or as input to other bioinformatics tools.  "
+            "Omit if you only need PDB structures."
+        ),
+    )
+    parser.add_argument(
+        "--csv",
+        default=None,
+        help=(
+            "Save structured sequence metadata (ID, length, organism, etc.) "
+            "to this CSV file.  Useful for record-keeping in large benchmarks."
+        ),
+    )
+    parser.add_argument(
+        "--pdb-dir",
+        default="data/input",
+        help=(
+            "Directory for downloaded PDB files (default: data/input).  "
+            "These PDB files become inputs for the docking subcommands."
+        ),
+    )
+
+    args = parser.parse_args(argv)
+
+    structured_data, pdb_info = get_uniprot_data(
+        accession_ids=args.accessions,
+        fasta_file=args.fasta,
+        csv_file=args.csv,
+        pdb_dir=args.pdb_dir,
+    )
+
+    # Print a brief summary
+    print(f"\nFetched {len(structured_data)} protein(s):")
+    for entry in structured_data:
+        pdb_id = pdb_info.get(entry["ID"].split("|")[1]
+                              if "|" in entry["ID"]
+                              else entry["ID"], "—")
+        print(f"  {entry['ID']:30s}  {entry['Sequence Length']:>5d} aa  PDB: {pdb_id}")
+
+
+if __name__ == "__main__":
+    main()

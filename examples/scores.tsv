@@ -1,0 +1,10 @@
+model	score_type	score_value	proteinA	proteinB
+lightdock	dockq	0.72	2UUY_rec	2UUY_lig
+lightdock	luciferin_score	-18.4	2UUY_rec	2UUY_lig
+haddock	dockq	0.68	2UUY_rec	2UUY_lig
+haddock	haddock_score	-112.5	2UUY_rec	2UUY_lig
+rosetta	dockq	0.55	2UUY_rec	2UUY_lig
+rosetta	interface_score	-9.8	2UUY_rec	2UUY_lig
+lightdock	dockq	0.61	e2aP_1F3G	hpr_ensemble_1
+haddock	dockq	0.74	e2aP_1F3G	hpr_ensemble_1
+rosetta	dockq	0.49	e2aP_1F3G	hpr_ensemble_1

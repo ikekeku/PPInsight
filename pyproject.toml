@@ -21,25 +21,49 @@ classifiers = [
     "Operating System :: OS Independent"
 ]
 
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 dependencies = [
     "numpy",
     "pandas",
     "matplotlib>=3.6.0",
-    "altair",
+    "seaborn>=0.12.0",
     "requests>=2.25.0",
     "biopython>=1.79",
-    "tenacity>=8.0.1",
+    "lightdock",
+    "networkx",       # required by DockQ and by Rosetta clustering
+]
+
+[project.optional-dependencies]
+# DockQ enables the ppinsight.quality module (CAPRI quality assessment).
+# We install from a fork that supports numpy ≥ 2.0 (upstream PR #61).
+# Once upstream DockQ releases a numpy-2-compatible version, replace this
+# with a simple:  "dockq>=2.2"
+quality = [
+    "dockq @ git+https://github.com/nrontsis/DockQ.git@update-to-numpy>2",
+]
+dev = [
     "pytest",
     "pytest-cov",
     "ruff",
-    "lightdock"
 ]
 
 [project.scripts]
+ppinsight = "ppinsight.cli:main"
+protein_fetch = "ppinsight.protein_fetch:main"
 pdb_to_lightdock = "ppinsight.pdb_to_lightdock:main"
 pdb_to_haddock = "ppinsight.pdb_to_haddock:main"
-ppinsight-rosetta = "ppinsight.rosetta.cli:main"
+pdb_to_rosetta = "ppinsight.pdb_to_rosetta:main"
+compare_scores = "ppinsight.visualizer:main"
+collect_scores = "ppinsight.collect_scores:main"
+parse_pairs = "ppinsight.parse_pairs:main"
+batch_dock = "ppinsight.batch_dock:main"
+ppinsight_quality = "ppinsight.quality:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "requires_rosetta: tests that need PyRosetta (set ROSETTA_AVAILABLE=1 to enable)",
+    "integration: tests that need external engines or large optional deps (set RUN_INTEGRATION_TESTS=1 to enable)",
+]
 
 # Optional upgrades beyond the default ruff rules
 [tool.ruff.lint]
@@ -48,9 +72,9 @@ select = [
     "W", # pycodestyle warnings: detect deviations from PEP8 suggestions
     "F", # Pyflakes: detect code errors, potential bugs
     "B", # flake8-bugbear: detect antipatterns that can lead to bugs
+    "I", # isort: consistent import ordering
     # "A", # flake8-builtins: detect overloading python builtins
     # "N", # pep8-naming: detect deviations from PEP naming conventions
-    # "I", # isort: better import organization
     # "D", # pydocstyle: check docstrings
     # "C4", # flake8-comprehensions: check for code simplifications with comprehensions
     # "SIM", # flake8-simplify: check for code simplifications

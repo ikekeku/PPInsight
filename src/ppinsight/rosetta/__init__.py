@@ -10,26 +10,52 @@ Main components:
 - analyze_scores: Score analysis and ranking
 
 Example usage:
-    from ppinsight.docking import DockingPipeline
-    
+    from ppinsight.rosetta import DockingPipeline
+
     pipeline = DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=10)
     result = pipeline.run()
     print(f"Final docking score: {result['score']:.2f}")
+
+Note:
+    Importing this sub-package requires PyRosetta.  Install it with::
+
+        python -c "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()"
 """
 
+try:
+    # Eagerly import Rosetta sub-modules so that ``from ppinsight.rosetta
+    # import DockingPipeline`` works.  If PyRosetta is missing, fall
+    # through to the except block and set a placeholder.
+    from .analyze import analyze_scores, cluster_and_rank, get_top_scores
+    from .cluster import best_of_largest_cluster, cluster_decoys
+    from .dock import run_docking, setup_docking_protocol
+    from .pipeline import DockingPipeline
+    from .prepare_structure import combine_proteins, prepare_structures, relax_structure
+except ImportError:
+    # PyRosetta is not installed — provide a helpful error on attribute access
+    import warnings as _warnings
+    _warnings.warn(
+        "ppinsight.rosetta could not import PyRosetta. "
+        "Rosetta docking features are unavailable. "
+        "Install with: python -c "
+        "\"import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()\"",
+        ImportWarning,
+        stacklevel=2,
+    )
+    DockingPipeline = None  # type: ignore[assignment,misc]
 
-# easiest way to install:
-# python -c "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()"
-# ``` :contentReference[oaicite:2]{index=2}  
-# That will download and install a compatible PyRosetta build to your environment.
-
-
-from .pipeline import DockingPipeline
-from .prepare_structure import prepare_structures, relax_structure, combine_proteins
-from .dock import run_docking, setup_docking_protocol
-from .analyze import analyze_scores, get_top_scores
-
-__all__ = ['DockingPipeline']
-
+__all__ = [
+    'DockingPipeline',
+    'prepare_structures',
+    'relax_structure',
+    'combine_proteins',
+    'run_docking',
+    'setup_docking_protocol',
+    'analyze_scores',
+    'get_top_scores',
+    'cluster_and_rank',
+    'cluster_decoys',
+    'best_of_largest_cluster',
+]
 
 __version__ = '0.1.0'

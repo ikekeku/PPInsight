@@ -7,9 +7,10 @@ This module provides a high-level interface for the complete docking workflow.
 # pylint: disable=too-many-instance-attributes
 
 from pathlib import Path
-from .prepare_structure import prepare_structures
-from .dock import run_docking, save_docked_structure
+
 from .analyze import analyze_scores, export_scores_to_csv
+from .dock import run_docking, save_docked_structure
+from .prepare_structure import prepare_structures
 
 
 class DockingPipeline:
@@ -28,8 +29,8 @@ class DockingPipeline:
         top_n: Number of top scores to average for final result
 
     Example:
-        >>> path1 = "../../PPInsight/examples/ppinsight_data/input_files/2UUY_lig.pdb"
-        >>> path2 = "../../PPInsight/examples/ppinsight_data/input_files/2UUY_rec.pdb"
+        >>> path1 = "data/input/2UUY_lig.pdb"
+        >>> path2 = "data/input/2UUY_rec.pdb"
         >>> pipeline = DockingPipeline(path1, path2, n_runs=50)
         >>> result = pipeline.run()
         >>> print(f"Final docking score: {result['final_score']:.2f}")
@@ -40,7 +41,8 @@ class DockingPipeline:
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     def __init__(self, protein1_pdb, protein2_pdb, n_runs=10, top_n=20,
-                 relax=True, jump_distance=15.0, verbose=True):
+                 relax=True, jump_distance=15.0, verbose=True,
+                 cluster=True, cluster_top_n=200, rmsd_cutoff=4.0):
         """
         Initialize the docking pipeline.
 
@@ -52,8 +54,11 @@ class DockingPipeline:
             relax: If True, relax structures before docking (default: True)
             jump_distance: Initial separation distance in Å (default: 15.0)
             verbose: If True, print progress messages (default: True)
+            cluster: If True, cluster decoys after docking (default: True)
+            cluster_top_n: Number of top decoys to cluster (default: 200)
+            rmsd_cutoff: Cα-RMSD cutoff in Å for clustering (default: 4.0)
         """
-        self._ensure_pyrosetta() # make sure PyRosetta is available or else install it via installer
+        self._ensure_pyrosetta()  # make sure PyRosetta is available
         self.protein1_pdb = Path(protein1_pdb)
         self.protein2_pdb = Path(protein2_pdb)
         if n_runs < 1:
@@ -67,29 +72,34 @@ class DockingPipeline:
         self.relax = relax
         self.jump_distance = jump_distance
         self.verbose = verbose
+        self.cluster = cluster
+        self.cluster_top_n = cluster_top_n
+        self.rmsd_cutoff = rmsd_cutoff
 
         # Results storage
         self.complex_pose = None
         self.docking_results = None
         self.analysis = None
+        self.clustered_df = None
 
     def _ensure_pyrosetta(self):
         try:
-            import pyrosetta
+            import pyrosetta  # noqa: F401
         except ImportError:
             try:
                 import pyrosetta_installer
                 pyrosetta_installer.install_pyrosetta()
-                import pyrosetta  # Try importing again after installation
-            except ImportError:
+                import pyrosetta  # noqa: F401
+            except ImportError as err:
                 raise ImportError(
                     "PyRosetta is required for docking but is not installed.\n"
                     "FAILED installing it using:\n"
-                    "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()\n"
+                    "import pyrosetta_installer; "
+                    "pyrosetta_installer.install_pyrosetta()\n"
                     "................................................................\n"
                     "Please install PyRosetta manually following the instructions at:\n"
                     "https://www.pyrosetta.org/downloads"
-                )
+                ) from err
 
 
     def prepare(self):
@@ -185,7 +195,9 @@ class DockingPipeline:
         Run the complete docking pipeline.
 
         Returns:
-            Analysis dictionary with final score and statistics
+            Analysis dictionary with final score and statistics.
+            If clustering is enabled, the result also includes
+            ``'clustered_df'`` with the annotated DataFrame.
         """
         self.prepare()
         self.dock()
@@ -259,5 +271,8 @@ class DockingPipeline:
         print(f"Top N for averaging: {self.top_n}")
         print()
         print(f"Best score: {self.analysis['best_score']:.2f}")
-        print(f"Final score (avg of top {self.top_n}): {self.analysis['final_score']:.2f}")
+        print(
+            f"Final score (avg of top {self.top_n}): "
+            f"{self.analysis['final_score']:.2f}"
+        )
         print("=" * 70)

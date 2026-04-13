@@ -1,0 +1,768 @@
+{
+    "input": [
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:47:17",
+            "file_name": "flexref_1.pdb",
+            "file_type": {
+                "py/reduce": [
+                    {
+                        "py/type": "haddock.libs.libontology.Format"
+                    },
+                    {
+                        "py/tuple": [
+                            "pdb"
+                        ]
+                    }
+                ]
+            },
+            "full_name": "flexref_1.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "rigidbody_5.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/4_flexref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "4_flexref",
+                            "flexref_1.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "data",
+                            "4_flexref",
+                            "e2a-hpr_air.tbl"
+                        ]
+                    }
+                ]
+            },
+            "score": -218.98549999999997,
+            "seed": 922,
+            "topology": [
+                {
+                    "created": "2025-11-19 09:44:11",
+                    "file_name": "e2aP_1F3G_haddock.psf",
+                    "file_type": {
+                        "py/reduce": [
+                            {
+                                "py/type": "haddock.libs.libontology.Format"
+                            },
+                            {
+                                "py/tuple": [
+                                    "psf"
+                                ]
+                            }
+                        ]
+                    },
+                    "full_name": "e2aP_1F3G_haddock.psf",
+                    "md5": null,
+                    "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/0_topoaa",
+                    "py/object": "haddock.libs.libontology.TopologyFile",
+                    "rel_path": {
+                        "py/reduce": [
+                            {
+                                "py/type": "pathlib.PosixPath"
+                            },
+                            {
+                                "py/tuple": [
+                                    "..",
+                                    "0_topoaa",
+                                    "e2aP_1F3G_haddock.psf"
+                                ]
+                            }
+                        ]
+                    },
+                    "restr_fname": null
+                },
+                {
+                    "created": "2025-11-19 09:44:11",
+                    "file_name": "hpr_ensemble_3_haddock.psf",
+                    "file_type": {
+                        "py/id": 8
+                    },
+                    "full_name": "hpr_ensemble_3_haddock.psf",
+                    "md5": null,
+                    "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/0_topoaa",
+                    "py/object": "haddock.libs.libontology.TopologyFile",
+                    "rel_path": {
+                        "py/reduce": [
+                            {
+                                "py/type": "pathlib.PosixPath"
+                            },
+                            {
+                                "py/tuple": [
+                                    "..",
+                                    "0_topoaa",
+                                    "hpr_ensemble_3_haddock.psf"
+                                ]
+                            }
+                        ]
+                    },
+                    "restr_fname": null
+                }
+            ],
+            "unw_energies": {
+                "air": 11.86,
+                "angles": 2715.64,
+                "bonds": 3135.32,
+                "bsa": 1197.77,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -20.4084,
+                "dihe": 1348.02,
+                "elec": -162.791,
+                "improper": 1590.86,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -175.926,
+                "vdw": -24.9944,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:47:17",
+            "file_name": "flexref_2.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "flexref_2.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "rigidbody_6.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/4_flexref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "4_flexref",
+                            "flexref_2.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 5
+            },
+            "score": -190.38916,
+            "seed": 923,
+            "topology": [
+                {
+                    "py/id": 7
+                },
+                {
+                    "py/id": 10
+                }
+            ],
+            "unw_energies": {
+                "air": 44.3394,
+                "angles": 2686.41,
+                "bonds": 2630.46,
+                "bsa": 1058.04,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -10.8691,
+                "dihe": 1358.38,
+                "elec": -161.136,
+                "improper": 1607.8,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -129.034,
+                "vdw": -12.2376,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:47:17",
+            "file_name": "flexref_3.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "flexref_3.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "rigidbody_1.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/4_flexref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "4_flexref",
+                            "flexref_3.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 5
+            },
+            "score": -159.90716,
+            "seed": 918,
+            "topology": [
+                {
+                    "py/id": 7
+                },
+                {
+                    "created": "2025-11-19 09:44:11",
+                    "file_name": "hpr_ensemble_1_haddock.psf",
+                    "file_type": {
+                        "py/id": 8
+                    },
+                    "full_name": "hpr_ensemble_1_haddock.psf",
+                    "md5": null,
+                    "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/0_topoaa",
+                    "py/object": "haddock.libs.libontology.TopologyFile",
+                    "rel_path": {
+                        "py/reduce": [
+                            {
+                                "py/type": "pathlib.PosixPath"
+                            },
+                            {
+                                "py/tuple": [
+                                    "..",
+                                    "0_topoaa",
+                                    "hpr_ensemble_1_haddock.psf"
+                                ]
+                            }
+                        ]
+                    },
+                    "restr_fname": null
+                }
+            ],
+            "unw_energies": {
+                "air": 63.7094,
+                "angles": 2489.48,
+                "bonds": 3031.01,
+                "bsa": 1525.32,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -19.0351,
+                "dihe": 1335.33,
+                "elec": -102.729,
+                "improper": 1387.37,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -68.2805,
+                "vdw": -29.2608,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:47:17",
+            "file_name": "flexref_4.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "flexref_4.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "rigidbody_20.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/4_flexref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "4_flexref",
+                            "flexref_4.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 5
+            },
+            "score": -188.12651,
+            "seed": 937,
+            "topology": [
+                {
+                    "py/id": 7
+                },
+                {
+                    "created": "2025-11-19 09:44:11",
+                    "file_name": "hpr_ensemble_10_haddock.psf",
+                    "file_type": {
+                        "py/id": 8
+                    },
+                    "full_name": "hpr_ensemble_10_haddock.psf",
+                    "md5": null,
+                    "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/0_topoaa",
+                    "py/object": "haddock.libs.libontology.TopologyFile",
+                    "rel_path": {
+                        "py/reduce": [
+                            {
+                                "py/type": "pathlib.PosixPath"
+                            },
+                            {
+                                "py/tuple": [
+                                    "..",
+                                    "0_topoaa",
+                                    "hpr_ensemble_10_haddock.psf"
+                                ]
+                            }
+                        ]
+                    },
+                    "restr_fname": null
+                }
+            ],
+            "unw_energies": {
+                "air": 35.9799,
+                "angles": 2414.95,
+                "bonds": 3022.78,
+                "bsa": 1394.77,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -19.1439,
+                "dihe": 1328.14,
+                "elec": -124.212,
+                "improper": 1372.46,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -122.653,
+                "vdw": -34.4209,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:47:17",
+            "file_name": "flexref_5.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "flexref_5.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "rigidbody_8.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/4_flexref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "4_flexref",
+                            "flexref_5.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 5
+            },
+            "score": -136.04533,
+            "seed": 925,
+            "topology": [
+                {
+                    "py/id": 7
+                },
+                {
+                    "created": "2025-11-19 09:44:11",
+                    "file_name": "hpr_ensemble_4_haddock.psf",
+                    "file_type": {
+                        "py/id": 8
+                    },
+                    "full_name": "hpr_ensemble_4_haddock.psf",
+                    "md5": null,
+                    "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/0_topoaa",
+                    "py/object": "haddock.libs.libontology.TopologyFile",
+                    "rel_path": {
+                        "py/reduce": [
+                            {
+                                "py/type": "pathlib.PosixPath"
+                            },
+                            {
+                                "py/tuple": [
+                                    "..",
+                                    "0_topoaa",
+                                    "hpr_ensemble_4_haddock.psf"
+                                ]
+                            }
+                        ]
+                    },
+                    "restr_fname": null
+                }
+            ],
+            "unw_energies": {
+                "air": 31.9497,
+                "angles": 2685.35,
+                "bonds": 2436.91,
+                "bsa": 1191.66,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -14.3338,
+                "dihe": 1345.68,
+                "elec": -75.7436,
+                "improper": 1492.03,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -81.0402,
+                "vdw": -37.2463,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        }
+    ],
+    "output": [
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:52:24",
+            "file_name": "emref_1.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "emref_1.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "flexref_1.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/6_emref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "6_emref",
+                            "emref_1.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "data",
+                            "6_emref",
+                            "e2a-hpr_air.tbl"
+                        ]
+                    }
+                ]
+            },
+            "score": -111.96158600000001,
+            "seed": 922,
+            "topology": {
+                "py/id": 6
+            },
+            "unw_energies": {
+                "air": 8.66914,
+                "angles": 224.957,
+                "bonds": 37.1729,
+                "bsa": 1322.3,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -14.9589,
+                "dihe": 1267.04,
+                "elec": -366.931,
+                "improper": 46.9548,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -382.745,
+                "vdw": -24.4834,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:52:24",
+            "file_name": "emref_2.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "emref_2.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "flexref_2.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/6_emref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "6_emref",
+                            "emref_2.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 38
+            },
+            "score": -84.34994999999999,
+            "seed": 923,
+            "topology": {
+                "py/id": 15
+            },
+            "unw_energies": {
+                "air": 37.1665,
+                "angles": 231.227,
+                "bonds": 37.3291,
+                "bsa": 1151.83,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -12.886,
+                "dihe": 1281.78,
+                "elec": -304.944,
+                "improper": 46.0071,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -281.969,
+                "vdw": -14.1918,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:52:24",
+            "file_name": "emref_3.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "emref_3.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "flexref_3.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/6_emref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "6_emref",
+                            "emref_3.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 38
+            },
+            "score": -101.34548,
+            "seed": 918,
+            "topology": {
+                "py/id": 19
+            },
+            "unw_energies": {
+                "air": 28.6342,
+                "angles": 211.919,
+                "bonds": 36.3209,
+                "bsa": 1639.14,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -12.8734,
+                "dihe": 1274.72,
+                "elec": -323.253,
+                "improper": 45.6865,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -321.304,
+                "vdw": -26.6849,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:52:24",
+            "file_name": "emref_4.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "emref_4.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "flexref_4.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/6_emref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "6_emref",
+                            "emref_4.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 38
+            },
+            "score": -104.82252,
+            "seed": 937,
+            "topology": {
+                "py/id": 25
+            },
+            "unw_energies": {
+                "air": 26.1708,
+                "angles": 220.318,
+                "bonds": 35.4766,
+                "bsa": 1450.67,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -19.4379,
+                "dihe": 1256.75,
+                "elec": -232.178,
+                "improper": 45.8135,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -247.573,
+                "vdw": -41.5661,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        },
+        {
+            "clt_id": null,
+            "clt_model_rank": null,
+            "clt_rank": null,
+            "created": "2025-11-19 09:52:24",
+            "file_name": "emref_5.pdb",
+            "file_type": {
+                "py/id": 3
+            },
+            "full_name": "emref_5.pdb",
+            "len": NaN,
+            "md5": null,
+            "ori_name": "flexref_5.pdb",
+            "path": "/mmfs1/gscratch/stf/keku/haddock3/examples/docking-protein-protein/run1-test/6_emref",
+            "py/object": "haddock.libs.libontology.PDBFile",
+            "rel_path": {
+                "py/reduce": [
+                    {
+                        "py/type": "pathlib.PosixPath"
+                    },
+                    {
+                        "py/tuple": [
+                            "..",
+                            "6_emref",
+                            "emref_5.pdb"
+                        ]
+                    }
+                ]
+            },
+            "restr_fname": {
+                "py/id": 38
+            },
+            "score": -92.67293000000002,
+            "seed": 925,
+            "topology": {
+                "py/id": 31
+            },
+            "unw_energies": {
+                "air": 16.6847,
+                "angles": 221.332,
+                "bonds": 37.9391,
+                "bsa": 1275.09,
+                "cdih": 0.0,
+                "coup": 0.0,
+                "dani": 0.0,
+                "desolv": -14.531,
+                "dihe": 1261.2,
+                "elec": -203.935,
+                "improper": 48.8024,
+                "rdcs": 0.0,
+                "rg": 0.0,
+                "sym": 0.0,
+                "total": -226.274,
+                "vdw": -39.0234,
+                "vean": 0.0,
+                "xpcs": 0.0
+            }
+        }
+    ]
+}

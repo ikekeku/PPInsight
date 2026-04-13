@@ -1,147 +1,338 @@
 # PPInsight
-This project seeks to streamline the evaluation of computational protein-protein interaction (PPI) prediction models. Because experimental PPI determination is time-consuming and costly, computational approaches hold promise for large-scale interactome studies. Existing models frequently lack standardised evaluation measures and instruments for comparison. To close this gap, we propose creating a Python-based benchmarking and visualization tool that automates the extraction of reference interaction data, runs various predictive models, and produces comparative performance graphs. This approach will allow researchers to easily evaluate model correctness and consistency.
-Tasks include developing a Python tool to automate protein sequence retrieval, convert data into structural formats, and visualize interaction scores of PPI prediction models.
 
-![Schematic detailling workflow for PPInsight project, grouped by task](docs/images/CSE583_PPInsight-Schematic.png)
+A Python toolkit for benchmarking computational protein–protein interaction
+(PPI) prediction models.  PPInsight automates protein data retrieval, runs
+multiple docking engines, collects scores into a unified format, and
+produces comparative visualisations.
+
+![Workflow schematic](docs/images/CSE583_PPInsight-Schematic.png)
 
 ## Contents
 
-- [Install & quick start](#install-and-quick-start)
+- [Install & quick start](#install--quick-start)
+- [CLI reference](#cli-reference)
+- [Tutorial](#tutorial)
+- [Project structure](#project-structure)
+- [Team members](#team-members)
 - [License](#license)
 - [Resources](#resources)
 
-# Team Members and Contributions
-- Ike Keku: Co-developed PPI predictor pipelines (i.e., `pdb_to_haddock.py` and `pdb_to_lightdock.py`, as well as related files), oversaw general workflow of tools
-- Rita Kamenetskiy: Co-developed protein data fetching module ('protein_fetch.py'), organized and functionalized the packaging, and functionalized the continuous integration tests
-- Fiona McLary: Developed visualizer module and corresponding tests
-- Walter Avila: Co-developed protein data fetching module (`protein_fetch.py`) and corresponding tests
-- Maya Gatt Harari: developed Rosetta integration, allowing usage of Rosetta for protein docking via PyRosetta. Nested inside 'ppinsight/rosetta'.
+---
 
-# Install and quick start
+## Install & quick start
 
-1. Create the Python environment (conda recommended):
+### One-command setup
+
+```bash
+bash setup.sh          # creates conda env, installs PyRosetta, pip install -e .
+conda activate ppinsight
+```
+
+> `setup.sh` downloads PyRosetta (~1.5 GB) automatically.  To skip that
+> step (e.g. if you only need HADDOCK / LightDock), run
+> `bash setup.sh --no-rosetta`.
+
+<details>
+<summary>Manual step-by-step setup</summary>
 
 ```bash
 conda env create -f environment.yml
 conda activate ppinsight
-```
-
-2. Install the package in editable mode so console scripts are available:
-
-```bash
+python -c "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()"
 pip install -e .
 ```
+</details>
 
-3. Fetch proteins (example):
+---
+
+## CLI reference
+
+PPInsight installs an umbrella command (`ppinsight`) with subcommands.
+Each subcommand is also available as a standalone command:
+
+| Umbrella form               | Standalone equivalent |
+|-----------------------------|-----------------------|
+| `ppinsight fetch`           | `protein_fetch`       |
+| `ppinsight lightdock`       | `pdb_to_lightdock`    |
+| `ppinsight haddock`         | `pdb_to_haddock`      |
+| `ppinsight rosetta`         | `pdb_to_rosetta`      |
+| `ppinsight collect`         | `collect_scores`      |
+| `ppinsight compare`         | `compare_scores`      |
+| `ppinsight parse`           | `parse_pairs`         |
+| `ppinsight batch`           | `batch_dock`          |
+| `ppinsight quality`         | `ppinsight_quality`   |
+
+The examples below use the umbrella form.  Replace
+`ppinsight <subcommand>` with the standalone name if you prefer.
+
+> **Tip:** every command accepts `--help`.  When in doubt, run
+> `ppinsight <command> --help` to see all available options.
+
+### 1. Fetch protein data
+
+PPInsight fetches protein structures for you — you provide UniProt
+accession IDs, and it downloads sequences and PDB files automatically.
 
 ```bash
-# from repo root; accepts UniProt accessions
-python -m ppinsight.protein_fetch get_uniprot_data --accessions P00760,Q1EG59
+# Give one or more UniProt accession IDs.
+# Downloaded PDB files land in --pdb-dir (default: data/input/).
+ppinsight fetch P69905 P68871
 ```
 
-4. Run docking pipelines (examples):
+Optional flags: `--pdb-dir DIR` (override download location), `--fasta FILE`
+(save FASTA sequences), `--csv FILE` (save metadata).
+Run `ppinsight fetch --help` for the full list.
+
+### 2. Run docking pipelines
+
+Each docking command takes two positional arguments: **receptor** and
+**ligand**.  These are PDB filenames (basenames or full paths).  Use
+`--input-dir` to tell the CLI where the PDB files live.
 
 ```bash
-# HADDOCK staging (writes cfg under examples/...)
-pdb_to_haddock 2UUY_rec 2UUY_lig --runname example_2UUY
+# LightDock — minimum required: receptor, ligand
+ppinsight lightdock 2UUY_rec 2UUY_lig --input-dir data/input/
 
-# LightDock run + generate
-pdb_to_lightdock 2UUY_rec 2UUY_lig --generate
+# HADDOCK — minimum required: receptor, ligand
+#   Without --run, only stages the config (lets you review before executing).
+#   Add --run to also execute HADDOCK3.
+ppinsight haddock 2UUY_rec 2UUY_lig --input-dir data/input/ --run
 
-# how to use ppinsight.roseeta via python:
-# ppinsight-rosetta protein1.pdb protein2.pdb
-# ppinsight-rosetta runs the script in ppinsight.rosetta.cli:main. Check out the cli.py script for direct pythonic use of the package.
-# a working example is:
-ppinsight-rosetta ./examples/ppinsight_data/input_files/2UUY_lig.pdb ./examples/ppinsight_data/input_files/2UUY_rec.pdb
+# Rosetta — minimum required: receptor, ligand (needs PyRosetta installed)
+ppinsight rosetta 2UUY_rec 2UUY_lig --input-dir data/input/
 ```
 
-5. Visualize results:
+Each engine has its own tuning flags (swarm count, number of runs,
+scoring function, etc.).  Run `--help` to see them:
+
+```
+ppinsight lightdock --help
+ppinsight haddock --help
+ppinsight rosetta --help
+```
+
+### 3. Collect scores
+
+After docking finishes, collect the raw outputs into a single unified
+scores file.  The docking engine is auto-detected from the directory
+contents.
 
 ```bash
-# Programmatic (matplotlib)
-python -c "from ppinsight import visualizer; visualizer.compare_scores(...)"
+# Point at one or more docking output directories.
+# --pair tells collect which proteins are in this run.
+# Scores are written to data/output/scores/scores.tsv by default.
+ppinsight collect data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
+    --pair 2UUY_rec:2UUY_lig
 ```
+
+You can pass multiple directories (even from different engines) in one
+call to build a combined scores file:
+
+```bash
+ppinsight collect \
+    data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
+    data/output/haddock_runs/2UUY_rec_vs_2UUY_lig/ \
+    --pair 2UUY_rec:2UUY_lig \
+    -o data/output/scores/combined_scores.tsv
+```
+
+Alongside the scores file, `collect` writes a **run record**
+(`scores.tsv.provenance.json`) that documents where the numbers came
+from — engine parameters and source directories.
+
+Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
+
+### 4. Visualise & compare
+
+```bash
+# Violin plot (default) — always prints a tabular summary first
+ppinsight compare data/output/scores/scores.tsv --metric dockq
+
+# Filter by protein pair and save to PNG
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --pair 2UUY_rec:2UUY_lig -o data/output/plots/violin_2uuy.png
+
+# Tabular summary only (no plot)
+ppinsight compare data/output/scores/scores.tsv --metric dockq --table
+
+# CAPRI quality classification (high/medium/acceptable/incorrect)
+ppinsight compare data/output/scores/scores.tsv --capri-quality
+ppinsight compare data/output/scores/scores.tsv --plot-type quality_bar \
+    -o data/output/plots/quality.png
+
+# Compare per-model files side by side
+ppinsight compare haddock_scores.tsv rosetta_scores.csv \
+    --metric score --names HADDOCK Rosetta
+
+# Discover what's in a scores file
+ppinsight compare data/output/scores/scores.tsv --list-metrics
+ppinsight compare data/output/scores/scores.tsv --list-pairs
+```
+
+Run `ppinsight compare --help` for all plot types, filtering, and export options.
+Use `ppinsight compare data/output/scores/scores.tsv --guide` for a
+data-aware summary of which plot types and flags work with your specific
+scores file.
+
+### 5. Parse interaction tables & batch-dock
+
+```bash
+# Parse a protein interaction table (matrix format) into a flat pairs CSV.
+# The pairs file lists (proteinA, proteinB, label) rows.
+ppinsight parse data/input/pairs/my_proteins.tsv \
+    -o data/input/pairs/pairs.csv --stats
+
+# Batch-dock all pairs — start with --dry-run to preview.
+ppinsight batch data/input/pairs/pairs.csv \
+    --engines lightdock haddock --dry-run
+
+# Run for real, pointing at the directory with your PDB files.
+ppinsight batch data/input/pairs/pairs.csv \
+    --engines lightdock --pdb-dir data/input/
+
+# Limit to first N pairs for a quick test
+ppinsight batch data/input/pairs/pairs.csv --engines lightdock --limit 5
+```
+
+The pairs file consumed by `ppinsight batch` has two required columns
+(`proteinA`, `proteinB`) and an optional `label` column
+(`interaction` / `non-interaction`).  You can create one with
+`ppinsight parse` or by hand.  See [`data/README.md`](data/README.md)
+for the full format spec.
+
+### 6. Evaluate docking quality (DockQ)
+
+```bash
+# Score a docked model against a native structure
+ppinsight quality model.pdb native.pdb
+
+# Score every model in a directory
+ppinsight quality docked_models/ native.pdb -o quality.tsv
+```
+
+> Requires the optional `quality` extra: `pip install ppinsight[quality]`
+
+---
+
+## Tutorial
+
+A complete end-to-end walkthrough is in [`tutorials/README.md`](tutorials/README.md).
+It uses pre-computed docking outputs from all three engines — no external
+tools required.  Start there to see every `ppinsight compare` plot type
+and the full collect → compare → classify workflow.
+
+---
+
+## Project structure
+
+```
+src/ppinsight/
+  cli.py               # Umbrella ppinsight CLI
+  protein_fetch.py      # UniProt / PDB data retrieval
+  pdb_to_lightdock.py   # LightDock docking wrapper
+  pdb_to_haddock.py     # HADDOCK3 staging & execution
+  pdb_to_rosetta.py     # PyRosetta docking wrapper
+  collect_scores.py     # Score aggregator (unified TSV/CSV)
+  visualizer.py         # Plotting & compare_scores CLI
+  batch_dock.py         # Batch docking for all pairs
+  parse_pairs.py        # Protein interaction table → pairs file
+  quality.py            # DockQ quality evaluation
+  provenance.py         # Run-level metadata & record I/O
+  utils.py              # Shared utilities (path resolution)
+  rosetta/              # PyRosetta pipeline internals
+data/                   # User I/O: input PDBs & pairs → output docking runs
+tests/                  # pytest test suite
+tutorials/              # End-to-end walkthrough with pre-built scores & sample plots
+examples/               # Per-engine sample I/O and test fixtures
+docs/                   # Specs, use cases, and slide deck
+```
+
+### User input & output directories
+
+The **`data/`** directory at the repository root is the default working
+directory for pipeline runs.  The pipeline reads from `data/input/` and
+writes to `data/output/`.
+
+> `examples/` is for sample data, tutorials, and test fixtures only.
+
+```
+data/
+├── input/
+│   ├── *.pdb              # PDB structures (from ppinsight fetch or manual)
+│   └── pairs/             # Batch-mode CSV / TSV files
+│
+└── output/
+    ├── haddock_runs/      # HADDOCK docking outputs
+    ├── lightdock_runs/    # LightDock docking outputs
+    ├── rosetta_runs/      # Rosetta docking outputs
+    ├── scores/            # Unified scores & batch results
+    └── plots/             # Saved figures
+```
+
+**Inputs — where to put it**
+
+| What you have                    | Where to put it              |
+|----------------------------------|------------------------------|
+| PDB structures                   | `data/input/`                |
+| Protein interaction table (TSV)  | `data/input/pairs/`          |
+| Parsed pairs file                | `data/input/pairs/`          |
+
+**Outputs — where to find it**
+
+| What the tool produces           | Default location                         |
+|----------------------------------|------------------------------------------|
+| Docking outputs                  | `data/output/<engine>_runs/`             |
+| Unified scores file              | `data/output/scores/scores.tsv`          |
+| Batch results table              | `data/output/scores/batch_results.csv`   |
+| Run record (provenance)          | `data/output/scores/scores.tsv.provenance.json` |
+| Plots / figures                  | shown interactively; use `-o` to save, e.g. `-o data/output/plots/fig.png` |
+
+All default paths can be overridden with CLI flags (`--input-dir`,
+`--pdb-dir`, `--output-root`, `-o`).  See [`data/README.md`](data/README.md)
+for the full layout and pairs file format.
 
 ### Notes
-- For HPC runs, pass an absolute `base_root` (or edit the scripts) to place
-  outputs on an HPC filesystem (e.g. `/gscratch/...`).
-- External tools (HADDOCK, LightDock, Rosetta/PyRosetta) are required for full
-  pipeline execution and some users may run into system incompatibilty (in this case, create and issue to get support or look through existing discussions for help); the HADDOCK helper supports container execution.
-- Tests monkeypatch external calls; run `pytest` to execute unit tests.
 
-### Docs & examples
-- Component spec: `docs/component_spec.md`
-- Use cases: `docs/use_cases.md`
-- Example inputs/outputs: `examples/`
-
-### License
-> See `LICENSE`.
-
-
-## Task 1 — fetch proteins by search term and save files
-Implemented in `src/ppinsight/protein_fetch.py` via:
-
-`get_uniprot_data(accession_ids, fasta_file=None, csv_file=None, pdb_dir="fetched_data")`
-
-This function retrieves protein sequences and structures from UniProt using a user-inputted list of accession IDs. It:
-
-* Fetches FASTA sequences and saves them to a file
-* Extracts structured metadata (ID, name, description, sequence length, sequence) and saves to CSV
-* Queries UniProt JSON records for linked PDB IDs and automatically downloads the first available structure per protein into `pdb_files/`
-
-**Returns:**
-
-* `structured_data`: list of dictionaries with fields
-  `ID`, `Name`, `Description`, `Sequence Length`, `Sequence`
-* `pdb_info`: dictionary mapping
-  `accession_id → PDB_ID` (or `None` if no structure exists)
-
-**Testing:**
-
-Pytest tests cover successful runs, correct sequence length and structure availability, and invalid accession ID handling.
-
-## Task 2 — run PPI predictors on file pairs and store scores  
-Once you’ve retrieved the protein files in Task 1, here we swap from “getting the data” to “using models” to predict how strongly two proteins interact and then save those predictions to compare models later. You don’t need to code every model from scratch — instead, make small Python functions (“wrappers”) that take two protein files and return the model’s predicted score. This helps keep your code organized and reusable. This task wraps 2–3 PPI prediction approaches and produces a single `scores.tsv` (or CSV) in the same repo. For each protein pair and model run, write one or more score rows with clear headers (`proteinA, proteinB, model, score_type, score_value, output_path, timestamp`). Start with three complementary predictors: can include one of each or some other combination of a sequence-based model (fast local or embedding-based), a docking server (ClusPro or HADDOCK) for structural docking, and a structure-scoring tool (DockQ) for pose quality.
-
-Selected Models (of interest):
-- **Haddock** (https://github.com/haddocking; https://pmc.ncbi.nlm.nih.gov/articles/PMC3966529/)
-- **Rosetta** (https://github.com/RosettaCommons/rosetta; https://rosettacommons.org)
-- **LightDock** (https://github.com/lightdock/lightdock; https://academic.oup.com/bioinformatics/article/34/1/49/4103399)
-
-Key implementation notes:
-- For each protein pair, you’ll run models that predict how well two proteins fit or “dock” together — meaning how their 3D structures might align to form a stable complex. The output is a numerical score that tells you how good that fit is.
-- Make lightweight wrappers so `score_pair(a_files, b_files, model_name)` is non-repetitive and logs raw outputs. See ClusPro help and usage: [https://cluspro.org/help.php](https://cluspro.org/help.php) and HADDOCK docs: [https://wenmr.science.uu.nl/haddock2.4/](https://wenmr.science.uu.nl/haddock2.4/).
-
-**CAPRI Metrics** (https://www.sciencedirect.com/science/article/pii/S0022283624001359, https://link.springer.com/article/10.1186/s12859-024-05991-4)
- - **Docking quality score (DockQ)** – a value from 0 to 1 that rates how well two proteins’ shapes align after docking. Higher = better interaction. [https://github.com/bjornwallner/DockQ](https://github.com/bjornwallner/DockQ)  
- - **RMSD (Root Mean Square Deviation)** – measures how far apart the predicted protein complex is from a reference complex. Lower = better accuracy. [https://en.wikipedia.org/wiki/Root-mean-square_deviation_of_atomic_positions](https://en.wikipedia.org/wiki/Root-mean-square_deviation_of_atomic_positions)  
- - **Fraction of native contacts (Fnat score)** - a measure of the accuracy of a predicted protein-protein interaction model. It is calculated by dividing the number of correctly predicted residue contacts in the docked model by the total number of contacts in the original, native complex. (https://en.wikipedia.org/wiki/Native_contact)
-
-**Other values (may be normalized)**, such as:
- - **E-value** – used in sequence-based predictions (like BLAST). It estimates how likely a match happened by chance. Lower = more significant. [https://www.ncbi.nlm.nih.gov/BLAST/tutorial/Altschul-1.html](https://www.ncbi.nlm.nih.gov/BLAST/tutorial/Altschul-1.html)
-
-You’ll want to save multiple types of scores (e.g., DockQ, RMSD, E-value) for each prediction so that later you can visualize and compare models across these different performance metrics.
-Store multiple `score_type` values per run (e.g., `dockq`, `rmsd`, `evalue`) so visualizations can pick which metric to display.
-
-Testing and reproducibility:
-- Create simple test files (like three known interacting protein pairs in a pairs.csv file).
-- Write “test stubs” — mini functions that pretend to run a model but always return the same score. These let you test your plotting and data-handling code without needing to re-run expensive real models.
-
-## Task 3 — plot interaction scores
-This task turns the `scores.tsv` table into visuals. For each metric type (one chart per metric—e.g., DOCKQ, RMSD), you can plot a matplotlib bar chart that compares the models' interaction scores for your chosen protein pair. The resulting plots can be copied or saved directly from your code editor.
-
-Testing and examples:
-- Make plots using three simple example `.csv` files with three score types
-- Ensure pandas DataFrame conversion is happening properly
-- Test that appropriate exceptions are thrown
+- For HPC runs, pass an absolute `--output-root` to place outputs on a
+  shared filesystem (e.g. `/gscratch/...`).
+- External docking tools must be installed separately for the engines
+  you want to use.  The HADDOCK helper supports container execution
+  (`--container docker|apptainer`).
 
 ---
 
-### Repo expectations  
-Put code and examples in this GitHub repo and update `README.md`, `.ipynb` files (using comments), and `examples/` (pairs.csv, example outputs) as needed. 
-### Resources
-Biopython Entrez guide: [https://biopython.org/wiki/Entrez](https://biopython.org/wiki/Entrez). RCSB API docs: [https://data.rcsb.org/](https://data.rcsb.org/). DockQ: [https://github.com/bjornwallner/DockQ](https://github.com/bjornwallner/DockQ). D3: [https://d3js.org/](https://d3js.org/).
+## Team members
+
+| Name | Contributions |
+|------|--------------|
+| **Ike Keku** | Co-developed PPI predictor pipelines (`pdb_to_haddock`, `pdb_to_lightdock`), oversaw general workflow |
+| **Rita Kamenetskiy** | Co-developed protein data fetching (`protein_fetch`), packaging, CI tests |
+| **Fiona McLary** | Developed visualiser module |
+| **Walter Avila** | Co-developed `protein_fetch` and corresponding tests |
+| **Maya Gatt Harari** | Developed Rosetta integration (`ppinsight/rosetta`) |
 
 ---
 
+## License
 
+See [LICENSE](LICENSE).
+
+## Resources
+
+- [Biopython Entrez guide](https://biopython.org/wiki/Entrez)
+- [RCSB API docs](https://data.rcsb.org/)
+- [DockQ](https://github.com/bjornwallner/DockQ)
+- [HADDOCK docs](https://wenmr.science.uu.nl/haddock2.4/)
+- [LightDock](https://github.com/lightdock/lightdock)
+- [Rosetta / PyRosetta](https://rosettacommons.org)
+
+### CAPRI quality classification thresholds
+
+The `--capri-quality` flag and `quality_bar` plot classify docked
+predictions into four tiers (high / medium / acceptable / incorrect)
+using published community thresholds:
+
+| Source | DOI | Used for |
+|--------|-----|----------|
+| Lensink MF, Velankar S, Wodak SJ (2016). *Proteins* 84(S1):323-348 | [10.1002/prot.25007](https://doi.org/10.1002/prot.25007) | fnat + Lrms + irms thresholds (Table 3) |
+| Basu S, Wallner B (2016). *PLoS ONE* 11(8):e0161879 | [10.1371/journal.pone.0161879](https://doi.org/10.1371/journal.pone.0161879) | DockQ fallback thresholds |
