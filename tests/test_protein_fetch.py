@@ -10,7 +10,6 @@ import pytest
 import ppinsight
 from ppinsight import protein_fetch
 
-
 # ── Smoke tests ──────────────────────────────────────────────────
 
 def test_smoke_walter(tmp_path, monkeypatch):

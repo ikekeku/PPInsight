@@ -7,9 +7,10 @@ This module provides a high-level interface for the complete docking workflow.
 # pylint: disable=too-many-instance-attributes
 
 from pathlib import Path
-from .prepare_structure import prepare_structures
-from .dock import run_docking, save_docked_structure
+
 from .analyze import analyze_scores, export_scores_to_csv
+from .dock import run_docking, save_docked_structure
+from .prepare_structure import prepare_structures
 
 
 class DockingPipeline:
@@ -57,7 +58,7 @@ class DockingPipeline:
             cluster_top_n: Number of top decoys to cluster (default: 200)
             rmsd_cutoff: Cα-RMSD cutoff in Å for clustering (default: 4.0)
         """
-        self._ensure_pyrosetta() # make sure PyRosetta is available or else install it via installer
+        self._ensure_pyrosetta()  # make sure PyRosetta is available
         self.protein1_pdb = Path(protein1_pdb)
         self.protein2_pdb = Path(protein2_pdb)
         if n_runs < 1:
@@ -270,5 +271,8 @@ class DockingPipeline:
         print(f"Top N for averaging: {self.top_n}")
         print()
         print(f"Best score: {self.analysis['best_score']:.2f}")
-        print(f"Final score (avg of top {self.top_n}): {self.analysis['final_score']:.2f}")
+        print(
+            f"Final score (avg of top {self.top_n}): "
+            f"{self.analysis['final_score']:.2f}"
+        )
         print("=" * 70)

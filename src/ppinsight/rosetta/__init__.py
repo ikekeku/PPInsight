@@ -26,11 +26,11 @@ try:
     # Eagerly import Rosetta sub-modules so that ``from ppinsight.rosetta
     # import DockingPipeline`` works.  If PyRosetta is missing, fall
     # through to the except block and set a placeholder.
-    from .pipeline import DockingPipeline
-    from .prepare_structure import prepare_structures, relax_structure, combine_proteins
+    from .analyze import analyze_scores, cluster_and_rank, get_top_scores
+    from .cluster import best_of_largest_cluster, cluster_decoys
     from .dock import run_docking, setup_docking_protocol
-    from .analyze import analyze_scores, get_top_scores, cluster_and_rank
-    from .cluster import cluster_decoys, best_of_largest_cluster
+    from .pipeline import DockingPipeline
+    from .prepare_structure import combine_proteins, prepare_structures, relax_structure
 except ImportError:
     # PyRosetta is not installed — provide a helpful error on attribute access
     import warnings as _warnings

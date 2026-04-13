@@ -15,8 +15,7 @@ pytestmark = pytest.mark.requires_rosetta
 
 pyrosetta = pytest.importorskip("pyrosetta", reason="PyRosetta not installed")
 
-from ppinsight.docking import DockingPipeline
-
+from ppinsight.docking import DockingPipeline  # noqa: E402
 
 # ── edge test (no real files needed) ──────────────────────────────
 

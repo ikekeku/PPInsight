@@ -20,7 +20,6 @@ Usage::
 
 import sys
 
-
 _SUBCOMMANDS = {
     "fetch":     "ppinsight.protein_fetch",
     "lightdock": "ppinsight.pdb_to_lightdock",

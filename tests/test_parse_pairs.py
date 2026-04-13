@@ -1,6 +1,5 @@
 """Tests for the parse_pairs module."""
 
-import os
 import textwrap
 
 import pandas as pd
@@ -13,7 +12,6 @@ from ppinsight.parse_pairs import (
     parse_interaction_table,
 )
 
-
 # ── Helpers ──────────────────────────────────────────────────────
 
 def _write_tsv(path, text):
@@ -25,7 +23,7 @@ def _write_tsv(path, text):
 def _rtk_table(tmp_path):
     """Create a minimal RTK-interactome-style table and return its path."""
     tsv = tmp_path / "table.tsv"
-    # Columns: (blank) | Family | Member | Int1 | Int2 | Int3 | Int4 | Int5 | NonInt1 | NonInt2 | NonInt3 | NonInt4
+    # Columns: (blank) | Family | Member | Int1-5 | NonInt1-4
     lines = [
         "\t\tProtein A\t\t\t\t\tProtein B\t\t\t\t",
         "\tFamily\tMember\tInteractions\t\t\t\t\tNon-Interactions\t\t\t",
@@ -88,7 +86,11 @@ class TestParseInteractionTable:
         df = parse_interaction_table(tsv)
 
         interactions = df[df["label"] == "interaction"]
-        pairs = set(zip(interactions["proteinA"], interactions["proteinB"]))
+        pairs = set(zip(
+            interactions["proteinA"],
+            interactions["proteinB"],
+            strict=False,
+        ))
         assert ("EPHA1", "ERBB2") in pairs
         assert ("EPHA1", "FGFR2") in pairs
         assert ("EPHA2", "MET") in pairs
@@ -99,7 +101,11 @@ class TestParseInteractionTable:
         df = parse_interaction_table(tsv)
 
         non_int = df[df["label"] == "non-interaction"]
-        pairs = set(zip(non_int["proteinA"], non_int["proteinB"]))
+        pairs = set(zip(
+            non_int["proteinA"],
+            non_int["proteinB"],
+            strict=False,
+        ))
         assert ("EPHA1", "FGFR3") in pairs
         assert ("EPHA1", "MET") in pairs
         assert ("EPHA2", "FGFR1") in pairs

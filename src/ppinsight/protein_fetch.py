@@ -2,7 +2,7 @@
 protein_fetch.py
 ----------------
 
-Tools for retrieving protein sequence and structure data from UniProt and 
+Tools for retrieving protein sequence and structure data from UniProt and
 the Protein Data Bank (PDB).
 
 The module provides a single pipeline that:

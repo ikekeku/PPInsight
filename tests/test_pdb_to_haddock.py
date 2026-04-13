@@ -174,7 +174,7 @@ def test_cfg_custom_runname_and_filename(tmp_path, monkeypatch):
     author: ikekeku
     reviewer: fmclary
     category: functional test
-    
+
     Verifies that a custom runname produces a cfg with the matching filename and
     run_dir entry.
     """
@@ -209,7 +209,7 @@ def test_cfg_includes_ambig_file(tmp_path, monkeypatch):
     author: ikekeku
     reviewer: fmclary
     category: integration test
-    
+
     Ensures that when an ambig restraints file is provided it is
     copied into data/ and referenced in the cfg.
     """
@@ -250,7 +250,7 @@ def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
     author: ikekeku
     reviewer: fmclary
     category: regression test
-    
+
     Verifies that base_root and method params control where outputs are staged.
     """
     inp = tmp_path / "input"

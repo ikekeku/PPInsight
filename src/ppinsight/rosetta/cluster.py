@@ -132,7 +132,7 @@ def cluster_decoys(
         * ``cluster_rank`` — rank within the cluster (0 = best)
         * ``is_top_of_cluster`` — True for the best-scoring decoy per cluster
     """
-    from scipy.cluster.hierarchy import linkage, fcluster
+    from scipy.cluster.hierarchy import fcluster, linkage
     from scipy.spatial.distance import squareform
 
     if pose_loader is None:

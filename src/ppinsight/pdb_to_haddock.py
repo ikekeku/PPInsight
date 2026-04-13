@@ -8,16 +8,15 @@ and writes a config file the user can run manually or with --run.
 
 It mirrors the structure of the notebook version and has a small CLI.
 """
-from pathlib import Path
-
 import argparse
-import shutil
-import os
-import subprocess
 import importlib
+import os
 import platform
 import shlex
+import shutil
+import subprocess
 import sys
+from pathlib import Path
 
 from ppinsight.utils import _project_root, resolve_input_path  # noqa: F401
 
@@ -89,7 +88,8 @@ def _run_in_container(
     This uses `run_command` so tests that monkeypatch it will intercept the call.
     """
     host_workspace = os.path.abspath(host_workspace)
-    # Compute run_dir relative to the workspace root so we can `cd` correctly inside container
+    # Compute run_dir relative to the workspace root so we can
+    # `cd` correctly inside the container
     rel_run = os.path.relpath(str(run_dir_path), host_workspace)
     # Ensure paths are safe for commands
     rel_run_posix = rel_run.replace(os.path.sep, "/")
@@ -193,7 +193,15 @@ def copy_inputs(data_dir, rec, lig, ambig=None):
     return rec_dst, lig_dst, ambig_dst
 
 
-def write_cfg(cfg_path: Path, runname: str, mode: str, ncores: int, rec_rel: str, lig_rel: str, ambig_rel: str):
+def write_cfg(
+    cfg_path: Path,
+    runname: str,
+    mode: str,
+    ncores: int,
+    rec_rel: str,
+    lig_rel: str,
+    ambig_rel: str,
+):
     """Write a HADDOCK3 TOML config (.cfg) to *cfg_path*.
 
     The generated config follows the HADDOCK3 tutorial layout with a
@@ -336,9 +344,11 @@ def _check_cns_compatibility() -> None:
                 ):
                     raise RuntimeError(
                         (
-                            f"The HADDOCK cns binary at {cns_path} is built for ARM (arm64) "
-                            f"but the host CPU is {host_arch}. This will cause a 'Bad CPU type" 
-                            " in executable' error."
+                            f"The HADDOCK cns binary at "
+                            f"{cns_path} is built for ARM "
+                            f"(arm64) but the host CPU is "
+                            f"{host_arch}. This will cause a "
+                            "'Bad CPU type in executable' error."
                         )
                     )
                 if (
@@ -348,8 +358,10 @@ def _check_cns_compatibility() -> None:
                 ) and ("x86_64" not in host_arch and "amd64" not in host_arch):
                     raise RuntimeError(
                         (
-                            f"The HADDOCK cns binary at {cns_path} appears to be x86_64 "
-                            f"but the host CPU is {host_arch}. Architecture mismatch will "
+                            f"The HADDOCK cns binary at "
+                            f"{cns_path} appears to be x86_64 "
+                            f"but the host CPU is {host_arch}. "
+                            "Architecture mismatch will "
                             "prevent execution."
                         )
                     )
@@ -398,7 +410,10 @@ def _stage_run(
         (run_dir: Path, cfg_path: Path)
     """
     # Create organized output folder
-    run_dir, data_dir = make_run_dir(rec, lig, chosen_runname, base_root=base_root, method=method)
+    run_dir, data_dir = make_run_dir(
+        rec, lig, chosen_runname,
+        base_root=base_root, method=method,
+    )
 
     # Copy input files (they are already resolved)
     rec_dst, lig_dst, ambig_dst = copy_inputs(data_dir, rec, lig, ambig)
@@ -449,7 +464,10 @@ def _execute_haddock_run(
 
     if chosen_container:
         host_ws = workspace_root if workspace_root else _project_root()
-        _run_in_container(chosen_container, container_image, host_ws, run_dir, cfg_path.name)
+        _run_in_container(
+            chosen_container, container_image,
+            host_ws, run_dir, cfg_path.name,
+        )
         executed_cmd = (
             f"container:{chosen_container} image={container_image} -> haddock3 "
             f"{cfg_path.name}"
@@ -463,8 +481,11 @@ def _execute_haddock_run(
     return executed_cmd
 
 
-def haddock_pipeline(rec, lig, runname: str = None, opts: dict | None = None, **kwargs):
-    """Prepare a HADDOCK run directory, copy inputs, write cfg, and optionally run HADDOCK.
+def haddock_pipeline(
+    rec, lig, runname: str = None,
+    opts: dict | None = None, **kwargs,
+):
+    """Prepare a HADDOCK run directory, write cfg, and optionally run.
 
     This is the main programmatic entry point.  It resolves input paths,
     stages files, writes a HADDOCK3-compatible config, and (if
@@ -508,7 +529,10 @@ def haddock_pipeline(rec, lig, runname: str = None, opts: dict | None = None, **
     base_name = f"{Path(rec).stem}_vs_{Path(lig).stem}"
     method_root = Path(base_root) / method
     method_root.mkdir(parents=True, exist_ok=True)
-    chosen_runname = runname if runname else _choose_runname(method_root, base_name, overwrite)
+    chosen_runname = (
+        runname if runname
+        else _choose_runname(method_root, base_name, overwrite)
+    )
 
     # If overwrite requested, remove pre-existing run directory
     run_dir = method_root / chosen_runname

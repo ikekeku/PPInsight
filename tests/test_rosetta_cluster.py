@@ -21,11 +21,10 @@ import pytest
 scipy = pytest.importorskip("scipy")
 
 from ppinsight.rosetta.cluster import (  # noqa: E402
-    cluster_decoys,
-    best_of_largest_cluster,
     _pairwise_ca_rmsd,
+    best_of_largest_cluster,
+    cluster_decoys,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers: fake poses & RMSD

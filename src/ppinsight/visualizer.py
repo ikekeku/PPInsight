@@ -29,10 +29,9 @@ import argparse
 import os
 import sys
 
-from matplotlib import pyplot as plt
 import pandas as pd
 import seaborn as sns
-
+from matplotlib import pyplot as plt
 
 # ---------------------------------------------------------------------------
 # Theme configuration
@@ -172,7 +171,7 @@ def compare_scores(
 
     means: list[float] = []
     stds: list[float] = []
-    for name, df in zip(models, frames):
+    for name, df in zip(models, frames, strict=False):
         if score_type not in df.columns:
             raise LookupError(
                 f"The score type '{score_type}' does not exist for the "
@@ -185,7 +184,7 @@ def compare_scores(
     # Warn if error bars dwarf the bars — bar chart is the wrong
     # visualisation for high-variance data.
     import warnings as _warnings
-    for m_val, s_val, name in zip(means, stds, models):
+    for m_val, s_val, name in zip(means, stds, models, strict=False):
         if m_val != 0 and abs(s_val / m_val) > 1.5:
             _warnings.warn(
                 f"'{name}' has std ({s_val:.2f}) much larger than the mean "
@@ -316,7 +315,11 @@ def compare_scores_unified(
     frames: list[pd.DataFrame] = []
     model_names: list[str] = []
     for name, group in grouped:
-        frame = pd.DataFrame({metric: pd.to_numeric(group["score_value"], errors="coerce")})
+        frame = pd.DataFrame({
+            metric: pd.to_numeric(
+                group["score_value"], errors="coerce"
+            )
+        })
         frames.append(frame.reset_index(drop=True))
         model_names.append(str(name))
 
@@ -1037,7 +1040,10 @@ METRIC_METADATA: dict[str, dict] = {
     # ── LightDock ──────────────────────────────────────────────────────
     "luciferin_score": {
         "higher_is_better": True,
-        "description": "LightDock luciferin/scoring (DFIRE by default). Higher = better fit.",
+        "description": (
+            "LightDock luciferin/scoring (DFIRE by default)."
+            " Higher = better fit."
+        ),
     },
     # ── HADDOCK ────────────────────────────────────────────────────────
     "score": {
@@ -1063,7 +1069,10 @@ METRIC_METADATA: dict[str, dict] = {
     # ── Rosetta ────────────────────────────────────────────────────────
     "interface_score": {
         "higher_is_better": False,
-        "description": "Rosetta interface energy (REU) from PyRosetta wrapper. Lower = better.",
+        "description": (
+            "Rosetta interface energy (REU) from PyRosetta"
+            " wrapper. Lower = better."
+        ),
     },
     "i_sc": {
         "higher_is_better": False,
@@ -1293,10 +1302,16 @@ def classify_capri(
 
         # Convert NaN to None
         import math
-        fnat = None if fnat is not None and (isinstance(fnat, float) and math.isnan(fnat)) else fnat
-        lrmsd = None if lrmsd is not None and (isinstance(lrmsd, float) and math.isnan(lrmsd)) else lrmsd
-        irmsd = None if irmsd is not None and (isinstance(irmsd, float) and math.isnan(irmsd)) else irmsd
-        dockq = None if dockq is not None and (isinstance(dockq, float) and math.isnan(dockq)) else dockq
+
+        def _nan_to_none(val):
+            if val is not None and isinstance(val, float) and math.isnan(val):
+                return None
+            return val
+
+        fnat = _nan_to_none(fnat)
+        lrmsd = _nan_to_none(lrmsd)
+        irmsd = _nan_to_none(irmsd)
+        dockq = _nan_to_none(dockq)
 
         return capri_quality(fnat=fnat, lrmsd=lrmsd, irmsd=irmsd, dockq=dockq)
 
@@ -1437,7 +1452,11 @@ def quality_bar_chart(
         bottom += values
 
     ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=30 if n > 4 else 0, ha="right" if n > 4 else "center")
+    ax.set_xticklabels(
+        models,
+        rotation=30 if n > 4 else 0,
+        ha="right" if n > 4 else "center",
+    )
     ax.set_xlabel("Docking Engine")
     ax.set_ylabel("Targets assessed")
     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
@@ -1608,7 +1627,10 @@ def _annotate_plot_source(
     """
     n_models = summary_df["model"].nunique()
     n_obs = int(summary_df["count"].sum())
-    note = f"metric: {metric}  |  {n_models} engine(s)  |  {n_obs} observations  |  see tabular summary"
+    note = (
+        f"metric: {metric}  |  {n_models} engine(s)  |  "
+        f"{n_obs} observations  |  see tabular summary"
+    )
     fig.text(
         0.5, -0.01, note,
         ha="center", va="top", fontsize=7, fontstyle="italic",
@@ -1754,7 +1776,10 @@ def classification_summary(
     df = df.dropna(subset=["score_value"])
 
     # Aggregate to one score per (model, proteinA, proteinB) pair
-    agg = df.groupby(["model", "proteinA", "proteinB", "label"], as_index=False)["score_value"].mean()
+    agg = df.groupby(
+        ["model", "proteinA", "proteinB", "label"],
+        as_index=False,
+    )["score_value"].mean()
 
     if threshold is None:
         threshold = agg["score_value"].median()
@@ -1799,7 +1824,11 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     of models, number of pairs, presence of labels, etc.) and prints a
     concise table so the user can plan their analysis.
     """
-    models = sorted(scores_df["model"].dropna().unique()) if "model" in scores_df.columns else []
+    models = (
+        sorted(scores_df["model"].dropna().unique())
+        if "model" in scores_df.columns
+        else []
+    )
     n_models = len(models)
 
     pairs = available_pairs(scores_df)
@@ -1821,7 +1850,11 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
             )
             if "proteina" in scores_df.columns and "proteinb" in scores_df.columns:
                 pairs_per_model[model] = set(
-                    zip(model_df["proteina"].dropna(), model_df["proteinb"].dropna())
+                    zip(
+                        model_df["proteina"].dropna(),
+                        model_df["proteinb"].dropna(),
+                        strict=False,
+                    )
                 )
     shared_metrics: set[str] = set()
     shared_pairs: set[tuple[str, str]] = set()
@@ -1840,7 +1873,11 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     print()
     print("═══ ppinsight compare — plot-type guide ═══")
     print()
-    print(f"  Models   : {n_models}  ({', '.join(models) if n_models <= 5 else ', '.join(models[:5]) + ', …'})")
+    models_str = (
+        ", ".join(models) if n_models <= 5
+        else ", ".join(models[:5]) + ", …"
+    )
+    print(f"  Models   : {n_models}  ({models_str})")
     print(f"  Pairs    : {n_pairs}  ", end="")
     if n_pairs == 0:
         print("(no proteinA/proteinB columns)")
@@ -1849,7 +1886,10 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     else:
         print(f"({pairs[0][0]}:{pairs[0][1]}, … +{n_pairs - 1} more)")
     print(f"  Labels   : {'yes' if has_labels else 'no'}")
-    print(f"  Metrics  : {n_metrics}  ({', '.join(metrics[:6])}" + (", …" if n_metrics > 6 else "") + ")")
+    metrics_str = ", ".join(metrics[:6])
+    if n_metrics > 6:
+        metrics_str += ", …"
+    print(f"  Metrics  : {n_metrics}  ({metrics_str})")
     print()
 
     # ── Per-plot-type assessment ──────────────────────────────────
@@ -1857,35 +1897,78 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
 
     # bar — requires ≥2 models (comparing engines) or ≥2 pairs (comparing pairs)
     if n_models >= 2:
-        rows.append(("bar", "✅ yes", f"{n_models} models — compare engines on the same pair(s)."))
+        rows.append((
+            "bar", "✅ yes",
+            f"{n_models} models — compare engines on the "
+            "same pair(s).",
+        ))
     elif n_pairs >= 2:
-        rows.append(("bar", "✅ yes", f"{n_pairs} pairs — compare pairs within one engine."))
+        rows.append((
+            "bar", "✅ yes",
+            f"{n_pairs} pairs — compare pairs within one "
+            "engine.",
+        ))
     else:
-        rows.append(("bar", "❌ no", "Needs ≥ 2 models or ≥ 2 pairs. Use violin for single-model/single-pair data."))
+        rows.append((
+            "bar", "❌ no",
+            "Needs ≥ 2 models or ≥ 2 pairs. Use violin "
+            "for single-model/single-pair data.",
+        ))
 
     # violin
-    rows.append(("violin", "✅ yes", "Works with any setup — full distributions + individual points."))
+    rows.append((
+        "violin", "✅ yes",
+        "Works with any setup — full distributions "
+        "+ individual points.",
+    ))
 
     # box
-    rows.append(("box", "✅ yes", "Works with any setup — median, quartiles, and outliers."))
+    rows.append((
+        "box", "✅ yes",
+        "Works with any setup — median, quartiles, "
+        "and outliers.",
+    ))
 
     # heatmap
     if n_pairs >= 2:
-        rows.append(("heatmap", "✅ yes", f"{n_pairs} pairs available — pair × model grid."))
+        rows.append((
+            "heatmap", "✅ yes",
+            f"{n_pairs} pairs available — pair × model "
+            "grid.",
+        ))
     elif n_pairs == 1:
-        rows.append(("heatmap", "❌ no", "Needs ≥ 2 protein pairs (you have 1). Add more pairs to your scores file."))
+        rows.append((
+            "heatmap", "❌ no",
+            "Needs ≥ 2 protein pairs (you have 1). "
+            "Add more pairs to your scores file.",
+        ))
     else:
-        rows.append(("heatmap", "❌ no", "Needs proteinA/proteinB columns. Re-run 'ppinsight collect' with --pair."))
+        rows.append((
+            "heatmap", "❌ no",
+            "Needs proteinA/proteinB columns. Re-run "
+            "'ppinsight collect' with --pair.",
+        ))
 
     # roc
     if has_labels:
-        rows.append(("roc", "✅ yes", "Labels present — ROC with AUC per model."))
+        rows.append((
+            "roc", "✅ yes",
+            "Labels present — ROC with AUC per model.",
+        ))
     else:
-        rows.append(("roc", "❌ no", "Needs a 'label' column. Re-run 'ppinsight collect' with --pairs <pairs_file>."))
+        rows.append((
+            "roc", "❌ no",
+            "Needs a 'label' column. Re-run "
+            "'ppinsight collect' with --pairs <pairs_file>.",
+        ))
 
     # scatter — needs ≥2 models sharing a metric on the same pairs
     if n_models < 2:
-        rows.append(("scatter", "❌ no", f"Needs ≥ 2 models (you have {n_models}). Use --models MODEL_A MODEL_B."))
+        rows.append((
+            "scatter", "❌ no",
+            f"Needs ≥ 2 models (you have {n_models}). "
+            "Use --models MODEL_A MODEL_B.",
+        ))
     elif shared_metrics and shared_pairs:
         rows.append((
             "scatter",
@@ -1894,23 +1977,46 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
             f"Shared pairs: {len(shared_pairs)}.  Use --models to pick two."
         ))
     elif not shared_pairs:
-        rows.append(("scatter", "❌ no", "Models have no common pairs — both must score the same protein pairs."))
+        rows.append((
+            "scatter", "❌ no",
+            "Models have no common pairs — both must "
+            "score the same protein pairs.",
+        ))
     elif not shared_metrics:
-        rows.append(("scatter", "⚠️  limited", "Models share pairs but no common metric name. Try --normalize first."))
+        rows.append((
+            "scatter", "⚠️  limited",
+            "Models share pairs but no common metric "
+            "name. Try --normalize first.",
+        ))
     else:
-        rows.append(("scatter", "❌ no", "Needs proteinA/proteinB columns. Re-run 'ppinsight collect' with --pair."))
+        rows.append((
+            "scatter", "❌ no",
+            "Needs proteinA/proteinB columns. Re-run "
+            "'ppinsight collect' with --pair.",
+        ))
 
     # quality_bar — needs fnat/irmsd/lrmsd or dockq metrics
     has_quality_metrics = False
     if "score_type" in scores_df.columns:
         st_lower = set(scores_df["score_type"].dropna().str.lower().unique())
-        quality_metrics = {"fnat", "irmsd", "lrmsd", "dockq",
-                           "quality_fnat", "quality_irmsd", "quality_lrmsd", "quality_dockq"}
+        quality_metrics = {
+            "fnat", "irmsd", "lrmsd", "dockq",
+            "quality_fnat", "quality_irmsd",
+            "quality_lrmsd", "quality_dockq",
+        }
         has_quality_metrics = bool(st_lower & quality_metrics)
     if has_quality_metrics:
-        rows.append(("quality_bar", "✅ yes", "CAPRI quality tiers (fnat/RMSD/dockq detected). No --metric needed."))
+        rows.append((
+            "quality_bar", "✅ yes",
+            "CAPRI quality tiers (fnat/RMSD/dockq "
+            "detected). No --metric needed.",
+        ))
     else:
-        rows.append(("quality_bar", "❌ no", "Needs fnat + irmsd/lrmsd, or dockq metrics for CAPRI quality tiers."))
+        rows.append((
+            "quality_bar", "❌ no",
+            "Needs fnat + irmsd/lrmsd, or dockq metrics "
+            "for CAPRI quality tiers.",
+        ))
 
     # ── Print table ───────────────────────────────────────────────
     col_w = [max(len(r[i]) for r in rows) for i in range(3)]
@@ -1929,18 +2035,45 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     print()
     extras: list[str] = []
     if has_labels:
-        extras.append("--classify       Print confusion-matrix summaries (uses labels).")
-        extras.append("--split-label    Split bars/violins by interaction label.")
+        extras.append(
+            "--classify       Print confusion-matrix "
+            "summaries (uses labels)."
+        )
+        extras.append(
+            "--split-label    Split bars/violins by "
+            "interaction label."
+        )
     else:
-        extras.append("--classify       ❌ needs labels (collect with --pairs).")
-        extras.append("--split-label    ❌ needs labels (collect with --pairs).")
-    extras.append("--normalize      Normalise scores for cross-engine comparison (always available).")
-    extras.append("--table          Tabular summary (mean, std, median, min, max) for a metric.")
-    extras.append("--rank           Per-pair ranking: which engine scores best on each pair.")
+        extras.append(
+            "--classify       ❌ needs labels "
+            "(collect with --pairs)."
+        )
+        extras.append(
+            "--split-label    ❌ needs labels "
+            "(collect with --pairs)."
+        )
+    extras.append(
+        "--normalize      Normalise scores for "
+        "cross-engine comparison (always available)."
+    )
+    extras.append(
+        "--table          Tabular summary "
+        "(mean, std, median, min, max) for a metric."
+    )
+    extras.append(
+        "--rank           Per-pair ranking: which "
+        "engine scores best on each pair."
+    )
     if has_quality_metrics:
-        extras.append("--capri-quality  CAPRI quality tier summary (high/medium/acceptable/incorrect).")
+        extras.append(
+            "--capri-quality  CAPRI quality tier summary "
+            "(high/medium/acceptable/incorrect)."
+        )
     else:
-        extras.append("--capri-quality  ❌ needs fnat/irmsd/lrmsd or dockq metrics.")
+        extras.append(
+            "--capri-quality  ❌ needs fnat/irmsd/lrmsd "
+            "or dockq metrics."
+        )
     print("  Additional flags:")
     for e in extras:
         print(f"    {e}")

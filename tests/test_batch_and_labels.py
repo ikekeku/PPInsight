@@ -1,12 +1,10 @@
 """Tests for parse_pairs and batch_dock modules."""
 
-import textwrap
 
 import pandas as pd
 import pytest
 
 from ppinsight import parse_pairs
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -193,8 +191,9 @@ class TestCompareScoresByLabel:
         })
 
     def test_basic(self, labeled_scores):
-        from ppinsight.visualizer import compare_scores_by_label
         import matplotlib
+
+        from ppinsight.visualizer import compare_scores_by_label
         matplotlib.use("Agg")
         fig = compare_scores_by_label(labeled_scores, "dockq", output=None)
         # Should produce a figure without error
@@ -203,8 +202,9 @@ class TestCompareScoresByLabel:
         plt.close(fig)
 
     def test_save_to_file(self, labeled_scores, tmp_path):
-        from ppinsight.visualizer import compare_scores_by_label
         import matplotlib
+
+        from ppinsight.visualizer import compare_scores_by_label
         matplotlib.use("Agg")
         out = str(tmp_path / "labeled.png")
         fig = compare_scores_by_label(labeled_scores, "dockq", output=out)
@@ -213,8 +213,9 @@ class TestCompareScoresByLabel:
         plt.close(fig)
 
     def test_no_label_column(self):
-        from ppinsight.visualizer import compare_scores_by_label
         import matplotlib
+
+        from ppinsight.visualizer import compare_scores_by_label
         matplotlib.use("Agg")
         df = pd.DataFrame({
             "model": ["lightdock"],
@@ -296,4 +297,4 @@ class TestClassificationSummary:
         assert result["FN"].iloc[0] == 0
 
 
-import os
+import os  # noqa: E402

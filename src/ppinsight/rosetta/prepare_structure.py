@@ -159,7 +159,10 @@ def combine_proteins(pose1, pose2, jump_distance=15.0):
     return combined_pose
 
 
-def prepare_structures(protein1_pdb, protein2_pdb, relax=True, jump_distance=15.0, verbose=False):
+def prepare_structures(
+    protein1_pdb, protein2_pdb,
+    relax=True, jump_distance=15.0, verbose=False,
+):
     """
     Complete structure preparation pipeline.
 

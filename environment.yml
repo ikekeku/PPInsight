@@ -9,6 +9,8 @@ dependencies:
   - numpy>=1.24
   - pandas
   - matplotlib>=3.6
+  - seaborn>=0.12
+  - networkx
   - requests
   - biopython
   - pytest

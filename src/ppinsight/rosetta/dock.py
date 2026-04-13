@@ -26,11 +26,13 @@ This module handles:
 import sys
 import warnings
 
-# pylint: disable=no-member, import-error
-from pyrosetta.rosetta.protocols.moves import SequenceMover
+from pyrosetta.rosetta.core.pack.task import TaskFactory
 from pyrosetta.rosetta.protocols.docking import FaDockingSlideIntoContact
 from pyrosetta.rosetta.protocols.minimization_packing import MinMover, PackRotamersMover
-from pyrosetta.rosetta.core.pack.task import TaskFactory
+
+# pylint: disable=no-member, import-error
+from pyrosetta.rosetta.protocols.moves import SequenceMover
+
 # pylint: enable=no-member, import-error
 
 try:

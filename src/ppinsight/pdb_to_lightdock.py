@@ -29,12 +29,15 @@ Output folders::
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
-import shutil
 import warnings
 
-from ppinsight.utils import _project_root, resolve_input_path  # noqa: F401 — re-exported
+from ppinsight.utils import (  # noqa: F401 — re-exported
+    _project_root,
+    resolve_input_path,
+)
 
 
 def run_command(cmd, cwd=None):
@@ -157,7 +160,10 @@ def _run_lightdock_generation(working_dir, rec_basename, lig_basename,
     num_models = glowworms if glowworms else 200
     swarm_dirs = sorted(glob.glob(os.path.join(working_dir, "swarm_*")))
     if not swarm_dirs:
-        warnings.warn("No swarm_* directories found — skipping generation.")
+        warnings.warn(
+            "No swarm_* directories found — skipping generation.",
+            stacklevel=2,
+        )
         return
     for swarm_path in swarm_dirs:
         swarm_name = os.path.basename(swarm_path)
@@ -187,7 +193,10 @@ def _run_lightdock_clustering(working_dir, steps):
     """
     swarm_dirs = sorted(glob.glob(os.path.join(working_dir, "swarm_*")))
     if not swarm_dirs:
-        warnings.warn("No swarm_* directories found — skipping clustering.")
+        warnings.warn(
+            "No swarm_* directories found — skipping clustering.",
+            stacklevel=2,
+        )
         return
     for swarm_path in swarm_dirs:
         gso_file = os.path.join(swarm_path, f"gso_{steps}.out")
@@ -213,7 +222,7 @@ def _run_lightdock_ranking(working_dir, steps):
     """
     num_swarms = len(glob.glob(os.path.join(working_dir, "swarm_*")))
     if num_swarms == 0:
-        warnings.warn("No swarm_* directories found — skipping ranking.")
+        warnings.warn("No swarm_* directories found — skipping ranking.", stacklevel=2)
         return
     cmd = ["lgd_rank.py", str(num_swarms), str(steps), "-c", "1"]
     run_command(cmd, cwd=working_dir)
@@ -474,7 +483,9 @@ def main(argv=None):
         "- CPU cores: " + str(opts["cores"]),
         "- ANM flexibility: " + ("enabled" if opts["anm"] else "disabled"),
         "- Scoring function: " + (opts["scoring"] or "default (DFIRE)"),
-        "- Post-processing: " + ("skipped" if opts["skip_postprocess"] else "full (generate+cluster+rank)"),
+        "- Post-processing: "
+        + ("skipped" if opts["skip_postprocess"]
+           else "full (generate+cluster+rank)"),
         f"Results directory: {workdir}",
     ]
     print("\n".join(summary_lines))

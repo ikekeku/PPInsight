@@ -3,8 +3,6 @@
 import subprocess
 import sys
 
-import pytest
-
 
 def _run_cli(*args):
     """Run the ppinsight CLI in a subprocess and return the result."""
@@ -38,7 +36,10 @@ class TestUmbrellaCLI:
     def test_subcommand_help_collect(self):
         result = _run_cli("collect", "--help")
         assert result.returncode == 0
-        assert "directories" in result.stdout.lower() or "output" in result.stdout.lower()
+        assert (
+            "directories" in result.stdout.lower()
+            or "output" in result.stdout.lower()
+        )
 
     def test_subcommand_help_compare(self):
         result = _run_cli("compare", "--help")

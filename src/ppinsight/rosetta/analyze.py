@@ -8,9 +8,9 @@ This module handles:
 - Decoy clustering (optional, requires scipy + PyRosetta)
 """
 
+import csv
 import logging
 import statistics
-import csv
 import warnings
 from pathlib import Path
 
@@ -138,7 +138,10 @@ def analyze_scores(results, top_n=20, verbose=False):
         print(f"Top {actual_top_n} structures used for averaging")
         print()
         print(f"Best score:               {analysis['best_score']:8.2f}")
-        print(f"Worst score in top {actual_top_n}:     {analysis['worst_top_score']:8.2f}")
+        print(
+            f"Worst score in top {actual_top_n}:"
+            f"     {analysis['worst_top_score']:8.2f}"
+        )
         print(f"Average of top {actual_top_n}:        {analysis['final_score']:8.2f}")
         print()
         print("Statistics (all scores):")

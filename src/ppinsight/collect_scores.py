@@ -3,8 +3,10 @@ collect_scores – aggregate docking results into a unified scores file.
 
 Usage::
 
-    collect_scores examples/haddock3/run1-test examples/lightdock/simulation -o scores.tsv
-    collect_scores path/to/rosetta_run --model-label rosetta -o scores.tsv
+    collect_scores examples/haddock3/run1-test \
+        examples/lightdock/simulation -o scores.tsv
+    collect_scores path/to/rosetta_run \
+        --model-label rosetta -o scores.tsv
 
 Each positional argument is a directory produced by a supported
 docking pipeline.  The tool auto-detects the docking engine and
@@ -80,9 +82,15 @@ def _parse_haddock(run_dir: str,
     df.columns = [c.strip().lower() for c in df.columns]
 
     # Metrics we want to lift into the unified file
-    metric_cols = [c for c in ("score", "dockq", "irmsd", "fnat", "lrmsd") if c in df.columns]
+    metric_cols = [
+        c for c in ("score", "dockq", "irmsd", "fnat", "lrmsd")
+        if c in df.columns
+    ]
     if not metric_cols:
-        raise ValueError(f"capri_ss.tsv at {capri_path} has no recognized score columns")
+        raise ValueError(
+            f"capri_ss.tsv at {capri_path} has no recognized "
+            "score columns"
+        )
 
     rows: list[dict] = []
     for _, row in df.iterrows():
@@ -133,7 +141,10 @@ def _parse_haddock_clusters(run_dir: str,
     df = pd.read_csv(capri_path, sep="\t")
     df.columns = [c.strip().lower() for c in df.columns]
 
-    metric_cols = [c for c in ("score", "dockq", "irmsd", "fnat", "lrmsd") if c in df.columns]
+    metric_cols = [
+        c for c in ("score", "dockq", "irmsd", "fnat", "lrmsd")
+        if c in df.columns
+    ]
     if not metric_cols:
         return None
 
@@ -361,7 +372,11 @@ def aggregate_scores(
         # from `g`, but they're available in `g.name` (a tuple matching
         # group_cols_full).  score_type is always at index 1.
         group_key = g.name if isinstance(g.name, tuple) else (g.name,)
-        st_idx = group_cols_full.index("score_type") if "score_type" in group_cols_full else -1
+        st_idx = (
+            group_cols_full.index("score_type")
+            if "score_type" in group_cols_full
+            else -1
+        )
         st = str(group_key[st_idx]) if st_idx >= 0 and st_idx < len(group_key) else ""
         # For lower-is-better metrics we sort ascending so .iloc[0] / .head()
         # give the best (lowest) values; for higher-is-better we sort descending.
@@ -553,7 +568,7 @@ def _parse_rosetta_scorefile(sc_files: list[str],
                     # Data row
                     vals = parts[1:]
                     if header and len(vals) == len(header):
-                        row_dict = dict(zip(header, vals))
+                        row_dict = dict(zip(header, vals, strict=False))
                         for sc_col, our_name in _COL_MAP.items():
                             if sc_col in row_dict:
                                 try:
@@ -705,11 +720,18 @@ def annotate_with_labels(scores_df: pd.DataFrame,
     )
     # Try reversed pair for rows that didn't match the first time.
     # This handles the case where pairs_df has (A, B) but scores_df has (B, A).
-    unmatched = merged["label_anno"].isna() if "label_anno" in merged.columns else merged["label"].isna()
+    unmatched = (
+        merged["label_anno"].isna()
+        if "label_anno" in merged.columns
+        else merged["label"].isna()
+    )
     if unmatched.any():
         rev = pf.rename(columns={"_pA": "_pB", "_pB": "_pA"})
         merged2 = df[unmatched].merge(
-            rev[["_pA", "_pB", "label"] + (["family"] if "family" in rev.columns else [])],
+            rev[
+                ["_pA", "_pB", "label"]
+                + (["family"] if "family" in rev.columns else [])
+            ],
             on=["_pA", "_pB"], how="left", suffixes=("", "_rev"),
         )
         label_col = "label_anno" if "label_anno" in merged.columns else "label"

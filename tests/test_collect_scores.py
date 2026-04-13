@@ -59,7 +59,7 @@ def rosetta_sc_dir(tmp_path):
     root.mkdir()
     sc_path = root / "score.sc"
     sc_path.write_text(textwrap.dedent("""\
-        SEQUENCE: 
+        SEQUENCE:
         SCORE: total_score I_sc Irms rms Fnat description
         SCORE:  -185.32  -12.45  1.80  3.50  0.72  decoy_1
         SCORE:  -172.10  -8.90  2.40  5.10  0.55  decoy_2
@@ -126,7 +126,9 @@ class TestDetectEngine:
 class TestParseHaddock:
     def test_basic(self, haddock_dir):
         df = collect_scores._parse_haddock(haddock_dir)
-        assert set(df["score_type"].unique()) == {"score", "dockq", "irmsd", "fnat", "lrmsd"}
+        assert set(df["score_type"].unique()) == {
+            "score", "dockq", "irmsd", "fnat", "lrmsd",
+        }
         # 2 models × 5 metrics = 10 rows
         assert len(df) == 10
         assert (df["model"] == "haddock").all()
@@ -183,7 +185,7 @@ class TestParseRosetta:
         root.mkdir()
         (root / "docking_scores.csv").write_text("run,score\n1,-5.0\n")
         (root / "score.sc").write_text(textwrap.dedent("""\
-            SEQUENCE: 
+            SEQUENCE:
             SCORE: total_score I_sc description
             SCORE:  -100.0  -10.0  decoy_1
         """))
@@ -216,7 +218,10 @@ class TestParseHaddockClusters:
         # Should get per-model results from latest caprieval (still 9_caprieval)
         assert len(df) > 0
         # No 'source' column when using per-model path
-        assert "source" not in df.columns or not (df.get("source", "") == "cluster").all()
+        assert (
+            "source" not in df.columns
+            or not (df.get("source", "") == "cluster").all()
+        )
 
     def test_fallback_without_clustfcc(self, haddock_dir):
         """Without clustfcc dir, falls back to per-model parsing."""

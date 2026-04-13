@@ -14,11 +14,10 @@ Covers:
 import csv
 import os
 
-import pytest
 import pandas as pd
+import pytest
 
 from ppinsight import visualizer as vis
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,7 +65,10 @@ def unified_scores_csv(tmp_path):
     p = tmp_path / "scores.csv"
     with open(p, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["proteinA", "proteinB", "model", "score_type", "score_value", "output_path"])
+        writer.writerow([
+            "proteinA", "proteinB", "model",
+            "score_type", "score_value", "output_path",
+        ])
         # HADDOCK dockq
         for v in [0.54, 0.82, 0.11]:
             writer.writerow(["2UUY_rec", "2UUY_lig", "HADDOCK", "dockq", v, "/path/h"])

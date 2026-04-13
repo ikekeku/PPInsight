@@ -1,12 +1,11 @@
 """Tests for the engine plugin registry."""
 
 import os
-import tempfile
+
 import pytest
 
 from ppinsight import registry
-from ppinsight.registry import EnginePlugin, register, get, list_engines, detect_engine
-
+from ppinsight.registry import EnginePlugin, detect_engine, get, list_engines, register
 
 # ---------------------------------------------------------------------------
 # Setup / teardown – ensure defaults are loaded before we add custom plugins
@@ -73,7 +72,7 @@ class TestRegisterCustom:
         assert get("custom_dock") is plugin
 
     def test_register_replaces_existing(self):
-        original = get("lightdock")
+        get("lightdock")
         replacement = EnginePlugin(name="lightdock", description="replaced")
         register(replacement)
         assert get("lightdock").description == "replaced"

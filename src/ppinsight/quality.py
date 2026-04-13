@@ -38,7 +38,6 @@ from typing import Any
 
 import pandas as pd
 
-
 # ---------------------------------------------------------------------------
 # DockQ import (optional – installed via ``pip install ppinsight[quality]``)
 #

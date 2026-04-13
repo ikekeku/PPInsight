@@ -1,8 +1,6 @@
 """Tests for ppinsight.quality – DockQ-based quality assessment."""
 
 import math
-import os
-import tempfile
 
 import pandas as pd
 import pytest
@@ -10,15 +8,14 @@ import pytest
 from ppinsight.quality import (
     CAPRI_ORDER,
     CAPRI_THRESHOLDS,
+    _find_model_files,
     add_quality_to_scores,
     capri_success_rate,
     capri_summary,
     classify_capri,
     evaluate_complex,
     evaluate_directory,
-    _find_model_files,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers: fake DockQ loader / runner for fully deterministic tests
@@ -398,7 +395,9 @@ class TestAddQualityToScores:
             "model": ["x"], "score_type": ["s"],
             "score_value": [1.0], "proteinA": [""], "proteinB": [""],
         })
-        quality = pd.DataFrame(columns=["model_path", "DockQ", "fnat", "iRMSD", "LRMSD"])
+        quality = pd.DataFrame(
+            columns=["model_path", "DockQ", "fnat", "iRMSD", "LRMSD"]
+        )
         result = add_quality_to_scores(existing, quality)
         assert len(result) == 1  # no quality rows added
 

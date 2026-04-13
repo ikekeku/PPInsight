@@ -34,7 +34,7 @@ from __future__ import annotations
 import glob
 import os
 from dataclasses import dataclass
-from typing import Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -133,8 +133,9 @@ def _register_lightdock() -> None:
         return bool(glob.glob(os.path.join(directory, "swarm_*")))
 
     def _run(rec_pdb, lig_pdb, output_root, pair_label, **kw):
-        from ppinsight.pdb_to_lightdock import lightdock_pipeline, make_output_dir
         import sys
+
+        from ppinsight.pdb_to_lightdock import lightdock_pipeline, make_output_dir
         try:
             workdir = make_output_dir(rec_pdb, lig_pdb, method="lightdock_runs",
                                       base_root=output_root)
@@ -175,9 +176,10 @@ def _register_haddock() -> None:
         return False
 
     def _run(rec_pdb, lig_pdb, output_root, pair_label, **kw):
+        import sys
+
         from ppinsight.pdb_to_haddock import haddock_pipeline
         from ppinsight.utils import _project_root
-        import sys
         try:
             run_dir, cfg_path, _ = haddock_pipeline(
                 rec_pdb, lig_pdb,
@@ -204,7 +206,8 @@ def _register_rosetta() -> None:
 
     def _detect(directory: str) -> bool:
         """Detect Rosetta by clustered_scores.csv, .sc files, or legacy CSV."""
-        # Detect clustered_scores.csv, native .sc score files, OR legacy PPInsight docking_scores.csv
+        # Detect clustered_scores.csv, native .sc score files,
+        # OR legacy PPInsight docking_scores.csv
         if os.path.isfile(os.path.join(directory, "clustered_scores.csv")):
             return True
         if os.path.isfile(os.path.join(directory, "docking_scores.csv")):

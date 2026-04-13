@@ -11,7 +11,7 @@ Produces:
 """
 
 import os
-import sys
+
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,13 +87,19 @@ if os.path.exists(rosetta_sc):
     # Rosetta .sc files are whitespace-delimited, first line is
     # SEQUENCE:, second is header, rest are data.
     with open(rosetta_sc) as f:
-        lines = [l for l in f if l.startswith("SCORE:") and "total_score" not in l]
-        header_line = [l for l in open(rosetta_sc) if l.startswith("SCORE:") and "total_score" in l]
+        lines = [
+            ln for ln in f
+            if ln.startswith("SCORE:") and "total_score" not in ln
+        ]
+        header_line = [
+            ln for ln in open(rosetta_sc)
+            if ln.startswith("SCORE:") and "total_score" in ln
+        ]
     if header_line:
         cols = header_line[0].split()[1:]  # skip "SCORE:"
         for line in lines:
             vals = line.split()[1:]
-            rec = dict(zip(cols, vals))
+            rec = dict(zip(cols, vals, strict=False))
             for metric in ["total_score", "I_sc", "Irms", "Fnat", "rms"]:
                 if metric in rec:
                     try:
@@ -124,8 +130,9 @@ print(f"\nSaved {out_scores}")
 
 # ── Provenance sidecar ───────────────────────────────────────────
 # Record where this demo data came from so users can trace it.
-from ppinsight.provenance import make_run_id, write_sidecar
-import datetime
+import datetime  # noqa: E402
+
+from ppinsight.provenance import make_run_id, write_sidecar  # noqa: E402
 
 now = datetime.datetime.now()
 provenance = {}

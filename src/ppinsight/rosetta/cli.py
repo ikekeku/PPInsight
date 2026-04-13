@@ -1,14 +1,17 @@
 """
 Docstring for ppinsight.rosetta.cli
-This file accepts command-line arguments to run the DockingPipeline from ppinsight.rosetta.pipeline
+This file accepts command-line arguments to run the DockingPipeline
+from ppinsight.rosetta.pipeline
 and outputs the final docking score and saves the top structures.
 
-It takes as input two protein PDB files, number of docking runs, output directory, 
+It takes as input two protein PDB files, number of docking runs, output directory,
 and number of top structures to save.
 """
 
 import argparse
+
 from ppinsight.rosetta.pipeline import DockingPipeline
+
 
 def main():
     parser = argparse.ArgumentParser(

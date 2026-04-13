@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 
 # Ensure the package under src/ is importable during tests
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -8,7 +8,7 @@ if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
 
-import pytest
+import pytest  # noqa: E402
 
 
 def pytest_collection_modifyitems(config, items):

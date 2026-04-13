@@ -1,26 +1,25 @@
 """Tests for score normalization, aggregation, clustering, and new plot types."""
 
-import pandas as pd
-import numpy as np
 import os
-import pytest
-
-from ppinsight.visualizer import (
-    normalize_scores,
-    get_metric_direction,
-    METRIC_METADATA,
-    violin_plot,
-    score_heatmap,
-    roc_curve_plot,
-    model_agreement_scatter,
-)
-from ppinsight.collect_scores import (
-    _parse_lightdock_clusters,
-    _parse_lightdock,
-    aggregate_scores,
-)
 
 import matplotlib
+import pandas as pd
+import pytest
+
+from ppinsight.collect_scores import (
+    _parse_lightdock_clusters,
+    aggregate_scores,
+)
+from ppinsight.visualizer import (
+    METRIC_METADATA,
+    get_metric_direction,
+    model_agreement_scatter,
+    normalize_scores,
+    roc_curve_plot,
+    score_heatmap,
+    violin_plot,
+)
+
 matplotlib.use("Agg")  # non-interactive backend for CI
 
 
@@ -155,7 +154,7 @@ class TestDirectionAwareMinMax:
             direction_aware=False,
         )
         # Both groups should span [0, 1] without flipping
-        for (model, st), grp in result.groupby(["model", "score_type"]):
+        for (_model, _st), grp in result.groupby(["model", "score_type"]):
             assert grp["score_value"].min() == pytest.approx(0.0)
             assert grp["score_value"].max() == pytest.approx(1.0)
 
@@ -177,7 +176,7 @@ class TestMinMaxBasic:
             multi_model_scores, method="minmax", per_model=True,
             direction_aware=False,
         )
-        for (model, st), grp in result.groupby(["model", "score_type"]):
+        for (_model, _st), grp in result.groupby(["model", "score_type"]):
             assert grp["score_value"].min() == pytest.approx(0.0)
             assert grp["score_value"].max() == pytest.approx(1.0)
 
@@ -206,7 +205,7 @@ class TestZScore:
             multi_model_scores, method="zscore", per_model=True,
             direction_aware=False,
         )
-        for (model, st), grp in result.groupby(["model", "score_type"]):
+        for (_model, _st), grp in result.groupby(["model", "score_type"]):
             assert grp["score_value"].mean() == pytest.approx(0.0, abs=1e-10)
             assert grp["score_value"].std(ddof=0) == pytest.approx(1.0, abs=1e-10)
 
@@ -226,7 +225,7 @@ class TestRank:
             multi_model_scores, method="rank", per_model=True,
             direction_aware=False,
         )
-        for (model, st), grp in result.groupby(["model", "score_type"]):
+        for (_model, _st), grp in result.groupby(["model", "score_type"]):
             assert grp["score_value"].min() > 0
             assert grp["score_value"].max() <= 1.0
 
@@ -235,7 +234,7 @@ class TestRank:
             single_score_type, method="rank", per_model=True,
             direction_aware=False,
         )
-        for (model, st), grp in result.groupby(["model", "score_type"]):
+        for (_model, _st), grp in result.groupby(["model", "score_type"]):
             assert grp["score_value"].is_monotonic_increasing
 
 
@@ -490,7 +489,10 @@ class TestModelAgreementScatter:
             "score_value": [1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5],
             "proteinA": ["A", "B", "C", "D"] * 2,
             "proteinB": ["X", "Y", "Z", "W"] * 2,
-            "label": ["interaction", "interaction", "non-interaction", "non-interaction"] * 2,
+            "label": [
+                "interaction", "interaction",
+                "non-interaction", "non-interaction",
+            ] * 2,
         })
         fig = model_agreement_scatter(df, metric="s", model_x="m1", model_y="m2")
         assert fig is not None
