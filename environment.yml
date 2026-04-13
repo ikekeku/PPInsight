@@ -23,3 +23,4 @@ dependencies:
   - pip:
     - lightdock
     - pyrosetta-installer
+    - git+https://github.com/nrontsis/DockQ.git@update-to-numpy>2
