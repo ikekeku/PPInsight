@@ -83,21 +83,22 @@ class DockingPipeline:
 
     def _ensure_pyrosetta(self):
         try:
-            import pyrosetta
+            import pyrosetta  # noqa: F401
         except ImportError:
             try:
                 import pyrosetta_installer
                 pyrosetta_installer.install_pyrosetta()
-                import pyrosetta  # Try importing again after installation
-            except ImportError:
+                import pyrosetta  # noqa: F401
+            except ImportError as err:
                 raise ImportError(
                     "PyRosetta is required for docking but is not installed.\n"
                     "FAILED installing it using:\n"
-                    "import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()\n"
+                    "import pyrosetta_installer; "
+                    "pyrosetta_installer.install_pyrosetta()\n"
                     "................................................................\n"
                     "Please install PyRosetta manually following the instructions at:\n"
                     "https://www.pyrosetta.org/downloads"
-                )
+                ) from err
 
 
     def prepare(self):
