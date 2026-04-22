@@ -306,11 +306,11 @@ def add_prodigy_to_scores(
                 group_cols.append(col)
         if higher_is_better:
             top_rows = ranking_rows.groupby(group_cols, group_keys=False).apply(
-                lambda g: g.nlargest(top_n, "score_value")
+                lambda g: g.nlargest(top_n, "score_value"), include_groups=False
             )
         else:
             top_rows = ranking_rows.groupby(group_cols, group_keys=False).apply(
-                lambda g: g.nsmallest(top_n, "score_value")
+                lambda g: g.nsmallest(top_n, "score_value"), include_groups=False
             )
         # Restrict scoring to only the PDB files that appear in the top poses.
         top_pdbs = set(top_rows["pdb"].dropna().unique())
