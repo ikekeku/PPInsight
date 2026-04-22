@@ -11,7 +11,7 @@ Install the optional dependency with::
 CLI usage::
 
     ppinsight prodigy scores.tsv --pdb-dir pdbs/ --output scores_prodigy.tsv
-    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --top-n 10 --metric haddock_score --engine HADDOCK
+    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --top-n 10 --metric score --engine HADDOCK
 """
 
 from __future__ import annotations
@@ -247,7 +247,7 @@ def add_prodigy_to_scores(
         The sort direction is determined automatically via
         :func:`~ppinsight.visualizer.get_metric_direction`:
         ``nlargest`` for higher-is-better metrics (e.g. ``luciferin_score``),
-        ``nsmallest`` for lower-is-better metrics (e.g. ``haddock_score``).
+        ``nsmallest`` for lower-is-better metrics (e.g. ``score`` for HADDOCK).
         Must be provided when *top_n* is set.
     engine : str or None
         If set, only score rows where *model_col* equals *engine*.
@@ -289,8 +289,8 @@ def add_prodigy_to_scores(
         if metric is None:
             raise ValueError(
                 "metric must be specified when top_n is set.  "
-                "Pass the score_type to rank poses by (e.g. 'haddock_score', "
-                "'luciferin_score') so that the correct sort direction "
+                "Pass the score_type to rank poses by (e.g. 'score' for HADDOCK, "
+                "'luciferin_score' for LightDock) so that the correct sort direction "
                 "(nsmallest vs nlargest) can be determined automatically."
             )
         # Filter to rows for the chosen metric only, so that mixed long-format
