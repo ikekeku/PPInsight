@@ -32,8 +32,6 @@ import matplotlib
 import numpy as np
 import pandas as pd
 
-matplotlib.use("Agg")
-
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -50,11 +48,9 @@ from ppinsight.visualizer import (  # noqa: E402
 )
 
 OUT = ROOT / "examples" / "example_plots"
-OUT.mkdir(parents=True, exist_ok=True)
 OUT_SCORES = OUT / "fabricated_scores.tsv"
 
 RNG_SEED = 42
-apply_theme(DEFAULT_THEME)
 
 ENGINES = ["HADDOCK", "LightDock", "Rosetta"]
 PAIRS = [
@@ -442,6 +438,9 @@ def gen_cdf(scores_df):
 
 
 def main():
+    matplotlib.use("Agg")
+    apply_theme(DEFAULT_THEME)
+    OUT.mkdir(parents=True, exist_ok=True)
     print(
         "================================================================\n"
         "  PPInsight -- Example Plot Generator (FABRICATED DATA)\n"

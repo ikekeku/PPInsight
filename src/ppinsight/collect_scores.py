@@ -482,7 +482,7 @@ def aggregate_scores(
 
     result = (
         df.groupby(group_cols_full, as_index=False)
-        .apply(lambda g: pd.Series({"score_value": _agg(g)}))
+        .apply(lambda g: pd.Series({"score_value": _agg(g)}), include_groups=False)
     )
     # Flatten if needed
     if isinstance(result.columns, pd.MultiIndex):

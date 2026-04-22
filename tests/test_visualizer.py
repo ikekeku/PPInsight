@@ -12,8 +12,8 @@ Covers:
 """
 
 import csv
-import importlib.util
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -21,15 +21,26 @@ import pytest
 
 from ppinsight import visualizer as vis
 
+_EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
 
-def _load_example_plots_module():
-    root = Path(__file__).resolve().parents[1]
-    script = root / "examples" / "generate_example_plots.py"
-    spec = importlib.util.spec_from_file_location("ppinsight_example_plots", script)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+# ---------------------------------------------------------------------------
+# Import build_fabricated_scores cleanly from the examples script.
+# The script's side effects (OUT.mkdir, apply_theme, matplotlib backend) are
+# all guarded inside main(), so a plain import is safe.
+# ---------------------------------------------------------------------------
+if str(_EXAMPLES_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES_DIR.parent))
+
+import importlib.util as _ilu
+
+_spec = _ilu.spec_from_file_location(
+    "generate_example_plots",
+    _EXAMPLES_DIR / "generate_example_plots.py",
+)
+_example_module = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_example_module)
+build_fabricated_scores = _example_module.build_fabricated_scores
+del _spec, _example_module, _ilu
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -410,13 +421,11 @@ class TestMetricPresentation:
 
 class TestExampleGalleryData:
     def test_build_fabricated_scores_is_deterministic(self):
-        module = _load_example_plots_module()
-        df1 = module.build_fabricated_scores()
-        df2 = module.build_fabricated_scores()
+        df1 = build_fabricated_scores()
+        df2 = build_fabricated_scores()
         pd.testing.assert_frame_equal(df1, df2)
 
     def test_build_fabricated_scores_keeps_dockq_in_bounds(self):
-        module = _load_example_plots_module()
-        df = module.build_fabricated_scores()
+        df = build_fabricated_scores()
         dockq = df.loc[df["score_type"] == "dockq", "score_value"]
         assert ((dockq >= 0.0) & (dockq <= 1.0)).all()

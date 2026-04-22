@@ -532,5 +532,3 @@ Both metrics have `higher_is_better=False` in `METRIC_METADATA`, so they
 work correctly with `--normalize`, `ranking_table`, and `ppinsight compare`.
 
 > **Tip:** For the `no_contacts` error (NaN result), see `docs/FAQ.md`.
-
-````
