@@ -190,3 +190,85 @@ class TestAddProdigyToScores:
         with pytest.warns(UserWarning, match="'pdb' column"):
             result = add_prodigy_to_scores(scores, pdb_dir=tmp_path)
         assert result["prodigy_ddg"].isna().all()
+
+    def test_top_n_requires_metric(self, tmp_path):
+        scores = self._make_scores()
+        with pytest.raises(ValueError, match="metric must be specified"):
+            add_prodigy_to_scores(scores, pdb_dir=tmp_path, top_n=2)
+
+    def test_top_n_lower_is_better_uses_nsmallest(self, tmp_path):
+        """For lower-is-better metrics (e.g. HADDOCK 'score'), nsmallest selects best."""
+        scores = pd.DataFrame({
+            "model": ["HADDOCK"] * 4,
+            "score_type": ["score"] * 4,   # "score" → higher_is_better=False in METRIC_METADATA
+            "score_value": [-100.0, -90.0, -80.0, -70.0],
+            "proteinA": ["rec"] * 4,
+            "proteinB": ["lig"] * 4,
+            "pdb": ["h1.pdb", "h2.pdb", "h3.pdb", "h4.pdb"],
+        })
+        for pdb in scores["pdb"]:
+            (tmp_path / pdb).write_text("ATOM  …\n")
+
+        with patch("ppinsight.prodigy.score_pdb") as mock_score:
+            mock_score.return_value = {"prodigy_ddg": -8.5, "prodigy_kd": 5e-7}
+            result = add_prodigy_to_scores(
+                scores, pdb_dir=tmp_path, top_n=2, metric="score"
+            )
+
+        # Only the 2 poses with the lowest (best) scores should be scored.
+        scored = result[~result["prodigy_ddg"].isna()]
+        assert len(scored) == 2
+        assert set(scored["score_value"]) == {-100.0, -90.0}
+
+    def test_top_n_higher_is_better_uses_nlargest(self, tmp_path):
+        """For higher-is-better metrics (e.g. luciferin_score), nlargest selects best."""
+        scores = pd.DataFrame({
+            "model": ["LightDock"] * 4,
+            "score_type": ["luciferin_score"] * 4,
+            "score_value": [10.0, 12.0, 14.0, 16.0],
+            "proteinA": ["rec"] * 4,
+            "proteinB": ["lig"] * 4,
+            "pdb": ["l1.pdb", "l2.pdb", "l3.pdb", "l4.pdb"],
+        })
+        for pdb in scores["pdb"]:
+            (tmp_path / pdb).write_text("ATOM  …\n")
+
+        with patch("ppinsight.prodigy.score_pdb") as mock_score:
+            mock_score.return_value = {"prodigy_ddg": -7.0, "prodigy_kd": 1e-6}
+            result = add_prodigy_to_scores(
+                scores, pdb_dir=tmp_path, top_n=2, metric="luciferin_score"
+            )
+
+        # Only the 2 poses with the highest (best) scores should be scored.
+        scored = result[~result["prodigy_ddg"].isna()]
+        assert len(scored) == 2
+        assert set(scored["score_value"]) == {14.0, 16.0}
+
+    def test_top_n_filters_by_metric_in_long_format(self, tmp_path):
+        """Ranking uses only the specified score_type rows, not all long-format rows."""
+        scores = pd.DataFrame({
+            "model": ["HADDOCK"] * 8,
+            # 4 poses each with two score_type rows
+            "score_type": ["score", "clash_score"] * 4,
+            "score_value": [-100.0, 5.0, -90.0, 3.0, -80.0, 8.0, -70.0, 2.0],
+            "proteinA": ["rec"] * 8,
+            "proteinB": ["lig"] * 8,
+            "pdb": ["h1.pdb", "h1.pdb", "h2.pdb", "h2.pdb",
+                    "h3.pdb", "h3.pdb", "h4.pdb", "h4.pdb"],
+        })
+        for pdb in ["h1.pdb", "h2.pdb", "h3.pdb", "h4.pdb"]:
+            (tmp_path / pdb).write_text("ATOM  …\n")
+
+        with patch("ppinsight.prodigy.score_pdb") as mock_score:
+            mock_score.return_value = {"prodigy_ddg": -8.0, "prodigy_kd": 1e-7}
+            result = add_prodigy_to_scores(
+                scores, pdb_dir=tmp_path, top_n=2, metric="score"
+            )
+
+        # Best 2 by HADDOCK 'score' (lower-is-better) → h1 (-100), h2 (-90)
+        scored = result[~result["prodigy_ddg"].isna()]
+        scored_pdbs = set(scored["pdb"])
+        assert scored_pdbs == {"h1.pdb", "h2.pdb"}
+        # All rows (both score_types) for those PDFs get prodigy results
+        assert len(scored) == 4  # 2 score_types × 2 PDFs
+

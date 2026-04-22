@@ -11,7 +11,7 @@ Install the optional dependency with::
 CLI usage::
 
     ppinsight prodigy scores.tsv --pdb-dir pdbs/ --output scores_prodigy.tsv
-    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --top-n 10 --engine HADDOCK
+    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --top-n 10 --metric haddock_score --engine HADDOCK
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from ppinsight.visualizer import get_metric_direction
 
 
 def _require_prodigy() -> Any:
@@ -219,6 +221,7 @@ def add_prodigy_to_scores(
     pdb_dir: str | Path,
     model_col: str = "model",
     top_n: int | None = None,
+    metric: str | None = None,
     engine: str | None = None,
     chains: list[str] | None = None,
     temperature: float = 25.0,
@@ -236,6 +239,16 @@ def add_prodigy_to_scores(
         Column that identifies the docking engine.
     top_n : int or None
         If set, only score the top *top_n* poses per model+pair group.
+        Requires *metric* to be specified so that the selection direction
+        (best = highest or lowest value) can be determined from
+        :data:`~ppinsight.visualizer.METRIC_METADATA`.
+    metric : str or None
+        The ``score_type`` value to rank poses by when *top_n* is set.
+        The sort direction is determined automatically via
+        :func:`~ppinsight.visualizer.get_metric_direction`:
+        ``nlargest`` for higher-is-better metrics (e.g. ``luciferin_score``),
+        ``nsmallest`` for lower-is-better metrics (e.g. ``haddock_score``).
+        Must be provided when *top_n* is set.
     engine : str or None
         If set, only score rows where *model_col* equals *engine*.
     chains : list of str or None
@@ -273,13 +286,35 @@ def add_prodigy_to_scores(
         return df
 
     if top_n is not None:
+        if metric is None:
+            raise ValueError(
+                "metric must be specified when top_n is set.  "
+                "Pass the score_type to rank poses by (e.g. 'haddock_score', "
+                "'luciferin_score') so that the correct sort direction "
+                "(nsmallest vs nlargest) can be determined automatically."
+            )
+        # Filter to rows for the chosen metric only, so that mixed long-format
+        # files (multiple score_type rows per pose) do not distort ranking.
+        if "score_type" in subset.columns:
+            ranking_rows = subset[subset["score_type"] == metric]
+        else:
+            ranking_rows = subset
+        higher_is_better = get_metric_direction(metric)
         group_cols = [model_col]
         for col in ("proteina", "proteinb", "proteinA", "proteinB"):
-            if col in subset.columns:
+            if col in ranking_rows.columns:
                 group_cols.append(col)
-        subset = subset.groupby(group_cols, group_keys=False).apply(
-            lambda g: g.nsmallest(top_n, "score_value")
-        )
+        if higher_is_better:
+            top_rows = ranking_rows.groupby(group_cols, group_keys=False).apply(
+                lambda g: g.nlargest(top_n, "score_value")
+            )
+        else:
+            top_rows = ranking_rows.groupby(group_cols, group_keys=False).apply(
+                lambda g: g.nsmallest(top_n, "score_value")
+            )
+        # Restrict scoring to only the PDB files that appear in the top poses.
+        top_pdbs = set(top_rows["pdb"].dropna().unique())
+        subset = subset[subset["pdb"].isin(top_pdbs)]
 
     scored: dict[str, dict[str, float]] = {}
     for pdb_name in subset["pdb"].dropna().unique():
@@ -343,8 +378,19 @@ def _build_parser():
         default=None,
         metavar="N",
         help=(
-            "Only score the top N poses per model+pair "
-            "(sorted by score_value ascending)."
+            "Only score the top N poses per model+pair group.  "
+            "Requires --metric.  Sort direction is determined automatically: "
+            "nlargest for higher-is-better metrics (e.g. luciferin_score), "
+            "nsmallest for lower-is-better metrics (e.g. haddock_score)."
+        ),
+    )
+    parser.add_argument(
+        "--metric",
+        default=None,
+        metavar="SCORE_TYPE",
+        help=(
+            "score_type value to rank poses by when --top-n is used "
+            "(e.g. 'haddock_score', 'luciferin_score').  Required with --top-n."
         ),
     )
     parser.add_argument(
@@ -379,6 +425,9 @@ def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    if args.top_n is not None and args.metric is None:
+        parser.error("--metric is required when --top-n is used")
+
     sep = "\t" if args.scores.lower().endswith(".tsv") else ","
     try:
         scores_df = pd.read_csv(args.scores, sep=sep)
@@ -392,6 +441,7 @@ def main(argv: list[str] | None = None) -> None:
         scores_df,
         pdb_dir=args.pdb_dir,
         top_n=args.top_n,
+        metric=args.metric,
         engine=args.engine,
         temperature=args.temperature,
         verbose=args.verbose,
