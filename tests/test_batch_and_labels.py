@@ -273,7 +273,7 @@ class TestClassificationSummary:
             assert row["FP"] == 0
             assert row["FN"] == 0
 
-    def test_auto_direction_haddock_score_type(self):
+    def test_auto_direction_haddock_score(self):
         """HADDOCK 'score' is lower-is-better; auto-detect must flip direction."""
         from ppinsight.visualizer import classification_summary
         df = pd.DataFrame({
