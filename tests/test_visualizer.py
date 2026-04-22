@@ -28,8 +28,10 @@ from ppinsight import visualizer as vis
 # ---------------------------------------------------------------------------
 _EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
 sys.path.insert(0, str(_EXAMPLES_DIR))
-from generate_example_plots import build_fabricated_scores  # noqa: E402
-sys.path.pop(0)
+try:
+    from generate_example_plots import build_fabricated_scores  # noqa: E402
+finally:
+    sys.path.pop(0)
 
 # ---------------------------------------------------------------------------
 # Fixtures
