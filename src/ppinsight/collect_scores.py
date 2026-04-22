@@ -891,6 +891,17 @@ def annotate_with_labels(scores_df: pd.DataFrame,
     return df
 
 
+def _has_nonempty_pair_context(scores_df: pd.DataFrame) -> bool:
+    """Return True when collected rows include usable protein pair names."""
+    required = {"proteinA", "proteinB"}
+    if not required.issubset(scores_df.columns):
+        return False
+
+    pa = scores_df["proteinA"].fillna("").astype(str).str.strip()
+    pb = scores_df["proteinB"].fillna("").astype(str).str.strip()
+    return pa.ne("").any() and pb.ne("").any()
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -939,8 +950,10 @@ def main(argv=None):
         default=None,
         help=(
             "Protein pair as 'proteinA:proteinB'.  Fills the proteinA and "
-            "proteinB columns in the output.  Required for single-pair "
-            "collection; omit when using --pairs for multi-pair annotation."
+            "proteinB columns in the output.  Required whenever collected "
+            "rows do not already include protein names (common for single "
+            "run directories).  Keep this set even when using --pairs so "
+            "label annotation can match rows correctly."
         ),
     )
     parser.add_argument(
@@ -950,6 +963,8 @@ def main(argv=None):
             "Path to a pairs CSV/TSV (from 'ppinsight parse') to annotate "
             "each score row with an 'interaction' or 'non-interaction' label.  "
             "Enables --classify and --plot-type roc in 'ppinsight compare'.  "
+            "This flag does not infer proteinA/proteinB values from "
+            "directories; it only labels rows that already have pair names.  "
             "Omit when ground-truth labels are unavailable."
         ),
     )
@@ -1040,6 +1055,19 @@ def main(argv=None):
 
     # Annotate with interaction labels if a pairs file is given
     if args.pairs:
+        if not _has_nonempty_pair_context(df):
+            print(
+                "ERROR: --pairs requires populated proteinA/proteinB columns "
+                "in collected scores.",
+                file=sys.stderr,
+            )
+            print(
+                "Hint: for single-run collection, pass --pair "
+                "proteinA:proteinB.  --pairs adds labels to existing pair "
+                "names; it does not infer pair names from directories.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         pairs_sep = "\t" if args.pairs.endswith(".tsv") else ","
         pairs_df = pd.read_csv(args.pairs, sep=pairs_sep)
         df = annotate_with_labels(df, pairs_df)

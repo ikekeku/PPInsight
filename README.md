@@ -69,6 +69,16 @@ The examples below use the umbrella form.  Replace
 > **Tip:** every command accepts `--help`.  When in doubt, run
 > `ppinsight <command> --help` to see all available options.
 
+Before expensive runs, do these quick preflight checks:
+
+```bash
+# Check which docking engines are currently runnable/parsible
+ppinsight batch --list-engines
+
+# Check which plot types and flags are valid for your scores file
+ppinsight compare data/output/scores/scores.tsv --guide
+```
+
 ### 1. Fetch protein data
 
 PPInsight fetches protein structures for you — you provide UniProt
@@ -149,6 +159,10 @@ from — engine parameters and source directories.  The unified scores
 rows also retain lightweight traceability columns when available
 (`run_id`, `pose_id`, `output_path`, `source_file`) so you can tie a
 plot back to a specific run and pose.
+
+If you use `--pairs` for interaction labels, keep `--pair` set for
+single-run collection so `proteinA`/`proteinB` are populated before
+annotation.
 
 Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 
@@ -289,7 +303,7 @@ src/ppinsight/
   pdb_to_haddock.py     # HADDOCK3 staging & execution
   pdb_to_rosetta.py     # PyRosetta docking wrapper
   collect_scores.py     # Score aggregator (unified TSV/CSV)
-  visualizer.py         # Plotting & compare_scores CLI
+    visualizer.py         # Plotting and ppinsight compare implementation
   batch_dock.py         # Batch docking for all pairs
   parse_pairs.py        # Protein interaction table → pairs file
   quality.py            # DockQ quality evaluation

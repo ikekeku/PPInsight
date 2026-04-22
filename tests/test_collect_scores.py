@@ -312,3 +312,37 @@ class TestCLI:
     def test_bad_pair_format(self, haddock_dir, tmp_path):
         with pytest.raises(SystemExit):
             collect_scores.main([haddock_dir, "--pair", "nocolon"])
+
+    def test_pairs_requires_nonempty_pair_context(
+        self,
+        lightdock_dir,
+        tmp_path,
+        capsys,
+    ):
+        """--pairs should fail fast when collected rows have blank protein names."""
+        pairs = tmp_path / "pairs.tsv"
+        pairs.write_text("proteinA\tproteinB\tlabel\nrecA\tligB\tinteraction\n")
+        out = str(tmp_path / "out.tsv")
+
+        with pytest.raises(SystemExit) as exc:
+            collect_scores.main([lightdock_dir, "-o", out, "--pairs", str(pairs)])
+        assert exc.value.code == 2
+
+        captured = capsys.readouterr()
+        assert "--pairs requires populated proteinA/proteinB" in captured.err
+        assert "pass --pair" in captured.err
+
+    def test_pairs_annotation_with_pair_flag(self, lightdock_dir, tmp_path):
+        """When --pair is provided, --pairs annotation should label rows."""
+        pairs = tmp_path / "pairs.tsv"
+        pairs.write_text("proteinA\tproteinB\tlabel\nrecA\tligB\tinteraction\n")
+        out = str(tmp_path / "out.tsv")
+
+        collect_scores.main([
+            lightdock_dir,
+            "-o", out,
+            "--pair", "recA:ligB",
+            "--pairs", str(pairs),
+        ])
+        df = pd.read_csv(out, sep="\t")
+        assert (df["label"] == "interaction").all()

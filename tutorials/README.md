@@ -68,6 +68,16 @@ Practical detail: **`batch` does not write the unified `scores.tsv` by
 itself.** It writes a batch results table plus engine run directories,
 and `ppinsight collect` is still the next step.
 
+### Step 0.5 — Run quick preflight checks
+
+```bash
+# Which engines are currently available in this environment?
+ppinsight batch --list-engines
+
+# Which compare plot types/flags are valid for this scores file?
+ppinsight compare tutorials/all_scores.tsv --guide
+```
+
 ### Step 1 — Fetch protein data
 
 Verified here with real UniProt accessions:
@@ -519,7 +529,7 @@ Outputs are written to `tutorials/prodigy_output/`.
 | `prodigy_kd`  | Predicted Kd (M) — lower = tighter complex |
 
 Both metrics have `higher_is_better=False` in `METRIC_METADATA`, so they
-work correctly with `--normalize`, `ranking_table`, and `compare_scores`.
+work correctly with `--normalize`, `ranking_table`, and `ppinsight compare`.
 
 > **Tip:** For the `no_contacts` error (NaN result), see `docs/FAQ.md`.
 

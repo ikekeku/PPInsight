@@ -255,10 +255,11 @@ def main(argv=None):
         "--pdb-dir",
         default=None,
         help=(
-            "Directory containing pre-fetched PDB files.  When set, the "
-            "pipeline looks here for receptor/ligand PDBs instead of "
-            "fetching from UniProt/PDB.  Useful for offline runs or when "
-            "you have custom-prepared structures."
+            "Directory containing pre-fetched PDB files.  Batch mode uses "
+            "this directory (and local path resolution) to find receptor/"
+            "ligand structures.  Automatic UniProt/PDB fetch fallback is "
+            "not implemented here yet, so pre-fetch with 'ppinsight fetch' "
+            "or provide --pdb-dir for reliable runs."
         ),
     )
     parser.add_argument(

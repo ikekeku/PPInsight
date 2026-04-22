@@ -12,12 +12,24 @@ Covers:
 """
 
 import csv
+import importlib.util
 import os
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from ppinsight import visualizer as vis
+
+
+def _load_example_plots_module():
+    root = Path(__file__).resolve().parents[1]
+    script = root / "examples" / "generate_example_plots.py"
+    spec = importlib.util.spec_from_file_location("ppinsight_example_plots", script)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -327,3 +339,84 @@ class TestCapriPoseClassification:
         pose_2 = classified[classified["pose_id"] == "pose_2"]
         assert set(pose_1["capri_quality"]) == {"high"}
         assert set(pose_2["capri_quality"]) == {"incorrect"}
+
+
+class TestMetricPresentation:
+    def test_metric_display_name_uses_dockq_case(self):
+        assert vis.get_metric_display_name("dockq") == "DockQ"
+
+    def test_ridge_plot_respects_dockq_bounds(self, monkeypatch):
+        import matplotlib.pyplot as _plt
+
+        monkeypatch.setattr(_plt, "show", lambda: None)
+
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 4 + ["Rosetta"] * 4,
+            "score_type": ["dockq"] * 8,
+            "score_value": [0.22, 0.45, 0.78, 0.96, 0.18, 0.33, 0.61, 0.88],
+        })
+
+        fig = vis.ridge_plot(df, metric="dockq")
+        xmin, xmax = fig.axes[-1].get_xlim()
+        assert xmin >= 0.0
+        assert xmax <= 1.0
+        assert fig.axes[-1].get_xlabel() == "DockQ"
+        expected_thresholds = {
+            round(threshold, 2) for threshold, _, _ in vis.DOCKQ_CAPRI_THRESHOLDS
+        }
+        assert fig.legends
+        legend_labels = {text.get_text() for text in fig.legends[0].get_texts()}
+        assert "Median" in legend_labels
+        assert {
+            f"CAPRI {label} ({threshold:.2f})"
+            for threshold, label, _ in vis.DOCKQ_CAPRI_THRESHOLDS
+        }.issubset(legend_labels)
+        for ax in fig.axes:
+            constant_x_lines = [
+                line for line in ax.lines
+                if len({round(float(x), 6) for x in line.get_xdata()}) == 1
+            ]
+            dashed_thresholds = {
+                round(float(line.get_xdata()[0]), 2)
+                for line in constant_x_lines
+                if line.get_linestyle() == "--"
+            }
+            median_markers = [line for line in ax.lines if line.get_marker() == "o"]
+            assert dashed_thresholds == expected_thresholds
+            assert len(median_markers) == 1
+        _plt.close(fig)
+
+    def test_violin_plot_adds_faint_horizontal_gridlines(self, monkeypatch):
+        import matplotlib.pyplot as _plt
+
+        monkeypatch.setattr(_plt, "show", lambda: None)
+
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 4 + ["Rosetta"] * 4,
+            "score_type": ["dockq"] * 8,
+            "score_value": [0.22, 0.45, 0.78, 0.96, 0.18, 0.33, 0.61, 0.88],
+        })
+
+        fig = vis.violin_plot(df, metric="dockq")
+        fig.canvas.draw()
+        gridlines = [
+            line for line in fig.axes[0].yaxis.get_gridlines()
+            if line.get_visible()
+        ]
+        assert gridlines
+        assert fig.axes[0].get_axisbelow()
+        _plt.close(fig)
+
+
+class TestExampleGalleryData:
+    def test_build_fabricated_scores_is_deterministic(self):
+        module = _load_example_plots_module()
+        df1 = module.build_fabricated_scores()
+        df2 = module.build_fabricated_scores()
+        pd.testing.assert_frame_equal(df1, df2)
+
+    def test_build_fabricated_scores_keeps_dockq_in_bounds(self):
+        module = _load_example_plots_module()
+        df = module.build_fabricated_scores()
+        dockq = df.loc[df["score_type"] == "dockq", "score_value"]
+        assert ((dockq >= 0.0) & (dockq <= 1.0)).all()

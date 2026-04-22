@@ -32,14 +32,15 @@ import sys
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
+from matplotlib.lines import Line2D
 
 # ---------------------------------------------------------------------------
 # Theme configuration
 # ---------------------------------------------------------------------------
 
-# Available themes for programmatic use (e.g. apply_theme("ticks-colorblind")).
-# The CLI always uses the default theme.
+# Named themes are internal; PPInsight uses the default theme.
 THEMES: dict[str, dict] = {
+    "white-deep":         {"style": "white",      "palette": "deep"},
     "whitegrid-Set2":     {"style": "whitegrid",  "palette": "Set2"},
     "whitegrid-husl":     {"style": "whitegrid",  "palette": "husl"},
     "whitegrid-deep":     {"style": "whitegrid",  "palette": "deep"},
@@ -51,7 +52,26 @@ THEMES: dict[str, dict] = {
     "ticks-viridis":      {"style": "ticks",      "palette": "viridis"},
 }
 
-DEFAULT_THEME = "whitegrid-Set2"
+DEFAULT_THEME = "white-deep"
+
+PLOT_TITLE_SIZE = 14
+FACET_TITLE_SIZE = 11
+AXIS_LABEL_SIZE = 12
+TICK_LABEL_SIZE = 10
+LEGEND_FONT_SIZE = 8
+LEGEND_TITLE_SIZE = 9
+ANNOTATION_FONT_SIZE = 9
+N_LABEL_SIZE = 9
+TITLE_PAD = 10
+QUALITY_BAR_TITLE_PAD = 12
+RIDGE_TITLE_OFFSET_IN = 0.29
+RIDGE_LEGEND_OFFSET_IN = 0.024
+
+DOCKQ_CAPRI_THRESHOLDS = [
+    (0.23, "acceptable", "#f0c040"),
+    (0.49, "medium", "#4090e0"),
+    (0.80, "high", "#40c040"),
+]
 
 
 def apply_theme(name: str = DEFAULT_THEME) -> None:
@@ -65,9 +85,41 @@ def apply_theme(name: str = DEFAULT_THEME) -> None:
     """
     cfg = THEMES.get(name, THEMES[DEFAULT_THEME])
     sns.set_theme(style=cfg["style"], palette=cfg["palette"],
-                  font_scale=1.05,
+                  font_scale=1.0,
                   rc={"figure.dpi": 150, "savefig.dpi": 180,
-                      "axes.edgecolor": ".3", "axes.linewidth": 0.8})
+                      "axes.edgecolor": ".3", "axes.linewidth": 0.8,
+                      "axes.titlesize": PLOT_TITLE_SIZE,
+                      "axes.labelsize": AXIS_LABEL_SIZE,
+                      "axes.titlepad": TITLE_PAD,
+                      "xtick.labelsize": TICK_LABEL_SIZE,
+                      "ytick.labelsize": TICK_LABEL_SIZE,
+                      "legend.fontsize": LEGEND_FONT_SIZE,
+                      "legend.title_fontsize": LEGEND_TITLE_SIZE})
+
+
+def _model_palette(models: list[str]) -> dict[str, tuple[float, float, float]]:
+    """Return a stable palette mapping for model names.
+
+    Known engines keep the first three colors of the active seaborn
+    palette so HADDOCK / LightDock / Rosetta remain blue / orange /
+    green across single-engine and multi-engine plots. Unknown engines
+    receive the remaining colors in sorted order.
+    """
+    unique_models = sorted(set(models))
+    base = sns.color_palette(n_colors=max(10, len(unique_models) + 3))
+    preferred_positions = {"HADDOCK": 0, "LightDock": 1, "Rosetta": 2}
+
+    palette: dict[str, tuple[float, float, float]] = {}
+    for model, idx in preferred_positions.items():
+        if model in unique_models:
+            palette[model] = base[idx]
+
+    extra_colors = iter(base[3:])
+    for model in unique_models:
+        if model not in palette:
+            palette[model] = next(extra_colors)
+
+    return palette
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +537,7 @@ def violin_plot(
     matplotlib.figure.Figure
     """
     df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     if "score_type" in df.columns:
         df = df[df["score_type"].str.lower() == metric.lower()]
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
@@ -493,7 +546,9 @@ def violin_plot(
     if df.empty:
         raise ValueError(f"No rows match metric='{metric}'")
 
+    metric_name = get_metric_display_name(metric)
     models = sorted(df["model"].unique())
+    model_palette = _model_palette(models)
     pa, pb, pair_tuples = _detect_pairs(df)
     has_label = "label" in df.columns and split_by_label and df["label"].notna().any()
 
@@ -514,34 +569,37 @@ def violin_plot(
             if has_label:
                 sns.violinplot(
                     data=sub, x="model", y="score_value", hue="label",
-                    split=True, inner="quart", ax=ax, linewidth=0.8,
+                    split=True, inner="box", cut=0, ax=ax, linewidth=0.8,
                     density_norm="width", order=sub_models,
                 )
                 if idx == n_pairs - 1:
-                    ax.legend(title="Label", fontsize=8, title_fontsize=9)
+                    ax.legend(
+                        title="Label",
+                        fontsize=LEGEND_FONT_SIZE,
+                        title_fontsize=LEGEND_TITLE_SIZE,
+                    )
                 else:
                     ax.legend_.remove() if ax.get_legend() else None
             else:
                 sns.violinplot(
-                    data=sub, x="model", y="score_value",
-                    inner="quart", ax=ax, linewidth=0.8,
+                    data=sub, x="model", y="score_value", hue="model",
+                    inner="box", cut=0, ax=ax, linewidth=0.8,
                     density_norm="width", order=sub_models,
+                    hue_order=sub_models, palette=model_palette,
+                    dodge=False, legend=False,
                 )
-                sns.stripplot(
-                    data=sub, x="model", y="score_value",
-                    size=1.0, alpha=0.04, jitter=True, ax=ax,
-                    color=".2", order=sub_models, zorder=0,
-                )
-            ax.set_title(_pair_label(a, b), fontsize=10)
+                _draw_deterministic_stripplot(ax=ax, data=sub, order=sub_models)
+            ax.set_title(_pair_label(a, b), fontsize=FACET_TITLE_SIZE)
             ax.set_xlabel("")
-            ax.set_ylabel(metric if idx == 0 else "")
+            ax.set_ylabel(metric_name if idx == 0 else "")
+            _add_faint_horizontal_gridlines(ax)
             sns.despine(ax=ax)
 
-        suptitle = plot_title or f"{metric} distribution by model"
-        fig.suptitle(suptitle, fontsize=13, y=1.02)
-        fig.tight_layout()
+        suptitle = plot_title or f"{metric_name} distribution by model"
+        fig.suptitle(suptitle, fontsize=PLOT_TITLE_SIZE, y=1.03)
+        fig.tight_layout(rect=(0, 0, 1, 0.96), pad=1.0)
         # Shared x-label centred across all facets
-        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=11)
+        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=AXIS_LABEL_SIZE)
 
         if output:
             fig.savefig(output, bbox_inches="tight", dpi=180)
@@ -559,32 +617,35 @@ def violin_plot(
     if has_label:
         sns.violinplot(
             data=df, x="model", y="score_value", hue="label",
-            split=True, inner="quart", ax=ax, linewidth=0.8,
+            split=True, inner="box", cut=0, ax=ax, linewidth=0.8,
             density_norm="width", order=models,
         )
-        ax.legend(title="Label", fontsize=8, title_fontsize=9)
+        ax.legend(
+            title="Label",
+            fontsize=LEGEND_FONT_SIZE,
+            title_fontsize=LEGEND_TITLE_SIZE,
+        )
     else:
         sns.violinplot(
-            data=df, x="model", y="score_value",
-            inner="quart", ax=ax, linewidth=0.8,
+            data=df, x="model", y="score_value", hue="model",
+            inner="box", cut=0, ax=ax, linewidth=0.8,
             density_norm="width", order=models,
+            hue_order=models, palette=model_palette,
+            dodge=False, legend=False,
         )
-        sns.stripplot(
-            data=df, x="model", y="score_value",
-            size=1.0, alpha=0.04, jitter=True, ax=ax,
-            color=".2", order=models, zorder=0,
-        )
+        _draw_deterministic_stripplot(ax=ax, data=df, order=models)
 
     ax.set_xlabel("Docking Engine")
-    ax.set_ylabel(metric)
+    ax.set_ylabel(metric_name)
+    _add_faint_horizontal_gridlines(ax)
 
     if plot_title:
         title = plot_title
     elif len(pairs) == 1:
-        title = f"{metric} distribution by model — {pairs[0]}"
+        title = f"{metric_name} distribution by model — {pairs[0]}"
     else:
-        title = f"{metric} distribution by model"
-    ax.set_title(title)
+        title = f"{metric_name} distribution by model"
+    ax.set_title(title, pad=TITLE_PAD)
 
     sns.despine(ax=ax)
     fig.tight_layout()
@@ -853,8 +914,9 @@ def roc_curve_plot(
     fig, ax = plt.subplots(figsize=(7, 7))
     ax.plot([0, 1], [0, 1], "--", color=".6", alpha=0.5, label="Random (AUC=0.50)")
 
-    palette = sns.color_palette(n_colors=len(agg["model"].unique()))
-    for idx, (model, grp) in enumerate(agg.groupby("model")):
+    model_palette = _model_palette(list(agg["model"].unique()))
+    metric_name = get_metric_display_name(metric)
+    for model, grp in agg.groupby("model"):
         y_true = grp["actual"].values
         y_score = grp["score_value"].values
         if not higher_is_better:
@@ -882,16 +944,23 @@ def roc_curve_plot(
         _trapz = getattr(np, "trapezoid", None) or np.trapz
         auc = _trapz(tpr_list, fpr_list)
         ax.plot(fpr_list, tpr_list, label=f"{model} (AUC={auc:.3f})",
-                linewidth=2.2, color=palette[idx])
+                linewidth=2.2, color=model_palette[model])
 
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
-    ax.set_title(f"ROC Curve — {metric}")
-    ax.legend(loc="lower right", frameon=True, fancybox=True, framealpha=0.9)
+    ax.set_title(f"ROC Curve — {metric_name}", fontsize=PLOT_TITLE_SIZE, pad=TITLE_PAD)
+    ax.legend(
+        loc="lower right",
+        frameon=True,
+        fancybox=True,
+        framealpha=0.9,
+        fontsize=LEGEND_FONT_SIZE,
+        title_fontsize=LEGEND_TITLE_SIZE,
+    )
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
     sns.despine(ax=ax)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.0)
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -973,6 +1042,7 @@ def model_agreement_scatter(
 
     x_vals = dx.loc[common, "score_value"].values
     y_vals = dy.loc[common, "score_value"].values
+    metric_name = get_metric_display_name(metric)
 
     fig, ax = plt.subplots(figsize=(7, 7))
 
@@ -986,7 +1056,13 @@ def model_agreement_scatter(
             data=plot_df, x=model_x, y=model_y, hue="label",
             ax=ax, alpha=0.7, s=45, edgecolor="white", linewidth=0.5,
         )
-        ax.legend(frameon=True, fancybox=True, framealpha=0.9)
+        ax.legend(
+            frameon=True,
+            fancybox=True,
+            framealpha=0.9,
+            fontsize=LEGEND_FONT_SIZE,
+            title_fontsize=LEGEND_TITLE_SIZE,
+        )
     else:
         ax.scatter(
             x_vals, y_vals, alpha=0.7, s=45,
@@ -1011,15 +1087,18 @@ def model_agreement_scatter(
     ax.annotate(
         f"{r_text}  (n = {len(common)} pairs)",
         xy=(0.05, 0.95), xycoords="axes fraction",
-        fontsize=10, va="top",
+        fontsize=ANNOTATION_FONT_SIZE, va="top",
         bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
     )
 
-    ax.set_xlabel(f"{model_x} — {metric}")
-    ax.set_ylabel(f"{model_y} — {metric}")
-    ax.set_title(f"Model agreement: {model_x} vs {model_y} ({metric})")
+    ax.set_xlabel(f"{model_x} — {metric_name}")
+    ax.set_ylabel(f"{model_y} — {metric_name}")
+    ax.set_title(
+        f"Model agreement: {model_x} vs {model_y} ({metric_name})",
+        pad=TITLE_PAD,
+    )
     sns.despine(ax=ax)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.0)
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -1044,6 +1123,7 @@ METRIC_METADATA: dict[str, dict] = {
     # ── LightDock ──────────────────────────────────────────────────────
     "luciferin_score": {
         "higher_is_better": True,
+        "display_name": "Luciferin Score",
         "description": (
             "LightDock luciferin/scoring (DFIRE by default)."
             " Higher = better fit."
@@ -1052,27 +1132,35 @@ METRIC_METADATA: dict[str, dict] = {
     # ── HADDOCK ────────────────────────────────────────────────────────
     "score": {
         "higher_is_better": False,
+        "display_name": "Score",
         "description": "HADDOCK overall score (weighted energy). Lower = better.",
     },
     "dockq": {
         "higher_is_better": True,
+        "display_name": "DockQ",
+        "bounds": (0.0, 1.0),
         "description": "DockQ quality (0–1). Higher = closer to native complex.",
     },
     "irmsd": {
         "higher_is_better": False,
+        "display_name": "iRMSD",
         "description": "Interface RMSD (Å). Lower = better.",
     },
     "lrmsd": {
         "higher_is_better": False,
+        "display_name": "lRMSD",
         "description": "Ligand RMSD (Å). Lower = better.",
     },
     "fnat": {
         "higher_is_better": True,
+        "display_name": "Fnat",
+        "bounds": (0.0, 1.0),
         "description": "Fraction of native contacts recovered. Higher = better.",
     },
     # ── Rosetta ────────────────────────────────────────────────────────
     "interface_score": {
         "higher_is_better": False,
+        "display_name": "Interface Score",
         "description": (
             "Rosetta interface energy (REU) from PyRosetta"
             " wrapper. Lower = better."
@@ -1080,6 +1168,7 @@ METRIC_METADATA: dict[str, dict] = {
     },
     "i_sc": {
         "higher_is_better": False,
+        "display_name": "I_sc",
         "description": (
             "Rosetta interface score (I_sc / dG_separated) — the primary "
             "RosettaDock quality metric.  Lower = stronger binding."
@@ -1087,18 +1176,22 @@ METRIC_METADATA: dict[str, dict] = {
     },
     "total_score": {
         "higher_is_better": False,
+        "display_name": "Total Score",
         "description": "Rosetta total energy (REU). Lower = better.",
     },
     "irms": {
         "higher_is_better": False,
+        "display_name": "iRMS",
         "description": "Rosetta interface RMSD (Å). Lower = better.",
     },
     "rms": {
         "higher_is_better": False,
+        "display_name": "RMS",
         "description": "Rosetta ligand RMSD (Å). Lower = better.",
     },
     "dg_separated": {
         "higher_is_better": False,
+        "display_name": "ΔG Separated",
         "description": (
             "Rosetta dG_separated — binding energy after rigid-body "
             "separation.  Equivalent to I_sc.  Lower = stronger binding."
@@ -1106,6 +1199,7 @@ METRIC_METADATA: dict[str, dict] = {
     },
     "cluster_size": {
         "higher_is_better": True,
+        "display_name": "Cluster Size",
         "description": (
             "Number of decoys in the structural cluster.  Larger clusters "
             "indicate more frequently sampled (more confident) binding modes."
@@ -1118,6 +1212,8 @@ METRIC_METADATA: dict[str, dict] = {
     # predicted complexes against a known native structure via DockQ.
     "quality_dockq": {
         "higher_is_better": True,
+        "display_name": "DockQ",
+        "bounds": (0.0, 1.0),
         "description": (
             "DockQ score (0–1) from comparison with native structure.  "
             "Higher = better.  Thresholds: acceptable ≥ 0.23, "
@@ -1126,6 +1222,8 @@ METRIC_METADATA: dict[str, dict] = {
     },
     "quality_fnat": {
         "higher_is_better": True,
+        "display_name": "Fnat",
+        "bounds": (0.0, 1.0),
         "description": (
             "Fraction of native contacts (Fnat) recovered in the docked "
             "model.  Higher = better."
@@ -1133,6 +1231,7 @@ METRIC_METADATA: dict[str, dict] = {
     },
     "quality_irmsd": {
         "higher_is_better": False,
+        "display_name": "iRMSD",
         "description": (
             "Interface RMSD (Å) between docked model and native structure.  "
             "Lower = better."
@@ -1140,6 +1239,7 @@ METRIC_METADATA: dict[str, dict] = {
     },
     "quality_lrmsd": {
         "higher_is_better": False,
+        "display_name": "lRMSD",
         "description": (
             "Ligand RMSD (Å) between docked model and native structure.  "
             "Lower = better."
@@ -1150,6 +1250,7 @@ METRIC_METADATA: dict[str, dict] = {
     # package.  Install with ``pip install ppinsight[prodigy]``.
     "prodigy_ddg": {
         "higher_is_better": False,
+        "display_name": "PRODIGY ΔG",
         "description": (
             "PRODIGY predicted binding free energy (ΔG, kcal/mol).  "
             "More negative = stronger predicted binding.  "
@@ -1158,6 +1259,7 @@ METRIC_METADATA: dict[str, dict] = {
     },
     "prodigy_kd": {
         "higher_is_better": False,
+        "display_name": "PRODIGY Kd",
         "description": (
             "PRODIGY predicted dissociation constant (Kd, M) at 25 °C.  "
             "Lower = tighter predicted binding.  "
@@ -1176,6 +1278,57 @@ def get_metric_direction(metric: str) -> bool:
     if meta is not None:
         return meta["higher_is_better"]
     return True  # safe default
+
+
+def get_metric_display_name(metric: str) -> str:
+    """Return a user-facing display name for *metric*."""
+    meta = METRIC_METADATA.get(metric.lower())
+    if meta is not None and "display_name" in meta:
+        return meta["display_name"]
+    return metric.replace("_", " ").title()
+
+
+def get_metric_bounds(metric: str) -> tuple[float, float] | None:
+    """Return the valid numeric bounds for *metric*, if known."""
+    meta = METRIC_METADATA.get(metric.lower())
+    if meta is None or "bounds" not in meta:
+        return None
+    lo, hi = meta["bounds"]
+    return float(lo), float(hi)
+
+
+def _draw_deterministic_stripplot(
+    ax,
+    data: pd.DataFrame,
+    order: list[str],
+    color: str = ".2",
+) -> None:
+    """Draw a deterministic strip overlay for violin plots."""
+    import numpy as np
+
+    rng_state = np.random.get_state()
+    np.random.seed(0)
+    try:
+        sns.stripplot(
+            data=data,
+            x="model",
+            y="score_value",
+            size=1.1,
+            alpha=0.07,
+            jitter=0.16,
+            ax=ax,
+            color=color,
+            order=order,
+            zorder=0,
+        )
+    finally:
+        np.random.set_state(rng_state)
+
+
+def _add_faint_horizontal_gridlines(ax) -> None:
+    """Add subtle y-gridlines without competing with the data."""
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, color=".82", alpha=0.28, linewidth=0.6)
 
 
 # ---------------------------------------------------------------------------
@@ -1591,7 +1744,7 @@ def quality_bar_chart(
             100,
             f"N={total_table[model]}",
             ha="left", va="top",
-            fontsize=8, color="#444444",
+            fontsize=N_LABEL_SIZE, color="#444444",
         )
 
     ax.set_xticks(x)
@@ -1601,12 +1754,13 @@ def quality_bar_chart(
         ha="right" if n > 4 else "center",
     )
     ax.set_ylim(0, 100)
-    ax.set_xlabel("Docking Engine", labelpad=42)
+    ax.set_xlabel("Docking Engine", labelpad=8)
     ax.set_ylabel("% of poses")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}%"))
     ax.set_title(
         plot_title
-        or "Pose-Level DockQ / CAPRI Quality Tier Distribution by Engine"
+        or "Pose-Level DockQ / CAPRI Quality Tier Distribution by Engine",
+        pad=QUALITY_BAR_TITLE_PAD,
     )
 
     # Legend below x-axis title (labelpad above keeps space clear)
@@ -1614,14 +1768,16 @@ def quality_bar_chart(
         handles=handles,
         labels=[t.capitalize() for t in tier_order],
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.28),
+        bbox_to_anchor=(0.5, -0.205),
         ncol=4,
         frameon=True, fancybox=True, framealpha=0.9,
         title="CAPRI tier",
+        fontsize=LEGEND_FONT_SIZE,
+        title_fontsize=LEGEND_TITLE_SIZE,
     )
 
     sns.despine(ax=ax)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.11, 1, 1), pad=1.0)
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -1667,13 +1823,18 @@ def ridge_plot(
 
     df = scores_df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    sub = df[df["score_type"] == metric].dropna(subset=["score_value"])
+    sub = df[df["score_type"].str.lower() == metric.lower()].copy()
+    sub["score_value"] = pd.to_numeric(sub["score_value"], errors="coerce")
+    sub = sub.dropna(subset=["score_value"])
     if sub.empty:
         raise ValueError(f"No data found for metric '{metric}'")
 
     models = sorted(sub["model"].unique())
     n = len(models)
-    palette = sns.color_palette("Set2", n)
+    metric_name = get_metric_display_name(metric)
+    metric_bounds = get_metric_bounds(metric)
+    model_palette = _model_palette(models)
+    palette = [model_palette[m] for m in models]
 
     fig_h = max(3, n * 1.6)
     fig, axes = plt.subplots(n, 1, figsize=(8, fig_h), sharex=True)
@@ -1681,9 +1842,15 @@ def ridge_plot(
         axes = [axes]
 
     all_vals = sub["score_value"].values
-    x_min, x_max = float(all_vals.min()), float(all_vals.max())
-    pad = (x_max - x_min) * 0.05 or 0.5
-    xs = np.linspace(x_min - pad, x_max + pad, 400)
+    if metric_bounds is not None:
+        x_min, x_max = metric_bounds
+    else:
+        x_min, x_max = float(all_vals.min()), float(all_vals.max())
+        pad = (x_max - x_min) * 0.05 or 0.5
+        x_min -= pad
+        x_max += pad
+    xs = np.linspace(x_min, x_max, 400)
+    threshold_guides = DOCKQ_CAPRI_THRESHOLDS if metric.lower() == "dockq" else []
 
     for ax, model, color in zip(axes, models, palette, strict=False):
         vals = sub[sub["model"] == model]["score_value"].values
@@ -1691,18 +1858,82 @@ def ridge_plot(
             ys = gaussian_kde(vals)(xs)
         else:
             ys = np.zeros_like(xs)
+        for threshold, _, guide_color in threshold_guides:
+            ax.axvline(
+                threshold,
+                color=guide_color,
+                lw=0.9,
+                ls="--",
+                alpha=0.22,
+                zorder=0,
+            )
         ax.fill_between(xs, ys, alpha=0.55, color=color)
         ax.plot(xs, ys, color=color, lw=1.5)
+        median_val = float(np.median(vals))
+        median_y = float(np.interp(median_val, xs, ys)) if ys.size else 0.0
+        ax.plot(
+            [median_val],
+            [median_y],
+            color=color,
+            marker="o",
+            linestyle="None",
+            markersize=5.5,
+            markerfacecolor="white",
+            markeredgecolor=color,
+            markeredgewidth=1.3,
+            zorder=3,
+        )
         ax.set_ylabel(model, rotation=0, ha="right", va="center",
-                      labelpad=6, fontsize=9)
+                      labelpad=6, fontsize=TICK_LABEL_SIZE)
         ax.set_yticks([])
         sns.despine(ax=ax, left=True, bottom=False)
         ax.tick_params(axis="x", which="both",
                        labelbottom=(ax is axes[-1]))
 
-    axes[-1].set_xlabel(metric)
-    fig.suptitle(plot_title or f"Ridge plot – {metric}", y=1.01)
-    fig.tight_layout()
+    if metric_bounds is not None:
+        axes[-1].set_xlim(metric_bounds)
+    axes[-1].set_xlabel(metric_name)
+    legend_handles = [
+        Line2D(
+            [0], [0],
+            marker="o",
+            linestyle="None",
+            markersize=5.5,
+            markerfacecolor="white",
+            markeredgecolor="#444444",
+            markeredgewidth=1.2,
+            label="Median",
+        )
+    ]
+    for threshold, label, color in threshold_guides:
+        legend_handles.append(
+            Line2D(
+                [0], [0],
+                color=color,
+                lw=1.2,
+                ls="--",
+                alpha=0.7,
+                label=f"CAPRI {label} ({threshold:.2f})",
+            )
+        )
+    fig.suptitle(
+        plot_title or f"Ridge plot – {metric_name}",
+        fontsize=PLOT_TITLE_SIZE,
+        y=1 + (RIDGE_TITLE_OFFSET_IN / fig_h),
+    )
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1 + (RIDGE_LEGEND_OFFSET_IN / fig_h)),
+        ncol=min(4, len(legend_handles)),
+        frameon=True,
+        fancybox=True,
+        framealpha=0.9,
+        fontsize=LEGEND_FONT_SIZE,
+        handlelength=1.8,
+        columnspacing=1.0,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90), pad=1.0)
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -1746,39 +1977,46 @@ def cdf_plot(
 
     df = scores_df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    sub = df[df["score_type"] == metric].dropna(subset=["score_value"])
+    sub = df[df["score_type"].str.lower() == metric.lower()].copy()
+    sub["score_value"] = pd.to_numeric(sub["score_value"], errors="coerce")
+    sub = sub.dropna(subset=["score_value"])
     if sub.empty:
         raise ValueError(f"No data found for metric '{metric}'")
 
     models = sorted(sub["model"].unique())
-    n = len(models)
-    palette = sns.color_palette("Set2", n)
+    metric_name = get_metric_display_name(metric)
+    metric_bounds = get_metric_bounds(metric)
+    model_palette = _model_palette(models)
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
-    for model, color in zip(models, palette, strict=False):
+    for model in models:
+        color = model_palette[model]
         vals = np.sort(sub[sub["model"] == model]["score_value"].values)
         cdf = np.arange(1, len(vals) + 1) / len(vals)
         ax.step(vals, cdf, where="post", color=color, lw=2, label=model)
 
     # CAPRI threshold lines for dockq
     if metric.lower() == "dockq":
-        thresholds = [
-            (0.23, "acceptable", "#f0c040"),
-            (0.49, "medium",     "#4090e0"),
-            (0.80, "high",       "#40c040"),
-        ]
-        for thr, label, color in thresholds:
+        for thr, label, color in DOCKQ_CAPRI_THRESHOLDS:
             ax.axvline(thr, color=color, lw=1.2, ls="--", alpha=0.8,
                        label=f"CAPRI {label} ({thr})")
 
-    ax.set_xlabel(metric)
+    if metric_bounds is not None:
+        ax.set_xlim(metric_bounds)
+    ax.set_xlabel(metric_name)
     ax.set_ylabel("Cumulative fraction of poses")
     ax.set_ylim(0, 1.05)
-    ax.set_title(plot_title or f"Empirical CDF – {metric}")
-    ax.legend(frameon=True, fancybox=True, framealpha=0.9)
+    ax.set_title(plot_title or f"Empirical CDF – {metric_name}", pad=TITLE_PAD)
+    ax.legend(
+        frameon=True,
+        fancybox=True,
+        framealpha=0.9,
+        fontsize=LEGEND_FONT_SIZE,
+        title_fontsize=LEGEND_TITLE_SIZE,
+    )
     sns.despine(ax=ax)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.0)
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -1837,7 +2075,10 @@ def pairwise_difference_plot(
 
     df = scores_df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    sub = df[df["score_type"] == metric].dropna(subset=["score_value"])
+    sub = df[df["score_type"].str.lower() == metric.lower()].copy()
+    sub["score_value"] = pd.to_numeric(sub["score_value"], errors="coerce")
+    sub = sub.dropna(subset=["score_value"])
+    metric_name = get_metric_display_name(metric)
 
     for name in (model_a, model_b):
         if name not in sub["model"].values:
@@ -1871,20 +2112,27 @@ def pairwise_difference_plot(
     median_diff = float(np.median(diff.values))
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
-    color = sns.color_palette("Set2", 3)[0]
+    color = _model_palette([model_a, model_b])[model_a]
     ax.hist(diff.values, bins="auto", color=color, edgecolor="white",
             linewidth=0.6, alpha=0.85)
     ax.axvline(0, color="#444444", lw=1.5, ls="--", label="No difference")
     ax.axvline(median_diff, color="#e05050", lw=1.5, ls="-",
                label=f"Median Δ = {median_diff:+.3f}")
-    ax.set_xlabel(f"{metric}  ({model_a} − {model_b})")
+    ax.set_xlabel(f"{metric_name}  ({model_a} − {model_b})")
     ax.set_ylabel("Number of pairs")
     ax.set_title(
-        plot_title or f"Per-pair score difference: {model_a} vs {model_b}"
+        plot_title or f"Per-pair {metric_name} difference: {model_a} vs {model_b}",
+        pad=TITLE_PAD,
     )
-    ax.legend(frameon=True, fancybox=True, framealpha=0.9)
+    ax.legend(
+        frameon=True,
+        fancybox=True,
+        framealpha=0.9,
+        fontsize=LEGEND_FONT_SIZE,
+        title_fontsize=LEGEND_TITLE_SIZE,
+    )
     sns.despine(ax=ax)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.0)
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -2525,11 +2773,11 @@ def main(argv=None):
 
     Examples::
 
-        compare_scores scores.tsv --metric dockq
-        compare_scores model_a.csv model_b.csv --metric score --names HADDOCK Rosetta
+        ppinsight compare scores.tsv --metric dockq
+        ppinsight compare model_a.csv model_b.csv --metric score --names HADDOCK Rosetta
     """
     parser = argparse.ArgumentParser(
-        prog="compare_scores",
+        prog="ppinsight compare",
         description="Compare docking scores across PPI prediction models.",
     )
     parser.add_argument(

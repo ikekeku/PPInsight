@@ -168,7 +168,7 @@ Both metrics have `higher_is_better=False` in `METRIC_METADATA`.
 ### The legend overlaps the x-axis title in `quality_bar_chart`
 
 This was fixed in the current release.  The legend is now placed below the
-x-axis using `bbox_to_anchor=(0.5, -0.28)`.  If you are using a custom
+x-axis using `bbox_to_anchor=(0.5, -0.205)`.  If you are using a custom
 figure size, you can adjust it:
 
 ```python

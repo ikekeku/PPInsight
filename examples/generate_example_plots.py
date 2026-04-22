@@ -38,6 +38,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from ppinsight.visualizer import (  # noqa: E402
+    DEFAULT_THEME,
+    apply_theme,
     cdf_plot,
     model_agreement_scatter,
     pairwise_difference_plot,
@@ -51,7 +53,8 @@ OUT = ROOT / "examples" / "example_plots"
 OUT.mkdir(parents=True, exist_ok=True)
 OUT_SCORES = OUT / "fabricated_scores.tsv"
 
-RNG = np.random.default_rng(42)
+RNG_SEED = 42
+apply_theme(DEFAULT_THEME)
 
 ENGINES = ["HADDOCK", "LightDock", "Rosetta"]
 PAIRS = [
@@ -138,7 +141,7 @@ def _subset_scores(df, engines=None, pairs=None, metrics=None, labels=None):
     return out.copy()
 
 
-def _build_quality_scores(engines, pairs, metrics):
+def _build_quality_scores(engines, pairs, metrics, rng):
     rows = []
     for pair_idx, (protA, protB) in enumerate(pairs):
         for eng in engines:
@@ -152,7 +155,7 @@ def _build_quality_scores(engines, pairs, metrics):
                 if eng not in params:
                     continue
                 mu, sigma = params[eng]
-                values = RNG.normal(mu, sigma, N_POSES)
+                values = rng.normal(mu, sigma, N_POSES)
                 if metric in {"dockq", "fnat"}:
                     values = np.clip(values, 0.0, 1.0)
                 elif metric in {"irmsd", "lrmsd"}:
@@ -174,7 +177,7 @@ def _build_quality_scores(engines, pairs, metrics):
     return pd.DataFrame(rows)
 
 
-def _build_engine_scores(engines, pairs):
+def _build_engine_scores(engines, pairs, rng):
     engine_metric = {
         "HADDOCK": "score",
         "LightDock": "luciferin_score",
@@ -193,7 +196,7 @@ def _build_engine_scores(engines, pairs):
             if eng not in params:
                 continue
             mu, sigma = params[eng]
-            values = RNG.normal(mu, sigma, N_POSES)
+            values = rng.normal(mu, sigma, N_POSES)
             for pose_idx, v in enumerate(values, start=1):
                 run_id, pose_id, output_path = _traceability_fields(
                     eng, protA, protB, pose_idx,
@@ -211,7 +214,7 @@ def _build_engine_scores(engines, pairs):
     return pd.DataFrame(rows)
 
 
-def _build_roc_data(engines, pairs_binder, pairs_nonbinder, metric="dockq"):
+def _build_roc_data(engines, pairs_binder, pairs_nonbinder, rng, metric="dockq"):
     rows = []
     binder_params = {
         "dockq": {
@@ -230,7 +233,7 @@ def _build_roc_data(engines, pairs_binder, pairs_nonbinder, metric="dockq"):
             continue
         mu_b, sig_b = binder_params[metric][eng]
         for pose_idx, (protA, protB) in enumerate(pairs_binder, start=1):
-            v = float(np.clip(RNG.normal(mu_b, sig_b), 0.0, 1.0))
+            v = float(np.clip(rng.normal(mu_b, sig_b), 0.0, 1.0))
             run_id, pose_id, output_path = _traceability_fields(
                 eng, protA, protB, pose_idx,
             )
@@ -245,7 +248,7 @@ def _build_roc_data(engines, pairs_binder, pairs_nonbinder, metric="dockq"):
             })
         mu_n, sig_n = nonbinder_params[metric][eng]
         for pose_idx, (protA, protB) in enumerate(pairs_nonbinder, start=1):
-            v = float(np.clip(RNG.normal(mu_n, sig_n), 0.0, 1.0))
+            v = float(np.clip(rng.normal(mu_n, sig_n), 0.0, 1.0))
             run_id, pose_id, output_path = _traceability_fields(
                 eng, protA, protB, pose_idx,
             )
@@ -261,7 +264,7 @@ def _build_roc_data(engines, pairs_binder, pairs_nonbinder, metric="dockq"):
     return pd.DataFrame(rows)
 
 
-def _build_prodigy_scores(engines, pairs):
+def _build_prodigy_scores(engines, pairs, rng):
     rows = []
     prodigy_params = {
         "HADDOCK": (-9.5, 2.0),
@@ -271,7 +274,7 @@ def _build_prodigy_scores(engines, pairs):
     for eng in engines:
         mu, sigma = prodigy_params[eng]
         for protA, protB in pairs:
-            for pose_idx, v in enumerate(RNG.normal(mu, sigma, N_POSES), start=1):
+            for pose_idx, v in enumerate(rng.normal(mu, sigma, N_POSES), start=1):
                 run_id, pose_id, output_path = _traceability_fields(
                     eng, protA, protB, pose_idx,
                 )
@@ -289,16 +292,19 @@ def _build_prodigy_scores(engines, pairs):
 
 
 def build_fabricated_scores():
+    rng = np.random.default_rng(RNG_SEED)
     binder_pairs = [(f"bind_rec_{i:02d}", f"bind_lig_{i:02d}") for i in range(50)]
     nonbinder_pairs = [
         (f"decoy_rec_{i:02d}", f"decoy_lig_{i:02d}") for i in range(50)
     ]
 
     frames = [
-        _build_quality_scores(ENGINES, PAIRS, ["dockq", "fnat", "irmsd", "lrmsd"]),
-        _build_engine_scores(ENGINES, PAIRS),
-        _build_roc_data(ENGINES, binder_pairs, nonbinder_pairs),
-        _build_prodigy_scores(ENGINES, PAIRS[:2]),
+        _build_quality_scores(
+            ENGINES, PAIRS, ["dockq", "fnat", "irmsd", "lrmsd"], rng,
+        ),
+        _build_engine_scores(ENGINES, PAIRS, rng),
+        _build_roc_data(ENGINES, binder_pairs, nonbinder_pairs, rng),
+        _build_prodigy_scores(ENGINES, PAIRS[:2], rng),
     ]
 
     return pd.concat(frames, ignore_index=True, sort=False)

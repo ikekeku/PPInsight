@@ -58,6 +58,7 @@ class TestUmbrellaCLI:
     def test_subcommand_help_compare(self):
         result = _run_cli("compare", "--help")
         assert result.returncode == 0
+        assert "usage: ppinsight compare" in result.stdout.lower()
 
     def test_subcommand_help_lightdock(self):
         result = _run_cli("lightdock", "--help")
