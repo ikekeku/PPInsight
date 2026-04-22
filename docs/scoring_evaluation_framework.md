@@ -1,7 +1,6 @@
 # Scoring Evaluation & Cross-Model Comparison Framework
 
 > **Status**: Design document — directly usable for implementation.
-> **Date**: 2025-01-XX
 > **Depends on**: `METRIC_METADATA` (visualizer.py), `quality.py`, `normalize_scores()`
 
 ---
