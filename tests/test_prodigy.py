@@ -269,6 +269,6 @@ class TestAddProdigyToScores:
         scored = result[~result["prodigy_ddg"].isna()]
         scored_pdbs = set(scored["pdb"])
         assert scored_pdbs == {"h1.pdb", "h2.pdb"}
-        # All rows (both score_types) for those PDFs get prodigy results
+        # All rows (both score_types) for those PDBs get prodigy results
         assert len(scored) == 4  # 2 score_types × 2 PDFs
 
