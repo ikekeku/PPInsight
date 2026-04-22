@@ -15,7 +15,12 @@ extracts relevant scores, then writes a unified TSV/CSV that
 
 Unified output columns
 ----------------------
-model, score_type, score_value, proteinA, proteinB
+Required: ``model``, ``score_type``, ``score_value``, ``proteinA``,
+``proteinB``
+
+Optional traceability columns added when available:
+``run_id``, ``pose_id``, ``output_path``, ``source_file``,
+``pose_rank``
 """
 
 import argparse
@@ -32,6 +37,45 @@ from ppinsight.provenance import (
     make_run_id,
     write_sidecar,
 )
+
+
+def _resolve_optional_path(base_dir: str, raw_path) -> str:
+    """Resolve *raw_path* relative to *base_dir* when possible.
+
+    Returns an empty string when the path is missing or placeholder-like.
+    """
+    if raw_path is None:
+        return ""
+    text = str(raw_path).strip()
+    if not text or text in {"-", "nan", "None"}:
+        return ""
+    if os.path.isabs(text):
+        return os.path.abspath(os.path.normpath(text))
+    return os.path.abspath(os.path.normpath(os.path.join(base_dir, text)))
+
+
+def _pose_id_from_ref(ref, fallback: str) -> str:
+    """Build a stable pose identifier from a path-like reference."""
+    if ref is None:
+        return fallback
+    text = str(ref).strip()
+    if not text or text in {"-", "nan", "None"}:
+        return fallback
+    stem = os.path.splitext(os.path.basename(text))[0]
+    return stem or fallback
+
+
+def _rosetta_output_path(base_dir: str, description: str) -> str:
+    """Find the most likely Rosetta decoy PDB for *description*."""
+    candidates = [
+        os.path.join(base_dir, f"docked_{description}.pdb"),
+        os.path.join(base_dir, f"{description}.pdb"),
+        os.path.join(base_dir, f"decoy_{description}.pdb"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    return ""
 
 # ---------------------------------------------------------------------------
 # HADDOCK parser
@@ -77,7 +121,7 @@ def _parse_haddock(run_dir: str,
             f"No capri_ss.tsv found in {run_dir}. Is this a HADDOCK run directory?"
         )
     # Use the last caprieval stage (highest numbered)
-    capri_path = hits[-1]
+    capri_path = os.path.abspath(hits[-1])
     df = pd.read_csv(capri_path, sep="\t")
     df.columns = [c.strip().lower() for c in df.columns]
 
@@ -93,7 +137,11 @@ def _parse_haddock(run_dir: str,
         )
 
     rows: list[dict] = []
-    for _, row in df.iterrows():
+    capri_dir = os.path.dirname(capri_path)
+    for row_idx, (_, row) in enumerate(df.iterrows(), start=1):
+        pose_path = _resolve_optional_path(capri_dir, row.get("model"))
+        pose_id = _pose_id_from_ref(row.get("model"), f"{label}_pose_{row_idx:04d}")
+        pose_rank = int(row.get("caprieval_rank", row_idx))
         for metric in metric_cols:
             rows.append({
                 "model": label,
@@ -101,6 +149,10 @@ def _parse_haddock(run_dir: str,
                 "score_value": float(row[metric]),
                 "proteinA": pA,
                 "proteinB": pB,
+                "pose_id": pose_id,
+                "output_path": pose_path,
+                "source_file": capri_path,
+                "pose_rank": pose_rank,
             })
     return pd.DataFrame(rows)
 
@@ -137,7 +189,7 @@ def _parse_haddock_clusters(run_dir: str,
         return None
 
     # Parse the last caprieval (post-clustering)
-    capri_path = all_capri[-1]
+    capri_path = os.path.abspath(all_capri[-1])
     df = pd.read_csv(capri_path, sep="\t")
     df.columns = [c.strip().lower() for c in df.columns]
 
@@ -149,7 +201,14 @@ def _parse_haddock_clusters(run_dir: str,
         return None
 
     rows: list[dict] = []
-    for _, row in df.iterrows():
+    capri_dir = os.path.dirname(capri_path)
+    for row_idx, (_, row) in enumerate(df.iterrows(), start=1):
+        pose_path = _resolve_optional_path(capri_dir, row.get("model"))
+        pose_id = _pose_id_from_ref(
+            row.get("model"),
+            f"{label}_cluster_pose_{row_idx:04d}",
+        )
+        pose_rank = int(row.get("caprieval_rank", row_idx))
         for metric in metric_cols:
             rows.append({
                 "model": label,
@@ -157,6 +216,10 @@ def _parse_haddock_clusters(run_dir: str,
                 "score_value": float(row[metric]),
                 "proteinA": pA,
                 "proteinB": pB,
+                "pose_id": pose_id,
+                "output_path": pose_path,
+                "source_file": capri_path,
+                "pose_rank": pose_rank,
             })
     result = pd.DataFrame(rows)
     # Tag rows so downstream code knows these are cluster-level results
@@ -201,7 +264,9 @@ def _parse_lightdock(sim_dir: str,
             m = re.search(r"gso_(\d+)\.out$", p)
             return int(m.group(1)) if m else -1
 
-        last_gso = max(gso_files, key=_step_num)
+        last_gso = os.path.abspath(max(gso_files, key=_step_num))
+        swarm_name = os.path.basename(swarm)
+        pose_idx = 0
         with open(last_gso) as fh:
             for line in fh:
                 line = line.strip()
@@ -213,13 +278,25 @@ def _parse_lightdock(sim_dir: str,
                     score = float(parts[-1])
                 except (ValueError, IndexError):
                     continue
+                pose_path = os.path.join(swarm, f"lightdock_{pose_idx}.pdb")
+                output_path = (
+                    os.path.abspath(pose_path)
+                    if os.path.isfile(pose_path)
+                    else ""
+                )
                 rows.append({
                     "model": label,
                     "score_type": "luciferin_score",
                     "score_value": score,
                     "proteinA": pA,
                     "proteinB": pB,
+                    "pose_id": f"{swarm_name}:lightdock_{pose_idx}",
+                    "output_path": output_path,
+                    "source_file": last_gso,
+                    "pose_rank": pose_idx,
+                    "swarm": swarm_name,
                 })
+                pose_idx += 1
 
     if not rows:
         raise ValueError(f"Could not extract any scores from {sim_dir}")
@@ -285,12 +362,22 @@ def _parse_lightdock_clusters(sim_dir: str,
                     score = float(parts[2])
                 except (ValueError, IndexError):
                     continue
+                pose_ref = parts[4].strip() if len(parts) >= 5 else ""
+                output_path = _resolve_optional_path(swarm, pose_ref)
+                pose_id = (
+                    f"{swarm_name}:"
+                    f"{_pose_id_from_ref(pose_ref, f'cluster_{cluster_id}')}"
+                )
                 rows.append({
                     "model": label,
                     "score_type": "luciferin_score",
                     "score_value": score,
                     "proteinA": pA,
                     "proteinB": pB,
+                    "pose_id": pose_id,
+                    "output_path": output_path,
+                    "source_file": os.path.abspath(repr_file),
+                    "pose_rank": cluster_id,
                     "swarm": swarm_name,
                     "cluster_id": cluster_id,
                     "cluster_pop": population,
@@ -358,6 +445,8 @@ def aggregate_scores(
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
 
     group_cols = ["model", "score_type"]
+    if "run_id" in df.columns:
+        group_cols.append("run_id")
     if "proteinA" in df.columns:
         group_cols.append("proteinA")
     if "proteinB" in df.columns:
@@ -393,7 +482,7 @@ def aggregate_scores(
 
     result = (
         df.groupby(group_cols_full, as_index=False)
-        .apply(lambda g: pd.Series({"score_value": _agg(g)}), include_groups=False)
+        .apply(lambda g: pd.Series({"score_value": _agg(g)}))
     )
     # Flatten if needed
     if isinstance(result.columns, pd.MultiIndex):
@@ -443,7 +532,7 @@ def _parse_rosetta(out_dir: str,
         return _parse_rosetta_scorefile(sc_files, pair=pair, label=label)
 
     # ----- fall back to legacy PPInsight CSV -----
-    csv_path = os.path.join(out_dir, "docking_scores.csv")
+    csv_path = os.path.abspath(os.path.join(out_dir, "docking_scores.csv"))
     if not os.path.isfile(csv_path):
         raise FileNotFoundError(
             f"No clustered_scores.csv, .sc score file, or docking_scores.csv "
@@ -456,13 +545,19 @@ def _parse_rosetta(out_dir: str,
     rows: list[dict] = []
     pA, pB = pair or ("", "")
     score_col = "score" if "score" in df.columns else df.columns[-1]
-    for val in df[score_col]:
+    for row_idx, (_, row) in enumerate(df.iterrows(), start=1):
+        run_ref = row.get("run", row_idx)
+        pose_id = f"run_{int(run_ref):04d}" if str(run_ref).isdigit() else str(run_ref)
         rows.append({
             "model": label,
             "score_type": "interface_score",
-            "score_value": float(val),
+            "score_value": float(row[score_col]),
             "proteinA": pA,
             "proteinB": pB,
+            "pose_id": pose_id,
+            "output_path": "",
+            "source_file": csv_path,
+            "pose_rank": row_idx,
         })
     return pd.DataFrame(rows)
 
@@ -491,6 +586,7 @@ def _parse_rosetta_clustered(clustered_csv: str,
         "cluster_size": "cluster_size",
     }
 
+    clustered_csv = os.path.abspath(clustered_csv)
     df = pd.read_csv(clustered_csv)
     df.columns = [c.strip().lower() for c in df.columns]
 
@@ -500,8 +596,15 @@ def _parse_rosetta_clustered(clustered_csv: str,
 
     pA, pB = pair or ("", "")
     rows: list[dict] = []
+    rosetta_dir = os.path.dirname(clustered_csv)
 
-    for _, row in df.iterrows():
+    for row_idx, (_, row) in enumerate(df.iterrows(), start=1):
+        description = str(row.get("description", "")).strip()
+        pose_id = description or f"rosetta_pose_{row_idx:04d}"
+        output_path = (
+            _rosetta_output_path(rosetta_dir, description)
+            if description else ""
+        )
         for csv_col, our_name in _COL_MAP.items():
             if csv_col in df.columns:
                 try:
@@ -514,6 +617,22 @@ def _parse_rosetta_clustered(clustered_csv: str,
                     "score_value": v,
                     "proteinA": pA,
                     "proteinB": pB,
+                    "pose_id": pose_id,
+                    "output_path": output_path,
+                    "source_file": clustered_csv,
+                    "pose_rank": row_idx,
+                    "cluster_id": (
+                        int(row["cluster"])
+                        if "cluster" in df.columns else None
+                    ),
+                    "cluster_rank": (
+                        int(row["cluster_rank"])
+                        if "cluster_rank" in df.columns else None
+                    ),
+                    "cluster_size": (
+                        int(row["cluster_size"])
+                        if "cluster_size" in df.columns else None
+                    ),
                 })
 
     if not rows:
@@ -550,7 +669,9 @@ def _parse_rosetta_scorefile(sc_files: list[str],
     pA, pB = pair or ("", "")
 
     for sc_path in sc_files:
+        sc_path = os.path.abspath(sc_path)
         header = None
+        row_idx = 0
         with open(sc_path) as fh:
             for line in fh:
                 line = line.strip()
@@ -568,7 +689,13 @@ def _parse_rosetta_scorefile(sc_files: list[str],
                     # Data row
                     vals = parts[1:]
                     if header and len(vals) == len(header):
+                        row_idx += 1
                         row_dict = dict(zip(header, vals, strict=False))
+                        description = str(row_dict.get("description", "")).strip()
+                        pose_id = description or f"rosetta_pose_{row_idx:04d}"
+                        output_path = _rosetta_output_path(
+                            os.path.dirname(sc_path), description,
+                        )
                         for sc_col, our_name in _COL_MAP.items():
                             if sc_col in row_dict:
                                 try:
@@ -581,6 +708,10 @@ def _parse_rosetta_scorefile(sc_files: list[str],
                                     "score_value": v,
                                     "proteinA": pA,
                                     "proteinB": pB,
+                                    "pose_id": pose_id,
+                                    "output_path": output_path,
+                                    "source_file": sc_path,
+                                    "pose_rank": row_idx,
                                 })
 
     if not all_rows:
@@ -647,11 +778,11 @@ def collect(directories: list[str],
     Returns
     -------
     (pd.DataFrame, dict)
-        The unified scores DataFrame and a provenance dict mapping each
-        ``run_id`` to its metadata.  Provenance is written to a JSON
-        sidecar by the CLI — the DataFrame itself stays lean (no
-        per-row provenance columns).  DataFrame columns: ``model``,
-        ``score_type``, ``score_value``, ``proteinA``, ``proteinB``.
+        the unified scores DataFrame and a provenance dict mapping each
+        ``run_id`` to its metadata.  The DataFrame retains lightweight
+        row-level traceability columns such as ``run_id``, ``pose_id``,
+        ``output_path``, and ``source_file`` when the engine output
+        exposes them.
     """
     if labels and len(labels) != len(directories):
         raise ValueError(
@@ -677,8 +808,15 @@ def collect(directories: list[str],
             frame = parser(d, pair=pair, label=label)
 
         # --- provenance: one run_id per (directory, engine) ---
-        rid = make_run_id(engine, pair=pair, timestamp=now)
+        rid = make_run_id(
+            engine,
+            pair=pair,
+            timestamp=now + datetime.timedelta(seconds=i),
+        )
         provenance[rid] = extract_run_metadata(engine, d)
+
+        frame = frame.copy()
+        frame["run_id"] = rid
 
         frames.append(frame)
 
@@ -769,8 +907,8 @@ def main(argv=None):
         "directories",
         nargs="+",
         help=(
-            "Paths to docking output directories.  The engine (HADDOCK, "
-            "LightDock, Rosetta) is auto-detected from directory contents."
+            "Paths to docking output directories.  The producing engine is "
+            "auto-detected from directory contents."
         ),
     )
     parser.add_argument(

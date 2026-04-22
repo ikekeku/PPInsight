@@ -1,0 +1,76 @@
+{
+  "lightdock_2UUY_rec_2UUY_lig_20260421T161546": {
+    "engine": "lightdock",
+    "source_dir": "/Users/okik/PPInsight/examples/lightdock/simulation",
+    "collected_at": "2026-04-21T16:15:46",
+    "hostname": "Ikes-MacBook-Pro-5.local",
+    "engine_meta": {
+      "anm_lig": 10,
+      "anm_rec": 10,
+      "anm_seed": 324324,
+      "glowworms": 200,
+      "ligand_pdb": "2UUY_lig.pdb",
+      "membrane": false,
+      "noh": true,
+      "now": true,
+      "noxt": true,
+      "receptor_pdb": "2UUY_rec.pdb",
+      "restraints": null,
+      "starting_points_seed": 324324,
+      "surface_density": 50.0,
+      "swarm_radius": 10.0,
+      "swarms": 182,
+      "transmembrane": false,
+      "use_anm": true,
+      "verbose_parser": false,
+      "write_starting_positions": false
+    }
+  },
+  "haddock_e2aP_1F3G_hpr_ensemble_20260421T161546": {
+    "engine": "haddock",
+    "source_dir": "/Users/okik/PPInsight/examples/haddock3/run1-test",
+    "collected_at": "2026-04-21T16:15:46",
+    "hostname": "Ikes-MacBook-Pro-5.local",
+    "engine_meta": {
+      "haddock_version": "v2025.9.1",
+      "run_started": "2025-11-19 09:42:00",
+      "python_version": "Python 3.9.25 (main, Nov  3 2025, 22:33:05)",
+      "steps": [
+        "0_topoaa",
+        "1_rigidbody",
+        "2_caprieval",
+        "3_seletop",
+        "4_flexref",
+        "5_caprieval",
+        "6_emref",
+        "7_clustfcc",
+        "8_seletopclusts",
+        "9_caprieval",
+        "0_topoaa",
+        "1_rigidbody",
+        "2_caprieval",
+        "3_seletop",
+        "4_flexref",
+        "5_caprieval",
+        "6_emref",
+        "7_clustfcc",
+        "8_seletopclusts",
+        "9_caprieval"
+      ]
+    }
+  },
+  "rosetta_COL_D_IMM_D_20260421T161546": {
+    "engine": "rosetta",
+    "source_dir": "/Users/okik/PPInsight/examples/rosetta/Protein-Protein-Docking",
+    "collected_at": "2026-04-21T16:15:46",
+    "hostname": "Ikes-MacBook-Pro-5.local",
+    "engine_meta": {
+      "flag_ensemble_docking": "-in:file:s input_files/col_complex.pdb\n-in:file:native input_files/1v74.pdb\n-unboundrot input_files/col_complex.pdb\n\n-nstruct 1\n\n-partners A_B\n-dock_pert 3 8\n\n-ensemble1 COL_D_ensemblelist.ensemble\n-ensemble2 IMM_D_ensemblelist.ensemble\n\n-ex1\n-ex2aro\n\n-out:path:all output_files\n-out:suffix _ensemble_dock",
+      "flag_ensemble_prepack": "-in:file:s input_files/col_complex.pdb\n-in:file:native input_files/1v74.pdb\n-unboundrot input_files/col_complex.pdb\n\n-nstruct 1\n\n-partners A_B\n\n-ensemble1 COL_D_ensemblelist\n-ensemble2 IMM_D_ensemblelist\n\n-ex1\n-ex2aro\n\n-out:path:all output_files\n-out:suffix _ensemble_prepack",
+      "flag_global_docking": "-in:file:s input_files/col_complex.pdb\n-in:file:native input_files/1v74.pdb\n-unboundrot input_files/col_complex.pdb\n\n-nstruct 1\n\n-partners A_B\n-dock_pert 3 8\n-spin\n-randomize1\n-randomize2\n\n-ex1\n-ex2aro\n\n-out:path:all output_files\n-out:suffix _global_dock",
+      "flag_input_relax": "-nstruct 3\n\n#-relax:constrain_relax_to_start_coords\n#-relax:ramp_constraints false\n\n-ex1\n-ex2\n\n-use_input_sc\n-flip_HNQ\n-no_optH false",
+      "flag_local_docking": "-in:file:s input_files/col_complex.pdb\n-in:file:native input_files/1v74.pdb\n-unboundrot input_files/col_complex.pdb\n\n-nstruct 1\n\n-partners A_B\n-dock_pert 3 8\n\n-ex1\n-ex2aro\n\n-out:path:all output_files\n-out:suffix _local_dock",
+      "flag_local_refine": "-in:file:s input_files/1v74.pdb\n\n-nstruct 1\n\n-docking_local_refine\n-use_input_sc\n\n-ex1\n-ex2aro\n\n-out:file:fullatom\n-out:path:all output_files\n-out:suffix _local_refine"
+    }
+  }
+}

@@ -101,13 +101,16 @@ EPHA2	MET	interaction	Ephrin	10,12
 
 - **File extension determines delimiter**: `.tsv` → tab-separated,
   `.csv` → comma-separated.  The pipeline detects this automatically.
-- **Protein names must match PDB filenames** in `data/input/` (or
+- **Protein identifiers must match PDB filenames** in `data/input/` (or
   wherever `--pdb-dir` points).  For example, a row with
   `proteinA=2UUY_rec` expects a file named `2UUY_rec.pdb`.
+- When you use `ppinsight fetch`, the downloaded structures are saved as
+  accession-named files such as `P69905.pdb`, so you can use those same
+  accessions directly in `proteinA` and `proteinB`.
 - If you skip the `label` column, classification (`--classify`) and
   ROC curves will not work, but docking and score collection will
   proceed normally.
-- `ppinsight parse` produces this exact format from an
+- `ppinsight parse` produces this exact format from a
   protein interaction table.  If your data is already
   flat (one row per pair), just create the CSV/TSV directly — no need
   to run `parse`.
@@ -122,17 +125,23 @@ cp my_structures/*.pdb data/input/
 ppinsight parse data/input/pairs/my_proteins.tsv \
     -o data/input/pairs/pairs.csv --stats
 
-# 3. Batch-dock (reads PDBs from data/input/, writes to data/output/)
+# 3. Batch-dock (reads PDBs from data/input/, writes run directories to data/output/)
 ppinsight batch data/input/pairs/pairs.csv \
     --engines lightdock haddock \
     --pdb-dir data/input/ \
     --dry-run            # verify first, remove --dry-run for real run
 
-# 4. Collect scores (writes to data/output/scores/ by default)
-ppinsight collect data/output/lightdock_runs data/output/haddock_runs \
-    --pairs data/input/pairs/pairs.csv
+# 4. Collect scores from the pair-level run directories that batch created
+ppinsight collect \
+  data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
+  data/output/haddock_runs/2UUY_rec_vs_2UUY_lig/ \
+  --pair 2UUY_rec:2UUY_lig \
+  -o data/output/scores/scores.tsv
 
-# 5. Compare / classify / plot
+# 5. Add labels for classification / ROC by annotating with your pairs file
+#    (repeat collection per pair as needed, then combine score files if desired)
+
+# 6. Compare / classify / plot
 ppinsight compare data/output/scores/scores.tsv -m dockq --classify
 ppinsight compare data/output/scores/scores.tsv -m score \
     --plot-type roc -o data/output/plots/roc.png

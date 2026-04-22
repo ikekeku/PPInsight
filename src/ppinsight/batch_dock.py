@@ -3,13 +3,13 @@ batch_dock – run docking pipelines for every pair in a pairs file.
 
 This is the main batch-mode entry point.  It reads a ``pairs.csv`` (as
 produced by :mod:`ppinsight.parse_pairs`) and, for each row, runs the
-requested docking engines.  Results are collected into a unified
-``scores.tsv`` that the visualizer can consume.
+requested docking engines.  It writes a **batch results table** that
+records which (pair, engine) runs succeeded and where their output
+directories were written.
 
-The output ``scores.tsv`` includes a **label** column
-(``interaction`` / ``non-interaction``) carried forward from the pairs
-file so that downstream analysis can separate true positives from true
-negatives.
+Use :mod:`ppinsight.collect_scores` after batch docking to turn those
+engine output directories into a unified ``scores.tsv`` that the
+visualizer can consume.
 
 Usage::
 
@@ -20,10 +20,11 @@ Usage::
     batch_dock pairs.csv --engines lightdock --dry-run
 
     # Full run with all engines
-    batch_dock pairs.csv --engines lightdock haddock --pdb-dir pdb_files/ -o scores.tsv
+    batch_dock pairs.csv --engines lightdock haddock --pdb-dir pdb_files/ \
+        -o batch_results.csv
 
     # Limit to first 5 pairs for a quick test
-    batch_dock pairs.csv --engines lightdock --limit 5 -o scores.tsv
+    batch_dock pairs.csv --engines lightdock --limit 5 -o batch_results.csv
 """
 
 import argparse
@@ -217,7 +218,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Run docking pipelines for every pair in a pairs file.  "
-            "Produces a batch results table and optionally collects scores."
+            "Produces a batch results table listing each run directory."
         ),
     )
     parser.add_argument(

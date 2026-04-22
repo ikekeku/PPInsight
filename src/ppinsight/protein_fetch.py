@@ -34,12 +34,54 @@ Example (API):
 import argparse
 import csv
 import os
+import shutil
 import sys
 from io import StringIO
 
 import requests
 from Bio import SeqIO
 from Bio.PDB import PDBList
+
+
+def _alias_pdb_path(accession_id: str, pdb_dir: str) -> str:
+    """Return the user-facing PDB filename for an accession.
+
+    Fetch writes accession-based aliases so the same identifiers can be used
+    directly in ``proteinA`` / ``proteinB`` pairs files and docking commands.
+    """
+    return os.path.join(pdb_dir, f"{accession_id}.pdb")
+
+
+def _copy_to_accession_alias(
+    raw_path: str,
+    accession_id: str,
+    pdb_dir: str,
+) -> str | None:
+    """Copy a downloaded PDB artifact to an accession-named ``.pdb`` file.
+
+    Returns ``None`` when no readable raw artifact exists (for example when
+    upstream retrieval reports an ID but does not materialize a local file).
+    """
+    if not raw_path:
+        return None
+
+    alias_path = _alias_pdb_path(accession_id, pdb_dir)
+    raw_abs = os.path.abspath(raw_path)
+    alias_abs = os.path.abspath(alias_path)
+
+    if not os.path.exists(raw_abs):
+        return None
+
+    if raw_abs != alias_abs:
+        shutil.copyfile(raw_abs, alias_abs)
+        raw_name = os.path.basename(raw_abs).lower()
+        if raw_name.startswith("pdb") and raw_name.endswith(".ent"):
+            try:
+                os.remove(raw_abs)
+            except OSError:
+                pass
+
+    return alias_path
 
 
 def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
@@ -136,11 +178,22 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
                                                             ) == "PDB"]
             if pdb_ids:
                 first_pdb_id = pdb_ids[0]
-                pdbl.retrieve_pdb_file(
+                raw_pdb_path = pdbl.retrieve_pdb_file(
                     first_pdb_id, pdir=pdb_dir, file_format="pdb")
+                alias_path = _copy_to_accession_alias(
+                    raw_pdb_path, accession_id, pdb_dir,
+                )
                 pdb_info[accession_id] = first_pdb_id
-                print(
-                    f"Downloaded PDB file for {accession_id}: {first_pdb_id}")
+                if alias_path:
+                    print(
+                        f"Downloaded PDB file for {accession_id}: "
+                        f"{first_pdb_id} -> {alias_path}"
+                    )
+                else:
+                    print(
+                        f"PDB ID found for {accession_id}: {first_pdb_id}, "
+                        "but no local file was downloaded"
+                    )
             else:
                 pdb_info[accession_id] = None
                 print(f"No PDB IDs found for {accession_id}")
@@ -201,7 +254,9 @@ def main(argv=None):
         default="data/input",
         help=(
             "Directory for downloaded PDB files (default: data/input).  "
-            "These PDB files become inputs for the docking subcommands."
+            "Fetch saves accession-named .pdb files here (for example "
+            "P69905.pdb) and cleans up the raw Biopython download name so "
+            "the same accession can be used directly in proteinA/proteinB."
         ),
     )
 
@@ -221,6 +276,16 @@ def main(argv=None):
                               if "|" in entry["ID"]
                               else entry["ID"], "—")
         print(f"  {entry['ID']:30s}  {entry['Sequence Length']:>5d} aa  PDB: {pdb_id}")
+
+    ready = [acc for acc, pdb_id in pdb_info.items() if pdb_id]
+    if ready:
+        print("\nPair-ready PDB names:")
+        for accession_id in ready:
+            print(f"  {accession_id} -> {_alias_pdb_path(accession_id, args.pdb_dir)}")
+        print(
+            "Use these accession stems directly in proteinA/proteinB, for "
+            "example: P69905:P68871"
+        )
 
 
 if __name__ == "__main__":

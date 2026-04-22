@@ -42,13 +42,21 @@ def resolve_input_path(path: str, search_root: str | None = None) -> str:
     if os.path.exists(p):
         return p
 
-    # Search repo for basename (with and without .pdb).
+    # Search repo for basename with common structure-file extensions.
     # This allows users to pass short names like "2UUY_rec" from the CLI
     # and have them resolved against the repo's example / input files.
     base = os.path.basename(path)
+    stem, ext = os.path.splitext(base)
     candidates = [base]
-    if not base.lower().endswith('.pdb'):
-        candidates.append(base + '.pdb')
+    if not ext:
+        candidates.extend([base + '.pdb', base + '.ent'])
+    elif ext.lower() == '.pdb':
+        candidates.append(stem + '.ent')
+    elif ext.lower() == '.ent':
+        candidates.append(stem + '.pdb')
+
+    seen = set()
+    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
 
     proj = os.path.abspath(search_root) if search_root else _project_root()
     for c in candidates:

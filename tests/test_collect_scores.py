@@ -132,6 +132,8 @@ class TestParseHaddock:
         # 2 models × 5 metrics = 10 rows
         assert len(df) == 10
         assert (df["model"] == "haddock").all()
+        assert {"pose_id", "output_path", "source_file", "pose_rank"} <= set(df.columns)
+        assert df["pose_id"].nunique() == 2
 
     def test_pair(self, haddock_dir):
         df = collect_scores._parse_haddock(haddock_dir, pair=("recA", "ligB"))
@@ -145,6 +147,8 @@ class TestParseLightdock:
         assert len(df) == 2
         assert (df["score_type"] == "luciferin_score").all()
         assert (df["model"] == "lightdock").all()
+        assert {"pose_id", "source_file", "pose_rank", "swarm"} <= set(df.columns)
+        assert df["pose_id"].tolist() == ["swarm_0:lightdock_0", "swarm_0:lightdock_1"]
 
     def test_custom_label(self, lightdock_dir):
         df = collect_scores._parse_lightdock(lightdock_dir, label="ld_run1")
@@ -172,6 +176,8 @@ class TestParseRosetta:
         assert "irms" in metrics
         assert "rms" in metrics
         assert "fnat" in metrics
+        assert {"pose_id", "source_file", "pose_rank"} <= set(df.columns)
+        assert df["pose_id"].nunique() == 3
 
     def test_sc_file_values(self, rosetta_sc_dir):
         """Check that I_sc values are correctly parsed from .sc file."""
@@ -239,8 +245,8 @@ class TestCollect:
         df, prov = collect_scores.collect([haddock_dir, lightdock_dir])
         assert set(df["model"].unique()) == {"haddock", "lightdock"}
         assert len(prov) >= 1  # at least one provenance entry
-        # Provenance lives in sidecar, not in DataFrame columns
-        assert "run_id" not in df.columns
+        assert "run_id" in df.columns
+        assert df["run_id"].notna().all()
 
     def test_labels_override(self, haddock_dir, lightdock_dir):
         df, _prov = collect_scores.collect(
@@ -265,6 +271,7 @@ class TestCLI:
         df = pd.read_csv(out, sep="\t")
         assert "model" in df.columns
         assert "score_value" in df.columns
+        assert "run_id" in df.columns
 
     def test_provenance_sidecar(self, haddock_dir, tmp_path):
         """CLI should write a .provenance.json sidecar next to the scores."""

@@ -332,6 +332,20 @@ class TestAggregateScores:
         with pytest.raises(ValueError, match="strategy must be"):
             aggregate_scores(many_poses, strategy="unknown")
 
+    def test_groups_separate_run_ids(self):
+        df = pd.DataFrame({
+            "model": ["lightdock"] * 4,
+            "score_type": ["luciferin_score"] * 4,
+            "score_value": [1.0, 2.0, 9.0, 10.0],
+            "proteinA": ["A"] * 4,
+            "proteinB": ["B"] * 4,
+            "run_id": ["run_1", "run_1", "run_2", "run_2"],
+        })
+
+        result = aggregate_scores(df, strategy="best")
+        assert len(result) == 2
+        assert set(result["run_id"]) == {"run_1", "run_2"}
+
     def test_preserves_labels(self):
         df = pd.DataFrame({
             "model": ["m1"] * 3,

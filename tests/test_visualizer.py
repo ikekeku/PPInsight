@@ -286,3 +286,44 @@ class TestCLI:
         vis.main([unified_scores_csv, "--metric", "dockq", "--list-pairs"])
         captured = capsys.readouterr()
         assert "2uuy_rec" in captured.out.lower()
+
+
+# ---------------------------------------------------------------------------
+# CAPRI pose-level classification
+# ---------------------------------------------------------------------------
+
+class TestCapriPoseClassification:
+    def test_summary_uses_pose_level_rows(self):
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 8,
+            "score_type": ["dockq", "fnat", "irmsd", "lrmsd"] * 2,
+            "score_value": [0.82, 0.72, 1.0, 2.4, 0.18, 0.06, 7.5, 12.0],
+            "proteinA": ["A"] * 8,
+            "proteinB": ["B"] * 8,
+            "run_id": ["run_1"] * 8,
+            "pose_id": ["pose_1"] * 4 + ["pose_2"] * 4,
+        })
+
+        summary = vis.capri_summary_table(df)
+
+        assert int(summary.loc[0, "high"]) == 1
+        assert int(summary.loc[0, "incorrect"]) == 1
+        assert int(summary.loc[0, "total"]) == 2
+
+    def test_classify_capri_propagates_pose_level_labels(self):
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 8,
+            "score_type": ["dockq", "fnat", "irmsd", "lrmsd"] * 2,
+            "score_value": [0.82, 0.72, 1.0, 2.4, 0.18, 0.06, 7.5, 12.0],
+            "proteinA": ["A"] * 8,
+            "proteinB": ["B"] * 8,
+            "run_id": ["run_1"] * 8,
+            "pose_id": ["pose_1"] * 4 + ["pose_2"] * 4,
+        })
+
+        classified = vis.classify_capri(df)
+
+        pose_1 = classified[classified["pose_id"] == "pose_1"]
+        pose_2 = classified[classified["pose_id"] == "pose_2"]
+        assert set(pose_1["capri_quality"]) == {"high"}
+        assert set(pose_2["capri_quality"]) == {"incorrect"}

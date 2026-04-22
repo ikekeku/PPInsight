@@ -1,14 +1,28 @@
 """Tests for the ppinsight umbrella CLI."""
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 def _run_cli(*args):
     """Run the ppinsight CLI in a subprocess and return the result."""
+    repo_root = Path(__file__).resolve().parents[1]
+    src_path = str(repo_root / "src")
+
+    env = os.environ.copy()
+    if env.get("PYTHONPATH"):
+        env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    else:
+        env["PYTHONPATH"] = src_path
+
     return subprocess.run(
         [sys.executable, "-m", "ppinsight.cli", *args],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=env,
     )
 
 

@@ -7,7 +7,8 @@ Combines:
 
 Produces:
   tutorials/all_scores.tsv   — unified scores for all 3 engines + 3 pairs
-  tutorials/demo_pairs.tsv   — pairs file with interaction labels (for ROC)
+    tutorials/demo_pairs.tsv   — pairs file with interaction labels for the
+                                                             shipped tutorial examples
 """
 
 import os
@@ -164,9 +165,10 @@ if provenance:
 
 # ── Pairs file with interaction labels ────────────────────────────
 # 2UUY is a known interacting complex, e2aP/hpr is known interacting,
-# COL_D/IMM_D is a known interacting complex (colicin D / immunity protein).
-# We'll also add a fake non-interacting pair by pairing cross-complex
-# proteins — this gives ROC something to classify against.
+# and COL_D/IMM_D is a known interacting complex (colicin D / immunity
+# protein).  The shipped tutorial data keeps only these interacting
+# examples, so it is suitable for labeling and filtering examples but not
+# for ROC demonstrations, which require both positive and negative labels.
 pairs_rows = [
     {"proteinA": "2UUY_rec", "proteinB": "2UUY_lig", "label": "interaction"},
     {"proteinA": "e2aP_1F3G", "proteinB": "hpr_ensemble", "label": "interaction"},

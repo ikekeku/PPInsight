@@ -8,7 +8,7 @@ This project builds a tool to benchmark protein–protein interaction (PPI) pred
 - **Knowledge:** Basic molecular biology (what a protein is, why interactions matter) and  basic computing (can run Python scripts, use command line, browse the web). No deep ML or structural-biology expertise required. 
 
 ## Data sources
-**Protein sequences/structures:** FASTA / PDB / mmCIF files from NCBI, UniProt, or AlphaFold.
+**Protein sequences/structures:** FASTA and structure cross-references fetched through UniProt accessions, with downloaded PDB files for available structures. Users can also supply local PDB/mmCIF files when needed.
 - **FASTA:** A FASTA protein file is text-based format used to represent protein sequences. The data structure usually starts with a ">" sign followed by a name identification of the protein sequence with an optional description. Example: >crab_rabit ALPHA CRYSTALLIN B CHAIN (ALPHA(B)-CRYSTALLIN). The rest of the data is followed by the acual protein sequence which is represented through single-letter amino acid codes.Example: MDIAIHHPWIRRPFFPFHSPSRLFDQFFGEHLLESDLFPTSTSLSPFYLR PPSFLRAPSWIDTGLSEMRLEKDRFSVNLDVKHFSPEELKVKVLGDVIEV HGKHEERQDEHGFISREFHRKYRIPADVDPLTITSSLSSDGVLTVNGPRK QAPGPERTIPITREEKPAVTAAPKK
 - **PDB:** Protein data bank file is in standard text format to store 3D structural data of proteins. 3D structural data is designated through the X,Y,Z position of the atom in 3D space with the designation of the atom type, residue name, chain ID, and occupancy. Below is an example of a small protein molecule, glucagon and its according PDB:
   <img width="641" height="308" alt="image" src="https://github.com/user-attachments/assets/25e138d8-f124-4272-b8a9-37d0a0f35d13" />
@@ -22,16 +22,16 @@ This project builds a tool to benchmark protein–protein interaction (PPI) pred
 
 - **Model Execution Outputs:** The PPI models will output standardized artifacts and metrics to support cross-model comparison. The format in which each predictor organizes their output data may differ between models. Roughly, each model will return: DockQ score, RMSD, confidence metrics, protein IDs, predicted complex structures (PDB/mmCIF), and the FASTA file of the aligned protein sequences.
 
-- **Model Execution Outputs:** The tool will generate on-screen and exportable visualizations. The visual will be a bar chart (made using matplotlib) showing each model's score for the input protien pair. Moreover, the plot ouput will include the data table used to produce the graph.
+- **Model Execution Outputs:** The tool generates on-screen and exportable visualizations through `ppinsight compare`. Supported compare plot types are `violin`, `ridge`, `roc`, `scatter`, `quality_bar`, `difference`, and `cdf` (with prerequisite checks where required). The command also prints tabular summaries used to interpret the plots.
 
 ## Use Case 1 - Compare models on one protein pair
 - **Objective:** Determine which PPI model gives the best score for a given pair (e.g., proteinA-proteinB).
-- **Interaction:** User enters protein names → system fetches FASTA/PDB → user selects 2–3 models → system runs models → writes scores to table → shows plot of scores per model
+- **Interaction:** User provides accession IDs (or local structures) → `ppinsight fetch` writes FASTA/PDB outputs → user runs one or more model commands → `ppinsight collect` writes unified `scores.tsv` → `ppinsight compare` shows table + plot summaries
 
 ## Use Case 2 - Compare models in bulk, for many protein pairs
 - **Objective:** Determine which PPI model gives the best score for many pairs (e.g., proteinA-proteinB).
-- **Interaction:** User uploads CSV of pairs of proteins → system fetches FASTA/PDB → user selects 2–3 models → system runs models → writes scores to table → provides statistic of the different models per pair.
+- **Interaction:** User prepares/uploads a flat pairs CSV/TSV → `ppinsight parse` (if needed) produces canonical pairs file → `ppinsight batch` runs selected engines and writes run directories + `batch_results.csv` → `ppinsight collect` builds unified `scores.tsv` → `ppinsight compare` provides per-pair and cross-model summaries.
   
 ## Use Case 3 - Curate protein data
 - **Objective:** Generate FASTA / PDB files for a batch of proteins.  
-- **Interaction:** User uploads CSV of pairs → system fetchs FASTA/PDB file 
+- **Interaction:** User provides accession IDs (manually or from a table) → `ppinsight fetch` writes FASTA/CSV metadata and accession-named PDB files for downstream pairing.

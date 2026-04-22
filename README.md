@@ -61,6 +61,7 @@ Each subcommand is also available as a standalone command:
 | `ppinsight parse`           | `parse_pairs`         |
 | `ppinsight batch`           | `batch_dock`          |
 | `ppinsight quality`         | `ppinsight_quality`   |
+| `ppinsight prodigy`         | `ppinsight_prodigy`   |
 
 The examples below use the umbrella form.  Replace
 `ppinsight <subcommand>` with the standalone name if you prefer.
@@ -73,9 +74,15 @@ The examples below use the umbrella form.  Replace
 PPInsight fetches protein structures for you — you provide UniProt
 accession IDs, and it downloads sequences and PDB files automatically.
 
+The downloaded structures are saved with the same accession stems you
+typed, for example `P69905.pdb`.  That means the next step can use the
+same identifiers directly in `proteinA` and `proteinB` without manual
+renaming.
+
 ```bash
 # Give one or more UniProt accession IDs.
-# Downloaded PDB files land in --pdb-dir (default: data/input/).
+# Downloaded PDB files land in --pdb-dir (default: data/input/)
+# as accession-named files such as data/input/P69905.pdb.
 ppinsight fetch P69905 P68871
 ```
 
@@ -138,7 +145,10 @@ ppinsight collect \
 
 Alongside the scores file, `collect` writes a **run record**
 (`scores.tsv.provenance.json`) that documents where the numbers came
-from — engine parameters and source directories.
+from — engine parameters and source directories.  The unified scores
+rows also retain lightweight traceability columns when available
+(`run_id`, `pose_id`, `output_path`, `source_file`) so you can tie a
+plot back to a specific run and pose.
 
 Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 
@@ -147,6 +157,14 @@ Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 ```bash
 # Violin plot (default) — always prints a tabular summary first
 ppinsight compare data/output/scores/scores.tsv --metric dockq
+
+# Ridge plot — compact density comparison across engines
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type ridge -o data/output/plots/ridge_dockq.png
+
+# CDF — read off what fraction of poses exceed a threshold
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type cdf -o data/output/plots/cdf_dockq.png
 
 # Filter by protein pair and save to PNG
 ppinsight compare data/output/scores/scores.tsv --metric dockq \
@@ -159,6 +177,16 @@ ppinsight compare data/output/scores/scores.tsv --metric dockq --table
 ppinsight compare data/output/scores/scores.tsv --capri-quality
 ppinsight compare data/output/scores/scores.tsv --plot-type quality_bar \
     -o data/output/plots/quality.png
+
+# Pairwise difference histogram — same metric, same pairs, two engines
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type difference --models HADDOCK LightDock \
+    -o data/output/plots/difference_haddock_lightdock.png
+
+# Scatter — most useful when many pairs are shared across two engines
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type scatter --models HADDOCK LightDock \
+    -o data/output/plots/scatter_haddock_lightdock.png
 
 # Compare per-model files side by side
 ppinsight compare haddock_scores.tsv rosetta_scores.csv \
@@ -173,6 +201,11 @@ Run `ppinsight compare --help` for all plot types, filtering, and export options
 Use `ppinsight compare data/output/scores/scores.tsv --guide` for a
 data-aware summary of which plot types and flags work with your specific
 scores file.
+
+The retained CLI plot types are `violin`, `ridge`, `roc`, `scatter`,
+`quality_bar`, `cdf`, and `difference`.  The older bar/box/heatmap
+functions remain in the Python API for backward compatibility, but they
+are not part of the CLI analysis workflow.
 
 ### 5. Parse interaction tables & batch-dock
 
@@ -212,6 +245,21 @@ ppinsight quality docked_models/ native.pdb -o quality.tsv
 
 > Requires the optional `quality` extra: `pip install ppinsight[quality]`
 
+### 7. Predict binding affinity (PRODIGY)
+
+```bash
+# Score docked poses with predicted binding affinity
+ppinsight prodigy data/output/scores/scores.tsv \
+    --pdb-dir data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
+    --output data/output/scores/scores_prodigy.tsv
+```
+
+`ppinsight prodigy` adds `prodigy_ddg` and `prodigy_kd`, which are most
+useful after you have narrowed candidates with docking scores and, when
+available, DockQ/CAPRI quality evaluation.
+
+> Requires the optional `prodigy` extra: `pip install ppinsight[prodigy]`
+
 ---
 
 ## Tutorial
@@ -220,6 +268,14 @@ A complete end-to-end walkthrough is in [`tutorials/README.md`](tutorials/README
 It uses pre-computed docking outputs from all three engines — no external
 tools required.  Start there to see every `ppinsight compare` plot type
 and the full collect → compare → classify workflow.
+
+### Three-layer evaluation
+
+PPInsight supports three complementary comparison layers:
+
+1. Within-model: use `violin`, `ridge`, and `cdf` on engine-native scores to inspect one engine's pose distribution.
+2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, `scatter`, and `difference` to compare engines on the same native-backed task.
+3. Cross-system: use `ppinsight prodigy` with `prodigy_ddg` and `prodigy_kd` when you need a post-hoc affinity view across different complexes.
 
 ---
 
@@ -237,6 +293,7 @@ src/ppinsight/
   batch_dock.py         # Batch docking for all pairs
   parse_pairs.py        # Protein interaction table → pairs file
   quality.py            # DockQ quality evaluation
+    prodigy.py            # PRODIGY binding-affinity scoring
   provenance.py         # Run-level metadata & record I/O
   utils.py              # Shared utilities (path resolution)
   rosetta/              # PyRosetta pipeline internals
