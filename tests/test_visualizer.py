@@ -21,26 +21,15 @@ import pytest
 
 from ppinsight import visualizer as vis
 
-_EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
-
 # ---------------------------------------------------------------------------
-# Import build_fabricated_scores cleanly from the examples script.
+# Import build_fabricated_scores directly from the examples script.
 # The script's side effects (OUT.mkdir, apply_theme, matplotlib backend) are
 # all guarded inside main(), so a plain import is safe.
 # ---------------------------------------------------------------------------
-if str(_EXAMPLES_DIR.parent) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLES_DIR.parent))
-
-import importlib.util as _ilu
-
-_spec = _ilu.spec_from_file_location(
-    "generate_example_plots",
-    _EXAMPLES_DIR / "generate_example_plots.py",
-)
-_example_module = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_example_module)
-build_fabricated_scores = _example_module.build_fabricated_scores
-del _spec, _example_module, _ilu
+_EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
+sys.path.insert(0, str(_EXAMPLES_DIR))
+from generate_example_plots import build_fabricated_scores  # noqa: E402
+sys.path.pop(0)
 
 # ---------------------------------------------------------------------------
 # Fixtures
