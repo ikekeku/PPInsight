@@ -25,7 +25,6 @@ Outputs
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -34,7 +33,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 
-from ppinsight.visualizer import (  # noqa: E402
+from ppinsight.visualizer import (
     DEFAULT_THEME,
     apply_theme,
     cdf_plot,
@@ -437,7 +436,6 @@ def gen_cdf(scores_df):
 
 
 def main():
-    sys.path.insert(0, str(ROOT / "src"))
     matplotlib.use("Agg")
     apply_theme(DEFAULT_THEME)
     OUT.mkdir(parents=True, exist_ok=True)
