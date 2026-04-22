@@ -899,7 +899,7 @@ def _has_nonempty_pair_context(scores_df: pd.DataFrame) -> bool:
 
     pa = scores_df["proteinA"].fillna("").astype(str).str.strip()
     pb = scores_df["proteinB"].fillna("").astype(str).str.strip()
-    return pa.ne("").any() and pb.ne("").any()
+    return bool((pa.ne("") & pb.ne("")).any())
 
 
 # ---------------------------------------------------------------------------

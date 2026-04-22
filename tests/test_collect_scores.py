@@ -346,3 +346,39 @@ class TestCLI:
         ])
         df = pd.read_csv(out, sep="\t")
         assert (df["label"] == "interaction").all()
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _has_nonempty_pair_context
+# ---------------------------------------------------------------------------
+
+class TestHasNonemptyPairContext:
+    """Tests for the _has_nonempty_pair_context helper."""
+
+    def _df(self, rows):
+        return pd.DataFrame(rows, columns=["proteinA", "proteinB"])
+
+    def test_returns_true_when_one_row_has_both(self):
+        df = self._df([("A", "B"), ("", "")])
+        assert collect_scores._has_nonempty_pair_context(df) is True
+
+    def test_returns_false_when_no_row_has_both(self):
+        """proteinA and proteinB populated on *different* rows — must return False."""
+        df = self._df([("A", ""), ("", "B")])
+        assert collect_scores._has_nonempty_pair_context(df) is False
+
+    def test_returns_false_when_all_blank(self):
+        df = self._df([("", ""), ("", "")])
+        assert collect_scores._has_nonempty_pair_context(df) is False
+
+    def test_returns_false_when_columns_missing(self):
+        df = pd.DataFrame({"model": ["haddock"]})
+        assert collect_scores._has_nonempty_pair_context(df) is False
+
+    def test_handles_nan_values(self):
+        df = pd.DataFrame({"proteinA": [None, "A"], "proteinB": ["B", None]})
+        assert collect_scores._has_nonempty_pair_context(df) is False
+
+    def test_handles_whitespace_only(self):
+        df = self._df([("  ", "B"), ("A", "  ")])
+        assert collect_scores._has_nonempty_pair_context(df) is False
