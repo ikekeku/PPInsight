@@ -1,9 +1,8 @@
 {
   "lightdock_2UUY_rec_2UUY_lig_20260421T161546": {
     "engine": "lightdock",
-    "source_dir": "/Users/okik/PPInsight/examples/lightdock/simulation",
+    "source_dir": "examples/lightdock/simulation",
     "collected_at": "2026-04-21T16:15:46",
-    "hostname": "Ikes-MacBook-Pro-5.local",
     "engine_meta": {
       "anm_lig": 10,
       "anm_rec": 10,
@@ -28,9 +27,8 @@
   },
   "haddock_e2aP_1F3G_hpr_ensemble_20260421T161546": {
     "engine": "haddock",
-    "source_dir": "/Users/okik/PPInsight/examples/haddock3/run1-test",
+    "source_dir": "examples/haddock3/run1-test",
     "collected_at": "2026-04-21T16:15:46",
-    "hostname": "Ikes-MacBook-Pro-5.local",
     "engine_meta": {
       "haddock_version": "v2025.9.1",
       "run_started": "2025-11-19 09:42:00",
@@ -61,9 +59,8 @@
   },
   "rosetta_COL_D_IMM_D_20260421T161546": {
     "engine": "rosetta",
-    "source_dir": "/Users/okik/PPInsight/examples/rosetta/Protein-Protein-Docking",
+    "source_dir": "examples/rosetta/Protein-Protein-Docking",
     "collected_at": "2026-04-21T16:15:46",
-    "hostname": "Ikes-MacBook-Pro-5.local",
     "engine_meta": {
       "flag_ensemble_docking": "-in:file:s input_files/col_complex.pdb\n-in:file:native input_files/1v74.pdb\n-unboundrot input_files/col_complex.pdb\n\n-nstruct 1\n\n-partners A_B\n-dock_pert 3 8\n\n-ensemble1 COL_D_ensemblelist.ensemble\n-ensemble2 IMM_D_ensemblelist.ensemble\n\n-ex1\n-ex2aro\n\n-out:path:all output_files\n-out:suffix _ensemble_dock",
       "flag_ensemble_prepack": "-in:file:s input_files/col_complex.pdb\n-in:file:native input_files/1v74.pdb\n-unboundrot input_files/col_complex.pdb\n\n-nstruct 1\n\n-partners A_B\n\n-ensemble1 COL_D_ensemblelist\n-ensemble2 IMM_D_ensemblelist\n\n-ex1\n-ex2aro\n\n-out:path:all output_files\n-out:suffix _ensemble_prepack",
