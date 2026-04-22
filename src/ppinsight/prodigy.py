@@ -381,7 +381,7 @@ def _build_parser():
             "Only score the top N poses per model+pair group.  "
             "Requires --metric.  Sort direction is determined automatically: "
             "nlargest for higher-is-better metrics (e.g. luciferin_score), "
-            "nsmallest for lower-is-better metrics (e.g. haddock_score)."
+            "nsmallest for lower-is-better metrics (e.g. score for HADDOCK)."
         ),
     )
     parser.add_argument(
@@ -390,7 +390,7 @@ def _build_parser():
         metavar="SCORE_TYPE",
         help=(
             "score_type value to rank poses by when --top-n is used "
-            "(e.g. 'haddock_score', 'luciferin_score').  Required with --top-n."
+            "(e.g. 'score' for HADDOCK, 'luciferin_score' for LightDock).  Required with --top-n."
         ),
     )
     parser.add_argument(
