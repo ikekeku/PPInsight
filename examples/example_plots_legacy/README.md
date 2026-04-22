@@ -8,6 +8,6 @@ For the current fabricated plot gallery, use:
 
 - `examples/example_plots/` for the maintained PNG outputs
 - `examples/example_plots/fabricated_scores.tsv` for the synthetic scores
-	table that now drives those plots
+  table that now drives those plots
 
 Treat the files in this legacy directory as historical reference only.
