@@ -3,13 +3,13 @@ batch_dock – run docking pipelines for every pair in a pairs file.
 
 This is the main batch-mode entry point.  It reads a ``pairs.csv`` (as
 produced by :mod:`ppinsight.parse_pairs`) and, for each row, runs the
-requested docking engines.  Results are collected into a unified
-``scores.tsv`` that the visualizer can consume.
+requested docking engines.  It writes a **batch results table** that
+records which (pair, engine) runs succeeded and where their output
+directories were written.
 
-The output ``scores.tsv`` includes a **label** column
-(``interaction`` / ``non-interaction``) carried forward from the pairs
-file so that downstream analysis can separate true positives from true
-negatives.
+Use :mod:`ppinsight.collect_scores` after batch docking to turn those
+engine output directories into a unified ``scores.tsv`` that the
+visualizer can consume.
 
 Usage::
 
@@ -20,10 +20,11 @@ Usage::
     batch_dock pairs.csv --engines lightdock --dry-run
 
     # Full run with all engines
-    batch_dock pairs.csv --engines lightdock haddock --pdb-dir pdb_files/ -o scores.tsv
+    batch_dock pairs.csv --engines lightdock haddock --pdb-dir pdb_files/ \
+        -o batch_results.csv
 
     # Limit to first 5 pairs for a quick test
-    batch_dock pairs.csv --engines lightdock --limit 5 -o scores.tsv
+    batch_dock pairs.csv --engines lightdock --limit 5 -o batch_results.csv
 """
 
 import argparse
@@ -217,7 +218,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Run docking pipelines for every pair in a pairs file.  "
-            "Produces a batch results table and optionally collects scores."
+            "Produces a batch results table listing each run directory."
         ),
     )
     parser.add_argument(
@@ -254,18 +255,22 @@ def main(argv=None):
         "--pdb-dir",
         default=None,
         help=(
-            "Directory containing pre-fetched PDB files.  When set, the "
-            "pipeline looks here for receptor/ligand PDBs instead of "
-            "fetching from UniProt/PDB.  Useful for offline runs or when "
-            "you have custom-prepared structures."
+            "Directory containing pre-fetched PDB files.  Batch mode uses "
+            "this directory (and local path resolution) to find receptor/"
+            "ligand structures.  Automatic UniProt/PDB fetch fallback is "
+            "not implemented here yet, so pre-fetch with 'ppinsight fetch' "
+            "or provide --pdb-dir for reliable runs."
         ),
     )
     parser.add_argument(
         "--output-root",
         default=None,
         help=(
-            "Root directory for docking outputs (default: auto-generated).  "
-            "Each pair × engine gets a subdirectory under this root."
+            "Root directory for engine run directories (default: data/output).  "
+            "Batch creates engine-specific folders under this root (for "
+            "example lightdock_runs/, haddock_runs/, rosetta_runs/), with one "
+            "subdirectory per pair × engine run.  This does not control the "
+            "batch results table path (use -o for that)."
         ),
     )
     parser.add_argument(

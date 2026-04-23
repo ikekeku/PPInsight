@@ -78,7 +78,8 @@ def make_output_dir(receptor_pdb, ligand_pdb,
             lightdock_runs/
                 <receptor_name>_vs_<ligand_name>/
 
-    If folders already exist, they are reused (not deleted).
+    If a run folder already exists, a numeric suffix (``_1``, ``_2``, …)
+    is appended to avoid clobbering previous results.
     """
     if not os.path.isabs(base_root):
         base_root = os.path.join(_project_root(), base_root)
@@ -91,6 +92,14 @@ def make_output_dir(receptor_pdb, ligand_pdb,
     lig_name = os.path.splitext(os.path.basename(ligand_pdb))[0]
     run_folder_name = f"{rec_name}_vs_{lig_name}"
     run_dir = os.path.join(method_dir, run_folder_name)
+    if os.path.exists(run_dir):
+        idx = 1
+        while True:
+            candidate = os.path.join(method_dir, f"{run_folder_name}_{idx}")
+            if not os.path.exists(candidate):
+                run_dir = candidate
+                break
+            idx += 1
     os.makedirs(run_dir, exist_ok=True)
     return run_dir
 

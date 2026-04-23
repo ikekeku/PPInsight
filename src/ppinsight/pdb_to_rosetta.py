@@ -57,7 +57,16 @@ def _make_output_dir(receptor_pdb, ligand_pdb,
 
     rec_name = Path(receptor_pdb).stem
     lig_name = Path(ligand_pdb).stem
-    run_dir = os.path.join(base_root, method, f"{rec_name}_vs_{lig_name}")
+    run_base = os.path.join(base_root, method, f"{rec_name}_vs_{lig_name}")
+    run_dir = run_base
+    if os.path.exists(run_dir):
+        idx = 1
+        while True:
+            candidate = f"{run_base}_{idx}"
+            if not os.path.exists(candidate):
+                run_dir = candidate
+                break
+            idx += 1
     os.makedirs(run_dir, exist_ok=True)
     return run_dir
 
@@ -112,8 +121,10 @@ def main(argv=None):
         "--output-dir", default=None,
         help=(
             "Directory for output files (default: auto-generated under "
-            "examples/).  Set this to organise outputs when running many "
-            "pairs or benchmarking."
+            "data/output/rosetta_runs/).  Repeated runs for the same pair "
+            "auto-increment the folder name to avoid overwriting.  Set this "
+            "explicitly to organise outputs when running many pairs or "
+            "benchmarking."
         ),
     )
     parser.add_argument(

@@ -16,6 +16,7 @@ Usage::
     ppinsight parse     table.tsv -o pairs.csv
     ppinsight batch     pairs.csv --engines lightdock haddock
     ppinsight quality   model.pdb native.pdb
+    ppinsight prodigy   scores.tsv --pdb-dir pdbs/ --output scores_prodigy.tsv
 """
 
 import sys
@@ -30,6 +31,7 @@ _SUBCOMMANDS = {
     "parse":     "ppinsight.parse_pairs",
     "batch":     "ppinsight.batch_dock",
     "quality":   "ppinsight.quality",
+    "prodigy":   "ppinsight.prodigy",
 }
 
 
@@ -73,6 +75,7 @@ def _print_help():
         "parse":     "Parse an interaction table into a flat pairs file",
         "batch":     "Batch-run docking for all pairs in a pairs file",
         "quality":   "Evaluate docking quality with DockQ (CAPRI metrics)",
+        "prodigy":   "Predict binding affinity with PRODIGY",
     }
     for cmd in _SUBCOMMANDS:
         desc = descriptions.get(cmd, "")

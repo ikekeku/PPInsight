@@ -26,8 +26,8 @@ Usage::
 
 CLI::
 
-    ppinsight_quality model.pdb native.pdb
-    ppinsight_quality docking_output/ native.pdb --engine lightdock
+    ppinsight quality model.pdb native.pdb
+    ppinsight quality docking_output/ native.pdb --engine lightdock
 """
 
 import argparse
@@ -407,7 +407,8 @@ def add_quality_to_scores(
     Converts the wide-format *quality_df* (from :func:`evaluate_directory`)
     into long-format rows compatible with the ``collect_scores`` unified
     schema (``model``, ``score_type``, ``score_value``, ``proteinA``,
-    ``proteinB``).
+    ``proteinB``).  When possible, run/pose traceability is preserved via
+    ``run_id``, ``pose_id``, and ``output_path``.
 
     Parameters
     ----------
@@ -423,20 +424,51 @@ def add_quality_to_scores(
     pd.DataFrame
         Concatenated scores with added DockQ/quality rows.
     """
-    quality_metrics = ["DockQ", "fnat", "iRMSD", "LRMSD"]
+    quality_metrics = {
+        "DockQ": "quality_dockq",
+        "fnat": "quality_fnat",
+        "iRMSD": "quality_irmsd",
+        "LRMSD": "quality_lrmsd",
+    }
     rows: list[dict] = []
 
+    def _single_nonempty(series: pd.Series) -> str:
+        vals = [str(v) for v in series.dropna().unique() if str(v).strip()]
+        return vals[0] if len(vals) == 1 else ""
+
+    inferred_model = model_label or _single_nonempty(
+        scores_df.get("model", pd.Series(dtype=object))
+    )
+    inferred_protein_a = _single_nonempty(
+        scores_df.get("proteinA", pd.Series(dtype=object))
+    )
+    inferred_protein_b = _single_nonempty(
+        scores_df.get("proteinB", pd.Series(dtype=object))
+    )
+    inferred_run_id = _single_nonempty(scores_df.get("run_id", pd.Series(dtype=object)))
+
     for _, qrow in quality_df.iterrows():
-        for metric in quality_metrics:
+        model_path = str(qrow.get("model_path", "")).strip()
+        pose_id = (
+            os.path.splitext(os.path.basename(model_path))[0]
+            if model_path else ""
+        )
+        for metric, metric_name in quality_metrics.items():
             val = qrow.get(metric)
             if pd.notna(val):
-                rows.append({
-                    "model": model_label or "quality",
-                    "score_type": f"quality_{metric}",
+                row = {
+                    "model": inferred_model or "quality",
+                    "score_type": metric_name,
                     "score_value": float(val),
-                    "proteinA": "",
-                    "proteinB": "",
-                })
+                    "proteinA": inferred_protein_a,
+                    "proteinB": inferred_protein_b,
+                }
+                if inferred_run_id:
+                    row["run_id"] = inferred_run_id
+                if pose_id:
+                    row["pose_id"] = pose_id
+                    row["output_path"] = model_path
+                rows.append(row)
 
     if not rows:
         return scores_df

@@ -10,6 +10,8 @@ yourprevconvo.md
 #     so the maintainer can reference them across future sessions.
 docs/key_decisions_log.md
 docs/non_negotiables.md
+docs/gpt53_codex_prompt.md
+gpt53_codex_prompt
 
 # Python cache and compiled files
 __pycache__/

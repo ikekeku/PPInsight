@@ -12,6 +12,7 @@ produces comparative visualisations.
 - [Install & quick start](#install--quick-start)
 - [CLI reference](#cli-reference)
 - [Tutorial](#tutorial)
+- [FAQ](#faq)
 - [Project structure](#project-structure)
 - [Team members](#team-members)
 - [License](#license)
@@ -61,6 +62,7 @@ Each subcommand is also available as a standalone command:
 | `ppinsight parse`           | `parse_pairs`         |
 | `ppinsight batch`           | `batch_dock`          |
 | `ppinsight quality`         | `ppinsight_quality`   |
+| `ppinsight prodigy`         | `ppinsight_prodigy`   |
 
 The examples below use the umbrella form.  Replace
 `ppinsight <subcommand>` with the standalone name if you prefer.
@@ -68,19 +70,43 @@ The examples below use the umbrella form.  Replace
 > **Tip:** every command accepts `--help`.  When in doubt, run
 > `ppinsight <command> --help` to see all available options.
 
-### 1. Fetch protein data
-
-PPInsight fetches protein structures for you — you provide UniProt
-accession IDs, and it downloads sequences and PDB files automatically.
+Before heavy runs, do these quick checks:
 
 ```bash
-# Give one or more UniProt accession IDs.
-# Downloaded PDB files land in --pdb-dir (default: data/input/).
+# Check which docking engines are currently runnable/parsible
+ppinsight batch --list-engines
+
+# Check which plot types and flags are valid for your scores file
+ppinsight compare <scores_file.tsv> --guide
+```
+
+### 1. Fetch protein data
+
+PPInsight fetches protein structures for you. You provide UniProt
+identifiers, and it downloads sequences and PDB files automatically.
+Accepted inputs include canonical accessions (for example `P15692`),
+FASTA-style IDs (`sp|P15692|VEGFA_HUMAN`), and common human
+gene/name forms such as `VEGFA` or `"VEGFA human"`.
+
+The downloaded structures are saved with the same accession stems you
+typed, for example `P69905.pdb`.  That means the next step can use the
+same identifiers directly in `proteinA` and `proteinB` without manual
+renaming.
+
+```bash
+# Give one or more UniProt identifiers.
+# Downloaded PDB files land in --pdb-dir (default: data/input/)
+# as accession-named files such as data/input/P69905.pdb.
 ppinsight fetch P69905 P68871
+
+# Name-style human inputs are also accepted and resolved to accessions.
+ppinsight fetch "VEGFR2 human" "VEGFA human"
 ```
 
 Optional flags: `--pdb-dir DIR` (override download location), `--fasta FILE`
-(save FASTA sequences), `--csv FILE` (save metadata).
+(save FASTA sequences), `--csv FILE` (save metadata columns:
+ID, Name, Description, Sequence Length, Sequence),
+`--pdb-name accession|uniprot|both` (control output filename stems).
 Run `ppinsight fetch --help` for the full list.
 
 ### 2. Run docking pipelines
@@ -120,7 +146,8 @@ contents.
 ```bash
 # Point at one or more docking output directories.
 # --pair tells collect which proteins are in this run.
-# Scores are written to data/output/scores/scores.tsv by default.
+# Without -o, collect auto-generates a descriptive TSV path under
+# data/output/scores/ and avoids overwriting by adding numeric suffixes.
 ppinsight collect data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
     --pair 2UUY_rec:2UUY_lig
 ```
@@ -137,20 +164,41 @@ ppinsight collect \
 ```
 
 Alongside the scores file, `collect` writes a **run record**
-(`scores.tsv.provenance.json`) that documents where the numbers came
-from — engine parameters and source directories.
+(`<scores_file>.provenance.json`) that documents where the numbers came
+from, including engine parameters and source directories.  The unified scores
+rows also retain lightweight traceability columns when available
+(`run_id`, `pose_id`, `output_path`, `source_file`) so you can tie a
+plot back to a specific run and pose.
+
+If you use `--pairs` for interaction labels, keep `--pair` set for
+single-run collection so `proteinA`/`proteinB` are populated before
+annotation.
 
 Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 
-### 4. Visualise & compare
+### 4. Visualize & compare
 
 ```bash
 # Violin plot (default) — always prints a tabular summary first
 ppinsight compare data/output/scores/scores.tsv --metric dockq
 
+# Ridge plot — compact density comparison across engines
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type ridge -o data/output/plots/ridge_dockq.png
+
+# CDF — read off what fraction of poses exceed a threshold
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type cdf -o data/output/plots/cdf_dockq.png
+
 # Filter by protein pair and save to PNG
 ppinsight compare data/output/scores/scores.tsv --metric dockq \
     --pair 2UUY_rec:2UUY_lig -o data/output/plots/violin_2uuy.png
+
+# If you omit -o, compare auto-saves to data/output/plots/
+ppinsight compare data/output/scores/scores.tsv --metric dockq
+
+# Use --show to open interactively instead of auto-saving
+ppinsight compare data/output/scores/scores.tsv --metric dockq --show
 
 # Tabular summary only (no plot)
 ppinsight compare data/output/scores/scores.tsv --metric dockq --table
@@ -159,6 +207,16 @@ ppinsight compare data/output/scores/scores.tsv --metric dockq --table
 ppinsight compare data/output/scores/scores.tsv --capri-quality
 ppinsight compare data/output/scores/scores.tsv --plot-type quality_bar \
     -o data/output/plots/quality.png
+
+# Pairwise difference histogram — same metric, same pairs, two engines
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type difference --models HADDOCK LightDock \
+    -o data/output/plots/difference_haddock_lightdock.png
+
+# Scatter — most useful when many pairs are shared across two engines
+ppinsight compare data/output/scores/scores.tsv --metric dockq \
+    --plot-type scatter --models HADDOCK LightDock \
+    -o data/output/plots/scatter_haddock_lightdock.png
 
 # Compare per-model files side by side
 ppinsight compare haddock_scores.tsv rosetta_scores.csv \
@@ -173,6 +231,9 @@ Run `ppinsight compare --help` for all plot types, filtering, and export options
 Use `ppinsight compare data/output/scores/scores.tsv --guide` for a
 data-aware summary of which plot types and flags work with your specific
 scores file.
+
+The supported CLI plot types are `violin`, `ridge`, `roc`, `scatter`,
+`quality_bar`, `cdf`, and `difference`.
 
 ### 5. Parse interaction tables & batch-dock
 
@@ -212,14 +273,46 @@ ppinsight quality docked_models/ native.pdb -o quality.tsv
 
 > Requires the optional `quality` extra: `pip install ppinsight[quality]`
 
+### 7. Predict binding affinity (PRODIGY)
+
+```bash
+# Score docked poses with predicted binding affinity
+ppinsight prodigy data/output/scores/scores.tsv \
+    --pdb-dir data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
+    --output data/output/scores/scores_prodigy.tsv
+```
+
+`ppinsight prodigy` adds `prodigy_ddg` and `prodigy_kd`, which are most
+useful after you have narrowed candidates with docking scores and, when
+available, DockQ/CAPRI quality evaluation.
+
+> Requires the optional `prodigy` extra: `pip install ppinsight[prodigy]`
+
 ---
 
 ## Tutorial
 
 A complete end-to-end walkthrough is in [`tutorials/README.md`](tutorials/README.md).
-It uses pre-computed docking outputs from all three engines — no external
-tools required.  Start there to see every `ppinsight compare` plot type
+It uses pre-computed docking outputs from all three engines, so no external
+tools are required.  Start there to see every `ppinsight compare` plot type
 and the full collect → compare → classify workflow.
+
+Additional walkthrough assets live under [`examples/`](examples/) (including
+fabricated plotting galleries and engine-specific sample outputs). For common
+troubleshooting questions, see [`docs/FAQ.md`](docs/FAQ.md).
+
+## FAQ
+
+Common setup, plotting, CAPRI, and PRODIGY questions are covered in
+[`docs/FAQ.md`](docs/FAQ.md).
+
+### Three-layer evaluation
+
+PPInsight supports three complementary comparison layers:
+
+1. Within-model: use `violin`, `ridge`, and `cdf` on engine-native scores to inspect one engine's pose distribution.
+2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, `scatter`, and `difference` to compare engines on the same native-backed task.
+3. Cross-system: use `ppinsight prodigy` with `prodigy_ddg` and `prodigy_kd` when you need a post-hoc affinity view across different complexes.
 
 ---
 
@@ -233,10 +326,11 @@ src/ppinsight/
   pdb_to_haddock.py     # HADDOCK3 staging & execution
   pdb_to_rosetta.py     # PyRosetta docking wrapper
   collect_scores.py     # Score aggregator (unified TSV/CSV)
-  visualizer.py         # Plotting & compare_scores CLI
+  visualizer.py         # Plotting and ppinsight compare implementation
   batch_dock.py         # Batch docking for all pairs
   parse_pairs.py        # Protein interaction table → pairs file
   quality.py            # DockQ quality evaluation
+  prodigy.py            # PRODIGY binding-affinity scoring
   provenance.py         # Run-level metadata & record I/O
   utils.py              # Shared utilities (path resolution)
   rosetta/              # PyRosetta pipeline internals
@@ -282,10 +376,10 @@ data/
 | What the tool produces           | Default location                         |
 |----------------------------------|------------------------------------------|
 | Docking outputs                  | `data/output/<engine>_runs/`             |
-| Unified scores file              | `data/output/scores/scores.tsv`          |
+| Unified scores file              | auto-named in `data/output/scores/` (or your `-o` path) |
 | Batch results table              | `data/output/scores/batch_results.csv`   |
-| Run record (provenance)          | `data/output/scores/scores.tsv.provenance.json` |
-| Plots / figures                  | shown interactively; use `-o` to save, e.g. `-o data/output/plots/fig.png` |
+| Run record (provenance)          | `<scores_file>.provenance.json` alongside your scores file |
+| Plots / figures                  | auto-saved in `data/output/plots/` (or use `-o` / `--show`) |
 
 All default paths can be overridden with CLI flags (`--input-dir`,
 `--pdb-dir`, `--output-root`, `-o`).  See [`data/README.md`](data/README.md)
@@ -295,6 +389,8 @@ for the full layout and pairs file format.
 
 - For HPC runs, pass an absolute `--output-root` to place outputs on a
   shared filesystem (e.g. `/gscratch/...`).
+- `--output-root` controls where engine run directories are created in
+    batch mode; it does not set the batch results table path (use `-o`).
 - External docking tools must be installed separately for the engines
   you want to use.  The HADDOCK helper supports container execution
   (`--container docker|apptainer`).

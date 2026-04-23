@@ -371,6 +371,7 @@ class TestAddQualityToScores:
         existing = pd.DataFrame({
             "model": ["ldock"], "score_type": ["luciferin_score"],
             "score_value": [42.0], "proteinA": ["A"], "proteinB": ["B"],
+            "run_id": ["lightdock_A_B_20260421T120000"],
         })
         quality = pd.DataFrame({
             "model_path": ["m.pdb"],
@@ -387,8 +388,11 @@ class TestAddQualityToScores:
         quality_rows = result[result["score_type"].str.startswith("quality_")]
         assert len(quality_rows) == 4
         assert set(quality_rows["score_type"]) == {
-            "quality_DockQ", "quality_fnat", "quality_iRMSD", "quality_LRMSD",
+            "quality_dockq", "quality_fnat", "quality_irmsd", "quality_lrmsd",
         }
+        assert (quality_rows["pose_id"] == "m").all()
+        assert (quality_rows["output_path"] == "m.pdb").all()
+        assert (quality_rows["run_id"] == "lightdock_A_B_20260421T120000").all()
 
     def test_empty_quality(self):
         existing = pd.DataFrame({
@@ -440,6 +444,7 @@ class TestCLI:
         import ppinsight.quality as qmod
 
         monkeypatch.setattr(qmod, "load_PDB", _fake_load_pdb)
+        monkeypatch.setattr(qmod, "_DOCKQ_AVAILABLE", True)
         orig_eval = qmod.evaluate_complex
 
         def patched_eval(mp, np_, **kw):
@@ -465,6 +470,7 @@ class TestCLI:
         import ppinsight.quality as qmod
 
         monkeypatch.setattr(qmod, "load_PDB", _fake_load_pdb)
+        monkeypatch.setattr(qmod, "_DOCKQ_AVAILABLE", True)
         orig_eval_dir = qmod.evaluate_directory
 
         def patched_eval_dir(rd, np_, **kw):

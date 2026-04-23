@@ -11,15 +11,15 @@ supplementary components relevant to users/developers.
 - **Outputs:** Combined FASTA file, structured CSV metadata file with fields: ID, Name, Description, Sequence Length, Sequence, and downloaded PDB structure files when available.
 - **Use of other components:** Uses the UniProt REST API for sequence and structure cross-references and Biopython’s `PDBList` for downloading PDB files.
 
-### 2. Model Evaluator (e.g., pdb_to_haddock, pdb_to_lightdock, rosetta_docking)
+### 2. Model Evaluator (for example, `ppinsight haddock`, `ppinsight lightdock`, `ppinsight rosetta`)
 - **What it does:** Stages inputs, writes tool-specific configs, and runs the chosen model on a pair of proteins and calculates scores that quantify the protein interaction.
-- **Inputs:** The request output by the model selector (`.fasta` and `.pdb` files output by the database search) and respective paths (absolute or repo basenames), runtime options (cores, mode, container, runname, etc.)
+- **Inputs:** Pair identifiers plus corresponding PDB structures (either fetched accession-named files or user-provided local files), path hints (absolute or repo basenames), and runtime options (cores, mode, container, runname, etc.)
 - **Outputs:**
     - Run directory with `data/` containing staged inputs
     - Tool config file (e.g., `*.cfg` for HADDOCK, `setup.json` for LightDock)
     - Execution summary with opts passed (executed command or container invocation)
     - Associated output files models ran mapping proteinA/proteinB (e.g., scoring and docked models [`.pdb`s])
-- **Use of other components:** Requires inputs from the database search and model selector components. May require use of computing cluster (Hyak) to run computationally expensive models.
+  - **Use of other components:** Requires inputs from the database search and pairs-file conventions. May require use of computing cluster (Hyak) to run computationally expensive models.
 
 #### 2.5. Scorer / Aggregator
 - **What it does:** Collects model outputs and writes normalized `scores.tsv` used by the
@@ -37,19 +37,16 @@ supplementary components relevant to users/developers.
 - **Outputs:** List of pandas DataFrames containing score values, one DataFrame for each model. Pyplot visualizations, exportable as PNG, SVG, or PDF.
 
 ## Interactions to accomplish Use Case 1 (refer to functional_spec.md)
-1. User specifies a protein pair.  
-2. A database search is conducted to fetch and store FASTA and PDB files.
-4. User determines models to run
-5. For each selected model:
-   - Input data is converted into the model’s required format.
-   - Necessary configuration files are generated.
-   - Jobs are dispatched to Hyak if parallel computation is required.
-8. Results from the model runs are appended to `scores.tsv`.  
-9. The visualization manager reads `scores.tsv` and renders a chart (e.g., x = model, y = score).  
-10. User inspects plot and exports results.
+1. User fetches proteins by accession ID, producing FASTA/CSV and accession-named PDB files.
+2. User specifies a protein pair directly or through a pairs file.
+3. User runs one or more docking engines (single-engine command or `ppinsight batch`).
+4. Docking commands write run directories and engine artifacts; `batch` also writes `batch_results.csv`.
+5. User runs `ppinsight collect` on run directories to build unified `scores.tsv`.
+6. The visualization manager reads `scores.tsv` and renders summaries/plots for comparison and export.
+7. User inspects outputs and exports results.
 
 ## Preliminary plan (priority)
-- Task 1: fetch proteins by search term and save files (i.e., implement database search)
+- Task 1: fetch proteins by accession ID and save files (i.e., implement database search)
 - Task 2: run PPI predictors on file pairs and store scores (i.e., model selection and data analysis)
 - Task 3: plot interaction scores (i.e., visualization manager)
 - Elective Task #1: Add batch mode for multiple pairs.  

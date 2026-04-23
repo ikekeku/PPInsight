@@ -9,7 +9,6 @@ to rich metadata about the run:
 * engine name and version (when available)
 * source directory
 * collection timestamp (ISO-8601)
-* hostname
 * engine-specific parameters extracted from config files
 
 This lets users (and future-you) answer: *"Where did this number come
@@ -26,9 +25,78 @@ from __future__ import annotations
 import datetime
 import json
 import os
-import platform
 import re
 from typing import Any
+
+from ppinsight.utils import _project_root
+
+_PROJECT_ROOT = os.path.abspath(_project_root())
+
+
+def _to_portable_path(path: str) -> str:
+    """Convert *path* to a reproducible, non-sensitive representation.
+
+    - If the path is inside the repository, return a repo-relative path.
+    - Otherwise return only the basename to avoid leaking local machine paths.
+
+    On Windows, ``os.path.relpath`` raises ``ValueError`` when *path* and
+    *_PROJECT_ROOT* are on different drives.  We catch that and fall back to
+    the basename so provenance extraction never crashes.
+    """
+    abs_path = os.path.abspath(path)
+    try:
+        rel_path = os.path.relpath(abs_path, _PROJECT_ROOT)
+    except ValueError:
+        # Different drives on Windows – just return the basename.
+        base = os.path.basename(abs_path.rstrip(os.sep))
+        return base or "."
+    if rel_path != "." and not rel_path.startswith(".."):
+        return rel_path
+    base = os.path.basename(abs_path.rstrip(os.sep))
+    return base or "."
+
+
+# Matches POSIX absolute paths (/foo/bar) and Windows absolute paths
+# (C:\foo\bar or \\server\share).  Used to scrub embedded path substrings.
+# Note: paths containing spaces are matched only up to the first space;
+# quoted-path detection is not supported to keep the pattern simple.
+_ABS_PATH_RE = re.compile(
+    r"(?:"
+    r"[A-Za-z]:[/\\][^\s]+"   # Windows drive-absolute: C:\... or C:/...
+    r"|\\\\[^\s]+"             # UNC path: \\server\...
+    r"|/[^\s]+"                # POSIX absolute: /usr/...
+    r")"
+)
+
+
+def _scrub_path_substrings(s: str) -> str:
+    """Replace every absolute-path substring in *s* with its portable form."""
+    def _replace(m: re.Match) -> str:
+        return _to_portable_path(m.group(0))
+
+    return _ABS_PATH_RE.sub(_replace, s)
+
+
+def _scrub_sensitive_values(value: Any) -> Any:
+    """Recursively scrub absolute paths from metadata payloads.
+
+    Handles both strings that *are* an absolute path and strings that
+    *contain* absolute paths as substrings (e.g. Rosetta flag files like
+    ``-in:file:s /abs/path/foo.pdb``).
+    """
+    if isinstance(value, dict):
+        return {
+            key: _scrub_sensitive_values(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_scrub_sensitive_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_sensitive_values(item) for item in value)
+    if isinstance(value, str):
+        # Scrub any absolute-path substrings embedded in the string.
+        return _scrub_path_substrings(value)
+    return value
 
 # ---------------------------------------------------------------------------
 # Run-ID generation
@@ -134,9 +202,8 @@ def extract_run_metadata(engine: str, run_dir: str) -> dict[str, Any]:
 
         {
             "engine": "lightdock",
-            "source_dir": "/abs/path/to/simulation",
+            "source_dir": "examples/lightdock/simulation",
             "collected_at": "2026-04-02T15:23:00",
-            "hostname": "okik-mbp",
             "engine_meta": { ... }   # engine-specific config/params
         }
     """
@@ -145,10 +212,9 @@ def extract_run_metadata(engine: str, run_dir: str) -> dict[str, Any]:
 
     return {
         "engine": engine,
-        "source_dir": os.path.abspath(run_dir),
+        "source_dir": _to_portable_path(run_dir),
         "collected_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "hostname": platform.node(),
-        "engine_meta": engine_meta,
+        "engine_meta": _scrub_sensitive_values(engine_meta),
     }
 
 

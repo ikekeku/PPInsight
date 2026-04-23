@@ -34,6 +34,8 @@ Example (API):
 import argparse
 import csv
 import os
+import re
+import shutil
 import sys
 from io import StringIO
 
@@ -41,9 +43,209 @@ import requests
 from Bio import SeqIO
 from Bio.PDB import PDBList
 
+_UNIPROT_BASE_URL = "https://rest.uniprot.org/uniprotkb/"
+_UNIPROT_SEARCH_URL = f"{_UNIPROT_BASE_URL}search"
+
+
+# UniProt accession formats (6-char and 10-char forms)
+_ACCESSION_PATTERN_6 = re.compile(r"^[OPQ][0-9][A-Z0-9]{3}[0-9]$")
+_ACCESSION_PATTERN_10 = re.compile(
+    r"^[A-NR-Z][0-9](?:[A-Z0-9]{3}[0-9]){2}$"
+)
+
+
+def _looks_like_uniprot_accession(token: str) -> bool:
+    """Return True when *token* matches a canonical UniProt accession."""
+    normalized = token.strip().upper()
+    return bool(
+        _ACCESSION_PATTERN_6.match(normalized)
+        or _ACCESSION_PATTERN_10.match(normalized)
+    )
+
+
+def _query_uniprot_primary_accession(query: str) -> str | None:
+    """Return the first matching primary accession for a UniProt query."""
+    try:
+        response = requests.get(
+            _UNIPROT_SEARCH_URL,
+            params={
+                "query": query,
+                "format": "json",
+                "size": 1,
+                "fields": "accession,id,reviewed,organism_name",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.exceptions.RequestException, ValueError):
+        return None
+
+    for row in payload.get("results", []):
+        accession = row.get("primaryAccession")
+        if accession:
+            return str(accession).upper()
+    return None
+
+
+def _candidate_name_queries(identifier: str) -> list[str]:
+    """Build robust UniProt search queries for human gene/name inputs."""
+    raw = " ".join(identifier.strip().split())
+    upper = raw.upper()
+
+    # Accept forms such as "VEGFA human" and "VEGFA_HUMAN".
+    token = upper
+    if token.endswith(" HUMAN"):
+        token = token[:-6].strip()
+    if token.endswith("_HUMAN"):
+        token = token[:-6].strip()
+
+    gene = re.sub(r"[^A-Z0-9-]", "", token)
+    queries: list[str] = []
+
+    if gene:
+        queries.extend([
+            f"gene_exact:{gene} AND organism_id:9606 AND reviewed:true",
+            f"gene:{gene} AND organism_id:9606 AND reviewed:true",
+            f"id:{gene}_HUMAN AND reviewed:true",
+            f"gene_exact:{gene} AND reviewed:true",
+        ])
+
+    # Keep one permissive fallback for names that are not gene symbols.
+    if raw:
+        queries.append(f"{raw} AND organism_id:9606 AND reviewed:true")
+
+    # Stable de-duplication.
+    deduped: list[str] = []
+    for q in queries:
+        if q not in deduped:
+            deduped.append(q)
+    return deduped
+
+
+def _resolve_to_accession(identifier: str) -> str:
+    """Resolve a user-provided identifier into a UniProt accession.
+
+    Accepted forms:
+    - canonical accession (e.g. P15692)
+    - FASTA-style IDs (e.g. sp|P15692|VEGFA_HUMAN)
+    - human gene/name inputs (e.g. VEGFA, VEGFA human)
+    """
+    raw = identifier.strip()
+    if not raw:
+        raise ValueError(
+            "Invalid UniProt accession ID: ''. Use an accession such as "
+            "P15692 or a human gene/name such as VEGFA."
+        )
+
+    parts = raw.split("|")
+    if len(parts) >= 3 and _looks_like_uniprot_accession(parts[1]):
+        return parts[1].upper()
+
+    if _looks_like_uniprot_accession(raw):
+        return raw.upper()
+
+    for query in _candidate_name_queries(raw):
+        accession = _query_uniprot_primary_accession(query)
+        if accession:
+            return accession
+
+    raise ValueError(
+        f"Invalid UniProt accession ID: {identifier}. Use an accession "
+        "(e.g. P15692) or a resolvable human gene/name (e.g. VEGFA or "
+        "'VEGFA human')."
+    )
+
+
+def _resolve_identifiers(identifiers: list[str]) -> list[str]:
+    """Resolve each provided identifier into a canonical accession."""
+    return [_resolve_to_accession(identifier) for identifier in identifiers]
+
+
+def _sanitize_alias_stem(stem: str) -> str:
+    """Return a filesystem-safe stem for generated PDB aliases."""
+    text = stem.strip().replace(" ", "_")
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", text)
+
+
+def _alias_pdb_path(alias_stem: str, pdb_dir: str) -> str:
+    """Return the user-facing PDB filename for an alias stem."""
+    safe = _sanitize_alias_stem(alias_stem)
+    return os.path.join(pdb_dir, f"{safe}.pdb")
+
+
+def _extract_accession_and_entry_name(record_id: str) -> tuple[str, str | None]:
+    """Parse UniProt FASTA record identifiers.
+
+    Example:
+        ``sp|P15692|VEGFA_HUMAN`` -> ("P15692", "VEGFA_HUMAN")
+    """
+    parts = record_id.split("|")
+    if len(parts) >= 3:
+        return parts[1], parts[2]
+    return record_id, None
+
+
+def _alias_stems_for_accession(
+    accession_id: str,
+    entry_name: str | None,
+    pdb_name_mode: str,
+) -> list[str]:
+    """Return one or more output stems for a fetched PDB file."""
+    if pdb_name_mode == "uniprot":
+        preferred = entry_name or accession_id
+        return [_sanitize_alias_stem(preferred)]
+    if pdb_name_mode == "both":
+        stems = [_sanitize_alias_stem(accession_id)]
+        if entry_name:
+            stems.append(_sanitize_alias_stem(entry_name))
+        # Keep ordering stable while removing duplicates.
+        deduped: list[str] = []
+        for stem in stems:
+            if stem not in deduped:
+                deduped.append(stem)
+        return deduped
+    return [_sanitize_alias_stem(accession_id)]
+
+
+def _materialize_pdb_aliases(
+    raw_path: str,
+    alias_stems: list[str],
+    pdb_dir: str,
+) -> list[str]:
+    """Copy a downloaded PDB artifact to one or more alias ``.pdb`` files.
+
+    Returns an empty list when no readable raw artifact exists (for example
+    when upstream retrieval reports an ID but does not materialize a file).
+    """
+    if not raw_path:
+        return []
+
+    raw_abs = os.path.abspath(raw_path)
+
+    if not os.path.exists(raw_abs):
+        return []
+
+    alias_paths: list[str] = []
+    for stem in alias_stems:
+        alias_path = _alias_pdb_path(stem, pdb_dir)
+        alias_abs = os.path.abspath(alias_path)
+        if raw_abs != alias_abs:
+            shutil.copyfile(raw_abs, alias_abs)
+        alias_paths.append(alias_path)
+
+    raw_name = os.path.basename(raw_abs).lower()
+    if raw_name.startswith("pdb") and raw_name.endswith(".ent"):
+        try:
+            os.remove(raw_abs)
+        except OSError:
+            pass
+
+    return alias_paths
+
 
 def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
-                     pdb_dir="pdb_files"):
+                     pdb_dir="pdb_files", pdb_name_mode="accession"):
     """
     Fetch protein sequence and structure data from UniProt and PDB.
 
@@ -53,6 +255,8 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
         csv_file (str, optional): Path to save structured sequence data as CSV.
         pdb_dir (str, optional): Directory to store downloaded PDB files.
         Defaults to "pdb_files".
+        pdb_name_mode (str, optional): Naming mode for downloaded PDB files.
+        Accepted values: "accession" (default), "uniprot", "both".
 
     Returns:
         tuple:
@@ -69,16 +273,17 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
         5. Retrieve PDB cross-references and download the
         first PDB file for each accession.
     """
-    base_url = "https://rest.uniprot.org/uniprotkb/"
+    resolved_accessions = _resolve_identifiers([str(token) for token in accession_ids])
+
     sequences_data = []
     structured_data = []
 
     # Ensure PDB directory exists
     os.makedirs(pdb_dir, exist_ok=True)
 
-    for accession_id in accession_ids:
+    for accession_id in resolved_accessions:
         # Fetch FASTA
-        fasta_url = f"{base_url}{accession_id}.fasta"
+        fasta_url = f"{_UNIPROT_BASE_URL}{accession_id}.fasta"
         try:
             response = requests.get(fasta_url, timeout=10)
             response.raise_for_status()
@@ -102,7 +307,10 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
         ) if full_fasta_string else []
 
     # Extract structured data
+    accession_to_entry_name: dict[str, str | None] = {}
     for entry in records:
+        accession, entry_name = _extract_accession_and_entry_name(entry.id)
+        accession_to_entry_name[accession] = entry_name
         structured_data.append({
             "ID": entry.id,
             "Name": entry.name,
@@ -125,8 +333,8 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
     # Fetch PDB IDs and download first PDB file for each accession
     pdbl = PDBList()
     pdb_info = {}
-    for accession_id in accession_ids:
-        json_url = f"{base_url}{accession_id}.json"
+    for accession_id in resolved_accessions:
+        json_url = f"{_UNIPROT_BASE_URL}{accession_id}.json"
         try:
             response = requests.get(json_url, timeout=10)
             response.raise_for_status()
@@ -136,11 +344,29 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
                                                             ) == "PDB"]
             if pdb_ids:
                 first_pdb_id = pdb_ids[0]
-                pdbl.retrieve_pdb_file(
+                raw_pdb_path = pdbl.retrieve_pdb_file(
                     first_pdb_id, pdir=pdb_dir, file_format="pdb")
+                alias_stems = _alias_stems_for_accession(
+                    accession_id,
+                    accession_to_entry_name.get(accession_id),
+                    pdb_name_mode,
+                )
+                alias_paths = _materialize_pdb_aliases(
+                    raw_pdb_path,
+                    alias_stems,
+                    pdb_dir,
+                )
                 pdb_info[accession_id] = first_pdb_id
-                print(
-                    f"Downloaded PDB file for {accession_id}: {first_pdb_id}")
+                if alias_paths:
+                    print(
+                        f"Downloaded PDB file for {accession_id}: "
+                        f"{first_pdb_id} -> {', '.join(alias_paths)}"
+                    )
+                else:
+                    print(
+                        f"PDB ID found for {accession_id}: {first_pdb_id}, "
+                        "but no local file was downloaded"
+                    )
             else:
                 pdb_info[accession_id] = None
                 print(f"No PDB IDs found for {accession_id}")
@@ -174,9 +400,14 @@ def main(argv=None):
         "accessions",
         nargs="+",
         help=(
-            "One or more UniProt accession IDs (e.g. P69905 P68871).  "
+            "One or more UniProt identifiers.  Accepted forms include "
+            "accessions (e.g. P69905), FASTA-style IDs "
+            "(sp|P15692|VEGFA_HUMAN), and common human gene/name inputs "
+            "such as VEGFA or 'VEGFA human'.  "
+            "Name-based inputs are resolved against reviewed human UniProt "
+            "records (organism_id=9606).  "
             "The pipeline fetches sequence data and resolves PDB structures "
-            "for each accession."
+            "for each resolved accession."
         ),
     )
     parser.add_argument(
@@ -192,8 +423,19 @@ def main(argv=None):
         "--csv",
         default=None,
         help=(
-            "Save structured sequence metadata (ID, length, organism, etc.) "
-            "to this CSV file.  Useful for record-keeping in large benchmarks."
+            "Save structured sequence metadata to this CSV file.  Columns: "
+            "ID, Name, Description, Sequence Length, Sequence.  Useful for "
+            "record-keeping in large benchmarks."
+        ),
+    )
+    parser.add_argument(
+        "--pdb-name",
+        choices=["accession", "uniprot", "both"],
+        default="accession",
+        help=(
+            "Naming mode for downloaded PDB files (default: accession).  "
+            "'accession' writes P15692.pdb, 'uniprot' writes VEGFA_HUMAN.pdb, "
+            "'both' writes both aliases."
         ),
     )
     parser.add_argument(
@@ -201,7 +443,9 @@ def main(argv=None):
         default="data/input",
         help=(
             "Directory for downloaded PDB files (default: data/input).  "
-            "These PDB files become inputs for the docking subcommands."
+            "Fetch saves accession-named .pdb files here (for example "
+            "P69905.pdb) and cleans up the raw Biopython download name so "
+            "the same accession can be used directly in proteinA/proteinB."
         ),
     )
 
@@ -212,6 +456,7 @@ def main(argv=None):
         fasta_file=args.fasta,
         csv_file=args.csv,
         pdb_dir=args.pdb_dir,
+        pdb_name_mode=args.pdb_name,
     )
 
     # Print a brief summary
@@ -221,6 +466,39 @@ def main(argv=None):
                               if "|" in entry["ID"]
                               else entry["ID"], "—")
         print(f"  {entry['ID']:30s}  {entry['Sequence Length']:>5d} aa  PDB: {pdb_id}")
+
+    accession_to_entry_name: dict[str, str | None] = {}
+    for entry in structured_data:
+        accession, entry_name = _extract_accession_and_entry_name(entry["ID"])
+        accession_to_entry_name[accession] = entry_name
+
+    ready = [
+        acc
+        for acc, pdb_id in pdb_info.items()
+        if pdb_id
+        and any(
+            os.path.exists(_alias_pdb_path(stem, args.pdb_dir))
+            for stem in _alias_stems_for_accession(
+                acc,
+                accession_to_entry_name.get(acc),
+                args.pdb_name,
+            )
+        )
+    ]
+    if ready:
+        print("\nPair-ready PDB names:")
+        for accession_id in ready:
+            stems = _alias_stems_for_accession(
+                accession_id,
+                accession_to_entry_name.get(accession_id),
+                args.pdb_name,
+            )
+            for stem in stems:
+                print(f"  {stem} -> {_alias_pdb_path(stem, args.pdb_dir)}")
+        print(
+            "Use these filename stems directly in proteinA/proteinB, for "
+            "example: P69905:P68871"
+        )
 
 
 if __name__ == "__main__":

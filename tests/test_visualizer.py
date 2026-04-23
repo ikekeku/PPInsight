@@ -13,11 +13,25 @@ Covers:
 
 import csv
 import os
+import sys
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from ppinsight import visualizer as vis
+
+# ---------------------------------------------------------------------------
+# Import build_fabricated_scores directly from the examples script.
+# The script's side effects (OUT.mkdir, apply_theme, matplotlib backend) are
+# all guarded inside main(), so a plain import is safe.
+# ---------------------------------------------------------------------------
+_EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
+sys.path.insert(0, str(_EXAMPLES_DIR))
+try:
+    from generate_example_plots import build_fabricated_scores  # noqa: E402
+finally:
+    sys.path.pop(0)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -277,6 +291,40 @@ class TestCLI:
         vis.main(per_model_csvs + ["--metric", "score", "--output", out])
         assert os.path.isfile(out)
 
+    def test_unified_file_pair_filter(self, unified_scores_csv, tmp_path, monkeypatch):
+        import matplotlib.pyplot as _plt
+        monkeypatch.setattr(_plt, "show", lambda: None)
+
+        out = str(tmp_path / "pair.png")
+        vis.main([
+            unified_scores_csv,
+            "--metric", "dockq",
+            "--pair", "2UUY_rec:2UUY_lig",
+            "--output", out,
+        ])
+        assert os.path.isfile(out)
+
+    def test_unified_file_auto_saves_without_output(
+        self,
+        unified_scores_csv,
+        tmp_path,
+        monkeypatch,
+    ):
+        import matplotlib.pyplot as _plt
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            _plt,
+            "show",
+            lambda: (_ for _ in ()).throw(AssertionError("show should not be called")),
+        )
+
+        vis.main([unified_scores_csv, "--metric", "dockq"])
+
+        plots_dir = tmp_path / "data" / "output" / "plots"
+        assert plots_dir.exists()
+        assert list(plots_dir.glob("*.png"))
+
     def test_list_metrics(self, unified_scores_csv, capsys):
         vis.main([unified_scores_csv, "--metric", "dockq", "--list-metrics"])
         captured = capsys.readouterr()
@@ -286,3 +334,123 @@ class TestCLI:
         vis.main([unified_scores_csv, "--metric", "dockq", "--list-pairs"])
         captured = capsys.readouterr()
         assert "2uuy_rec" in captured.out.lower()
+
+
+# ---------------------------------------------------------------------------
+# CAPRI pose-level classification
+# ---------------------------------------------------------------------------
+
+class TestCapriPoseClassification:
+    def test_summary_uses_pose_level_rows(self):
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 8,
+            "score_type": ["dockq", "fnat", "irmsd", "lrmsd"] * 2,
+            "score_value": [0.82, 0.72, 1.0, 2.4, 0.18, 0.06, 7.5, 12.0],
+            "proteinA": ["A"] * 8,
+            "proteinB": ["B"] * 8,
+            "run_id": ["run_1"] * 8,
+            "pose_id": ["pose_1"] * 4 + ["pose_2"] * 4,
+        })
+
+        summary = vis.capri_summary_table(df)
+
+        assert int(summary.loc[0, "high"]) == 1
+        assert int(summary.loc[0, "incorrect"]) == 1
+        assert int(summary.loc[0, "total"]) == 2
+
+    def test_classify_capri_propagates_pose_level_labels(self):
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 8,
+            "score_type": ["dockq", "fnat", "irmsd", "lrmsd"] * 2,
+            "score_value": [0.82, 0.72, 1.0, 2.4, 0.18, 0.06, 7.5, 12.0],
+            "proteinA": ["A"] * 8,
+            "proteinB": ["B"] * 8,
+            "run_id": ["run_1"] * 8,
+            "pose_id": ["pose_1"] * 4 + ["pose_2"] * 4,
+        })
+
+        classified = vis.classify_capri(df)
+
+        pose_1 = classified[classified["pose_id"] == "pose_1"]
+        pose_2 = classified[classified["pose_id"] == "pose_2"]
+        assert set(pose_1["capri_quality"]) == {"high"}
+        assert set(pose_2["capri_quality"]) == {"incorrect"}
+
+
+class TestMetricPresentation:
+    def test_metric_display_name_uses_dockq_case(self):
+        assert vis.get_metric_display_name("dockq") == "DockQ"
+
+    def test_ridge_plot_respects_dockq_bounds(self, monkeypatch):
+        import matplotlib.pyplot as _plt
+
+        monkeypatch.setattr(_plt, "show", lambda: None)
+
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 4 + ["Rosetta"] * 4,
+            "score_type": ["dockq"] * 8,
+            "score_value": [0.22, 0.45, 0.78, 0.96, 0.18, 0.33, 0.61, 0.88],
+        })
+
+        fig = vis.ridge_plot(df, metric="dockq")
+        xmin, xmax = fig.axes[-1].get_xlim()
+        assert xmin >= 0.0
+        assert xmax <= 1.0
+        assert fig.axes[-1].get_xlabel() == "DockQ"
+        expected_thresholds = {
+            round(threshold, 2) for threshold, _, _ in vis.DOCKQ_CAPRI_THRESHOLDS
+        }
+        assert fig.legends
+        legend_labels = {text.get_text() for text in fig.legends[0].get_texts()}
+        assert "Median" in legend_labels
+        assert {
+            f"CAPRI {label} ({threshold:.2f})"
+            for threshold, label, _ in vis.DOCKQ_CAPRI_THRESHOLDS
+        }.issubset(legend_labels)
+        for ax in fig.axes:
+            constant_x_lines = [
+                line for line in ax.lines
+                if len({round(float(x), 6) for x in line.get_xdata()}) == 1
+            ]
+            dashed_thresholds = {
+                round(float(line.get_xdata()[0]), 2)
+                for line in constant_x_lines
+                if line.get_linestyle() == "--"
+            }
+            median_markers = [line for line in ax.lines if line.get_marker() == "o"]
+            assert dashed_thresholds == expected_thresholds
+            assert len(median_markers) == 1
+        _plt.close(fig)
+
+    def test_violin_plot_adds_faint_horizontal_gridlines(self, monkeypatch):
+        import matplotlib.pyplot as _plt
+
+        monkeypatch.setattr(_plt, "show", lambda: None)
+
+        df = pd.DataFrame({
+            "model": ["HADDOCK"] * 4 + ["Rosetta"] * 4,
+            "score_type": ["dockq"] * 8,
+            "score_value": [0.22, 0.45, 0.78, 0.96, 0.18, 0.33, 0.61, 0.88],
+        })
+
+        fig = vis.violin_plot(df, metric="dockq")
+        fig.canvas.draw()
+        gridlines = [
+            line for line in fig.axes[0].yaxis.get_gridlines()
+            if line.get_visible()
+        ]
+        assert gridlines
+        assert fig.axes[0].get_axisbelow()
+        _plt.close(fig)
+
+
+class TestExampleGalleryData:
+    def test_build_fabricated_scores_is_deterministic(self):
+        df1 = build_fabricated_scores()
+        df2 = build_fabricated_scores()
+        pd.testing.assert_frame_equal(df1, df2)
+
+    def test_build_fabricated_scores_keeps_dockq_in_bounds(self):
+        df = build_fabricated_scores()
+        dockq = df.loc[df["score_type"] == "dockq", "score_value"]
+        assert ((dockq >= 0.0) & (dockq <= 1.0)).all()
