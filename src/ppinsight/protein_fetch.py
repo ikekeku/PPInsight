@@ -467,13 +467,26 @@ def main(argv=None):
                               else entry["ID"], "—")
         print(f"  {entry['ID']:30s}  {entry['Sequence Length']:>5d} aa  PDB: {pdb_id}")
 
-    ready = [acc for acc, pdb_id in pdb_info.items() if pdb_id]
+    accession_to_entry_name: dict[str, str | None] = {}
+    for entry in structured_data:
+        accession, entry_name = _extract_accession_and_entry_name(entry["ID"])
+        accession_to_entry_name[accession] = entry_name
+
+    ready = [
+        acc
+        for acc, pdb_id in pdb_info.items()
+        if pdb_id
+        and any(
+            os.path.exists(_alias_pdb_path(stem, args.pdb_dir))
+            for stem in _alias_stems_for_accession(
+                acc,
+                accession_to_entry_name.get(acc),
+                args.pdb_name,
+            )
+        )
+    ]
     if ready:
         print("\nPair-ready PDB names:")
-        accession_to_entry_name: dict[str, str | None] = {}
-        for entry in structured_data:
-            accession, entry_name = _extract_accession_and_entry_name(entry["ID"])
-            accession_to_entry_name[accession] = entry_name
         for accession_id in ready:
             stems = _alias_stems_for_accession(
                 accession_id,
