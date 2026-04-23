@@ -264,6 +264,33 @@ class TestCollect:
 # ---------------------------------------------------------------------------
 
 class TestCLI:
+    def test_default_output_auto_named(self, haddock_dir, tmp_path, monkeypatch):
+        """Without -o, collect should auto-select a descriptive scores path."""
+        monkeypatch.chdir(tmp_path)
+
+        collect_scores.main([haddock_dir])
+
+        out_dir = tmp_path / "data" / "output" / "scores"
+        written = sorted(out_dir.glob("*.tsv"))
+        assert written
+        assert any(p.name.startswith("scores_") for p in written)
+
+    def test_default_output_auto_avoids_overwrite(
+        self,
+        haddock_dir,
+        tmp_path,
+        monkeypatch,
+    ):
+        """Repeated no--output runs should create suffixed files, not overwrite."""
+        monkeypatch.chdir(tmp_path)
+
+        collect_scores.main([haddock_dir])
+        collect_scores.main([haddock_dir])
+
+        out_dir = tmp_path / "data" / "output" / "scores"
+        written = sorted(out_dir.glob("*.tsv"))
+        assert len(written) >= 2
+
     def test_basic_tsv(self, haddock_dir, tmp_path):
         out = str(tmp_path / "out.tsv")
         collect_scores.main([haddock_dir, "-o", out])

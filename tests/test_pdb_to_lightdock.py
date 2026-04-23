@@ -208,3 +208,20 @@ def test_backward_compat_generate_models_false(sample_input_dirs, monkeypatch):
 
     # Only setup + simulation (no generation/clustering/ranking)
     assert len(recorder.calls) == 2
+
+
+def test_make_output_dir_auto_increments_when_existing(sample_input_dirs):
+    """Repeated runs for the same pair should not reuse an existing run folder."""
+    rec = sample_input_dirs["rec"]
+    lig = sample_input_dirs["lig"]
+    work_root = sample_input_dirs["work_root"]
+
+    run1 = pdb_to_lightdock.make_output_dir(
+        str(rec), str(lig), base_root=str(work_root), method="lightdock_runs"
+    )
+    run2 = pdb_to_lightdock.make_output_dir(
+        str(rec), str(lig), base_root=str(work_root), method="lightdock_runs"
+    )
+
+    assert run1 != run2
+    assert run2.endswith("_1")

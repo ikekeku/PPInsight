@@ -197,10 +197,11 @@ class TestAddProdigyToScores:
             add_prodigy_to_scores(scores, pdb_dir=tmp_path, top_n=2)
 
     def test_top_n_lower_is_better_uses_nsmallest(self, tmp_path):
-        """For lower-is-better metrics (e.g. HADDOCK 'score'), nsmallest selects best."""
+        """For lower-is-better metrics, nsmallest should select best rows."""
         scores = pd.DataFrame({
             "model": ["HADDOCK"] * 4,
-            "score_type": ["score"] * 4,   # "score" → higher_is_better=False in METRIC_METADATA
+            # "score" maps to higher_is_better=False in METRIC_METADATA.
+            "score_type": ["score"] * 4,
             "score_value": [-100.0, -90.0, -80.0, -70.0],
             "proteinA": ["rec"] * 4,
             "proteinB": ["lig"] * 4,
@@ -221,7 +222,7 @@ class TestAddProdigyToScores:
         assert set(scored["score_value"]) == {-100.0, -90.0}
 
     def test_top_n_higher_is_better_uses_nlargest(self, tmp_path):
-        """For higher-is-better metrics (e.g. luciferin_score), nlargest selects best."""
+        """For higher-is-better metrics, nlargest should select best rows."""
         scores = pd.DataFrame({
             "model": ["LightDock"] * 4,
             "score_type": ["luciferin_score"] * 4,

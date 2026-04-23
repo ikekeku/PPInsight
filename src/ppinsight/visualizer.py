@@ -240,9 +240,9 @@ def compare_scores(
         if m_val != 0 and abs(s_val / m_val) > 1.5:
             _warnings.warn(
                 f"'{name}' has std ({s_val:.2f}) much larger than the mean "
-                f"({m_val:.2f}).  Consider --plot-type box for a compact "
-                "summary (median + quartiles), or --plot-type violin for "
-                "the full distribution.",
+                f"({m_val:.2f}).  Consider --plot-type violin for the full "
+                "distribution or --plot-type ridge for a compact density "
+                "comparison.",
                 stacklevel=2,
             )
 
@@ -652,210 +652,6 @@ def violin_plot(
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=180)
-        print(f"Plot saved to {output}")
-    else:
-        plt.show()
-    return fig
-
-
-def box_plot(
-    scores_df: pd.DataFrame,
-    metric: str,
-    split_by_label: bool = False,
-    plot_title: str | None = None,
-    output: str | None = None,
-) -> plt.Figure:
-    """Box plot showing median, quartiles, and outliers per model.
-
-    When the data contains **≥ 2 protein pairs**, each pair gets its own
-    side-by-side subplot so distributions are never merged across
-    different interactions.
-
-    A compact alternative to a violin plot — ideal when the data has
-    high variance and a bar chart's error bars would be misleading.
-    Shows the median (line), interquartile range (box), whiskers at
-    1.5 × IQR, and individual outliers beyond the whiskers.
-
-    Parameters
-    ----------
-    scores_df : DataFrame
-        Unified scores file.
-    metric : str
-        Which ``score_type`` to plot.
-    split_by_label : bool
-        If True and a ``label`` column exists, draw separate boxes per
-        label (interaction vs non-interaction) for each model.
-    plot_title : str | None
-    output : str | None
-        Save path.
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-    """
-    df = scores_df.copy()
-    if "score_type" in df.columns:
-        df = df[df["score_type"].str.lower() == metric.lower()]
-    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
-    df = df.dropna(subset=["score_value"])
-
-    if df.empty:
-        raise ValueError(f"No rows match metric='{metric}'")
-
-    models = sorted(df["model"].unique())
-    pa, pb, pair_tuples = _detect_pairs(df)
-    has_label = "label" in df.columns and split_by_label and df["label"].notna().any()
-
-    flier_kw = {"marker": "o", "markersize": 3, "alpha": 0.4}
-
-    # ── Facet by pair when ≥ 2 pairs ──────────────────────────────
-    n_pairs = len(pair_tuples)
-    if n_pairs >= 2:
-        n_models = len(models)
-        panel_w = max(5, n_models * 2.0)
-        fig, axes = plt.subplots(1, n_pairs,
-                                 figsize=(panel_w * n_pairs, 6),
-                                 sharey=True)
-        if n_pairs == 1:
-            axes = [axes]
-        for idx, (a, b) in enumerate(pair_tuples):
-            ax = axes[idx]
-            sub = df[(df[pa] == a) & (df[pb] == b)]
-            sub_models = sorted(sub["model"].unique())
-            if has_label:
-                sns.boxplot(
-                    data=sub, x="model", y="score_value", hue="label",
-                    order=sub_models, ax=ax, linewidth=0.8,
-                    flierprops=flier_kw,
-                )
-                if idx == n_pairs - 1:
-                    ax.legend(title="Label", fontsize=8, title_fontsize=9)
-                else:
-                    ax.legend_.remove() if ax.get_legend() else None
-            else:
-                sns.boxplot(
-                    data=sub, x="model", y="score_value",
-                    order=sub_models, ax=ax, linewidth=0.8,
-                    flierprops=flier_kw,
-                )
-            ax.set_title(_pair_label(a, b), fontsize=10)
-            ax.set_xlabel("")
-            ax.set_ylabel(metric if idx == 0 else "")
-            sns.despine(ax=ax)
-
-        suptitle = plot_title or f"{metric} by model"
-        fig.suptitle(suptitle, fontsize=13, y=1.02)
-        fig.tight_layout()
-        # Shared x-label centred across all facets
-        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=11)
-
-        if output:
-            fig.savefig(output, bbox_inches="tight", dpi=180)
-            print(f"Plot saved to {output}")
-        else:
-            plt.show()
-        return fig
-
-    # ── Single pair (or no pair columns) — single-panel plot ──────
-    pairs = [_pair_label(a, b) for a, b in pair_tuples]
-    n_models = len(models)
-    fig_w = max(7, n_models * 2.2)
-    fig, ax = plt.subplots(figsize=(fig_w, 6))
-
-    if has_label:
-        sns.boxplot(
-            data=df, x="model", y="score_value", hue="label",
-            order=models, ax=ax, linewidth=0.8,
-            flierprops=flier_kw,
-        )
-        ax.legend(title="Label", fontsize=8, title_fontsize=9)
-    else:
-        sns.boxplot(
-            data=df, x="model", y="score_value",
-            order=models, ax=ax, linewidth=0.8,
-            flierprops=flier_kw,
-        )
-
-    ax.set_xlabel("Docking Engine")
-    ax.set_ylabel(metric)
-
-    if plot_title:
-        title = plot_title
-    elif len(pairs) == 1:
-        title = f"{metric} by model — {pairs[0]}"
-    else:
-        title = f"{metric} by model"
-    ax.set_title(title)
-
-    sns.despine(ax=ax)
-    fig.tight_layout()
-
-    if output:
-        fig.savefig(output, bbox_inches="tight", dpi=180)
-        print(f"Plot saved to {output}")
-    else:
-        plt.show()
-    return fig
-
-
-def score_heatmap(
-    scores_df: pd.DataFrame,
-    metric: str,
-    agg: str = "mean",
-    plot_title: str | None = None,
-    output: str | None = None,
-) -> plt.Figure:
-    """Heatmap of aggregated scores: one row per protein pair, one column per model.
-
-    This is useful when you have many pairs and want to see at a glance
-    which pairs score well across which engines.
-
-    Parameters
-    ----------
-    scores_df : DataFrame
-        Must have ``model``, ``score_type``, ``score_value``, ``proteinA``,
-        ``proteinB``.
-    metric : str
-        Which ``score_type`` to show.
-    agg : str
-        Aggregation function (``"mean"``, ``"median"``, ``"max"``,
-        ``"min"``).  Applied per (pair, model) group.
-    plot_title : str | None
-    output : str | None
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-    """
-    df = scores_df.copy()
-    # Normalize column names to lowercase (load_scores does this, but
-    # DataFrames built manually or in tests may use camelCase).
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    if "score_type" in df.columns:
-        df = df[df["score_type"].str.lower() == metric.lower()]
-    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
-    df = df.dropna(subset=["score_value"])
-
-    if "proteina" not in df.columns or "proteinb" not in df.columns:
-        raise ValueError("Need proteinA and proteinB columns for heatmap")
-
-    df["pair"] = df["proteina"] + " vs " + df["proteinb"]
-    pivot = df.pivot_table(
-        index="pair", columns="model", values="score_value", aggfunc=agg,
-    )
-
-    fig, ax = plt.subplots(figsize=(max(6, len(pivot.columns) * 2),
-                                     max(4, len(pivot) * 0.6 + 1)))
-    sns.heatmap(
-        pivot, annot=True, fmt=".2f", cmap="RdYlGn", linewidths=0.5,
-        linecolor="white", ax=ax, cbar_kws={"label": f"{metric} ({agg})"},
-    )
-    ax.set_title(plot_title or f"{metric} heatmap ({agg})")
-    ax.set_ylabel("")
-    fig.tight_layout()
-
-    if output:
-        fig.savefig(output, bbox_inches="tight", dpi=150)
         print(f"Plot saved to {output}")
     else:
         plt.show()
@@ -2757,11 +2553,61 @@ def _cli_error_with_hint(msg: str, metric: str, scores_df) -> None:
         )
     elif "proteinA" in lower or "proteinB" in lower:
         print(
-            "Hint: the heatmap plot requires proteinA and proteinB "
-            "columns.  Re-run 'ppinsight collect' with --pair or --pairs.",
+            "Hint: this plot needs proteinA and proteinB columns.  "
+            "Re-run 'ppinsight collect' with --pair or --pairs.",
             file=sys.stderr,
         )
     sys.exit(1)
+
+
+def _parse_pair_arg(raw_pair: str | None) -> tuple[str, str] | None:
+    """Parse ``proteinA:proteinB`` input from the CLI."""
+    if not raw_pair:
+        return None
+    parts = [p.strip() for p in raw_pair.split(":")]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        print("ERROR: --pair must be formatted as proteinA:proteinB", file=sys.stderr)
+        sys.exit(2)
+    return parts[0], parts[1]
+
+
+def _slugify_output_token(text: str) -> str:
+    """Return a filesystem-safe token for auto-generated output filenames."""
+    token = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in text)
+    token = token.strip("._")
+    return token or "plot"
+
+
+def _next_available_output_path(path: str) -> str:
+    """Return *path* if free, else append ``_N`` before file extension."""
+    if not os.path.exists(path):
+        return path
+
+    stem, ext = os.path.splitext(path)
+    idx = 1
+    while True:
+        candidate = f"{stem}_{idx}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        idx += 1
+
+
+def _default_plot_output_path(
+    plot_type: str,
+    metric: str | None,
+    pair: tuple[str, str] | None,
+) -> str:
+    """Build a default plot file path under ``data/output/plots``."""
+    out_dir = os.path.join("data", "output", "plots")
+    metric_token = _slugify_output_token(metric or "summary")
+    name_parts = [_slugify_output_token(plot_type), metric_token]
+    if pair is not None:
+        pair_token = (
+            f"{_slugify_output_token(pair[0])}_vs_{_slugify_output_token(pair[1])}"
+        )
+        name_parts.append(pair_token)
+    base = "_".join(name_parts) + ".png"
+    return _next_available_output_path(os.path.join(out_dir, base))
 
 
 # ---------------------------------------------------------------------------
@@ -2826,10 +2672,18 @@ def main(argv=None):
         "--output", "-o",
         default=None,
         help=(
-            "Save the plot to a file (png/svg/pdf) instead of showing "
-            "interactively.  The recommended location is "
-            "data/output/plots/ (e.g. -o data/output/plots/violin.png).  "
-            "Parent directories are created automatically."
+            "Save the plot to a file (png/svg/pdf).  If omitted, compare "
+            "auto-saves a PNG under data/output/plots/ using plot type and "
+            "metric in the filename.  Parent directories are created "
+            "automatically."
+        ),
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help=(
+            "Display plots interactively instead of auto-saving when -o is "
+            "not provided."
         ),
     )
     parser.add_argument(
@@ -2969,6 +2823,7 @@ def main(argv=None):
     )
 
     args = parser.parse_args(argv)
+    pair_filter = _parse_pair_arg(args.pair)
 
     # Apply the default theme before any plotting
     apply_theme()
@@ -3008,10 +2863,36 @@ def main(argv=None):
                 _print_plot_guide(scores_df)
                 return
 
+            analysis_df = scores_df
+            if pair_filter is not None:
+                pa, pb, _pairs = _detect_pairs(analysis_df)
+                if not pa or not pb:
+                    print(
+                        "ERROR: --pair requires proteinA/proteinB columns in "
+                        "the scores file.",
+                        file=sys.stderr,
+                    )
+                    print(
+                        "Hint: re-run 'ppinsight collect' with --pair or --pairs.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
+                a, b = pair_filter
+                analysis_df = analysis_df[
+                    analysis_df[pa].fillna("").astype(str).str.lower().eq(a.lower())
+                    & analysis_df[pb].fillna("").astype(str).str.lower().eq(b.lower())
+                ]
+                if analysis_df.empty:
+                    _cli_error_with_hint(
+                        f"No rows match pair={pair_filter}",
+                        args.metric or "",
+                        scores_df,
+                    )
+
             # --capri-quality does NOT need --metric
             if args.capri_quality:
                 try:
-                    summary = capri_summary_table(scores_df)
+                    summary = capri_summary_table(analysis_df)
                 except ValueError as exc:
                     print(f"ERROR: {exc}", file=sys.stderr)
                     sys.exit(1)
@@ -3021,11 +2902,20 @@ def main(argv=None):
             # --metric is required for everything below this point
             # (unless --plot-type quality_bar, which also doesn't need it).
             if args.plot_type == "quality_bar":
+                plot_out = args.output
+                if plot_out is None and not args.show:
+                    plot_out = _default_plot_output_path(
+                        "quality_bar",
+                        "capri_quality",
+                        pair_filter,
+                    )
+                if plot_out is not None:
+                    os.makedirs(os.path.dirname(plot_out) or ".", exist_ok=True)
                 try:
                     quality_bar_chart(
-                        scores_df,
+                        analysis_df,
                         plot_title=None,
-                        output=args.output,
+                        output=plot_out,
                     )
                 except ValueError as exc:
                     print(f"ERROR: {exc}", file=sys.stderr)
@@ -3047,14 +2937,14 @@ def main(argv=None):
             # plot is a *visualisation* of this summary — the table is
             # the canonical data reference.
             try:
-                summary_tbl = _print_tabular_summary(scores_df, args.metric)
+                summary_tbl = _print_tabular_summary(analysis_df, args.metric)
             except ValueError as exc:
                 _cli_error_with_hint(str(exc), args.metric, scores_df)
 
             if args.classify:
                 try:
                     summary = classification_summary(
-                        scores_df,
+                        analysis_df,
                         metric=args.metric,
                         threshold=args.threshold,
                     )
@@ -3069,46 +2959,58 @@ def main(argv=None):
 
             if args.rank:
                 try:
-                    rnk = ranking_table(scores_df, metric=args.metric)
+                    rnk = ranking_table(analysis_df, metric=args.metric)
                 except ValueError as exc:
                     _cli_error_with_hint(str(exc), args.metric, scores_df)
                 print(rnk.to_string(index=False))
                 return
 
             # Dispatch by plot type.
-            # Plot functions are called with output=None so the
-            # annotation tag is added *before* the single save.
+            # Plot functions receive the resolved output path so they avoid
+            # interactive rendering when auto-save mode is active.
             pt = args.plot_type
 
-            def _save_or_show(fig):
-                """Annotate with source tag, then save or show."""
+            def _resolve_plot_output(plot_type: str) -> str | None:
+                plot_out = args.output
+                if plot_out is None and not args.show:
+                    plot_out = _default_plot_output_path(
+                        plot_type,
+                        args.metric,
+                        pair_filter,
+                    )
+                if plot_out is not None:
+                    os.makedirs(os.path.dirname(plot_out) or ".", exist_ok=True)
+                return plot_out
+
+            def _save_or_show(fig, plot_out: str | None):
+                """Annotate and re-save plots when writing to disk."""
+                if not plot_out:
+                    return
                 _annotate_plot_source(fig, args.metric, summary_tbl)
-                if args.output:
-                    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-                    fig.savefig(args.output, bbox_inches="tight", dpi=180)
-                    print(f"Plot saved to {args.output}")
-                else:
-                    plt.show()
+                os.makedirs(os.path.dirname(plot_out) or ".", exist_ok=True)
+                fig.savefig(plot_out, bbox_inches="tight", dpi=180)
 
             try:
                 if pt == "violin":
+                    plot_out = _resolve_plot_output(pt)
                     fig = violin_plot(
-                        scores_df,
+                        analysis_df,
                         metric=args.metric,
                         split_by_label=args.split_label,
                         plot_title=None,
-                        output=None,
+                        output=plot_out,
                     )
-                    _save_or_show(fig)
+                    _save_or_show(fig, plot_out)
                     return
 
                 if pt == "roc":
+                    plot_out = _resolve_plot_output(pt)
                     fig = roc_curve_plot(
-                        scores_df,
+                        analysis_df,
                         metric=args.metric,
-                        output=None,
+                        output=plot_out,
                     )
-                    _save_or_show(fig)
+                    _save_or_show(fig, plot_out)
                     return
 
                 if pt == "scatter":
@@ -3125,34 +3027,37 @@ def main(argv=None):
                             file=sys.stderr,
                         )
                         sys.exit(2)
+                    plot_out = _resolve_plot_output(pt)
                     fig = model_agreement_scatter(
-                        scores_df,
+                        analysis_df,
                         metric=args.metric,
                         model_x=args.models[0],
                         model_y=args.models[1],
-                        output=None,
+                        output=plot_out,
                     )
-                    _save_or_show(fig)
+                    _save_or_show(fig, plot_out)
                     return
 
                 if pt == "ridge":
+                    plot_out = _resolve_plot_output(pt)
                     fig = ridge_plot(
-                        scores_df,
+                        analysis_df,
                         metric=args.metric,
                         plot_title=None,
-                        output=None,
+                        output=plot_out,
                     )
-                    _save_or_show(fig)
+                    _save_or_show(fig, plot_out)
                     return
 
                 if pt == "cdf":
+                    plot_out = _resolve_plot_output(pt)
                     fig = cdf_plot(
-                        scores_df,
+                        analysis_df,
                         metric=args.metric,
                         plot_title=None,
-                        output=None,
+                        output=plot_out,
                     )
-                    _save_or_show(fig)
+                    _save_or_show(fig, plot_out)
                     return
 
                 if pt == "difference":
@@ -3163,14 +3068,15 @@ def main(argv=None):
                             file=sys.stderr,
                         )
                         sys.exit(2)
+                    plot_out = _resolve_plot_output(pt)
                     fig = pairwise_difference_plot(
-                        scores_df,
+                        analysis_df,
                         metric=args.metric,
                         model_a=args.models[0],
                         model_b=args.models[1],
-                        output=None,
+                        output=plot_out,
                     )
-                    _save_or_show(fig)
+                    _save_or_show(fig, plot_out)
                     return
 
                 raise ValueError(f"Unsupported plot type '{pt}'")
@@ -3198,7 +3104,10 @@ def main(argv=None):
         )
         sys.exit(1)
 
-    compare_scores(frames, names, args.metric, plot_title=None, output=args.output)
+    output = args.output
+    if output is None and not args.show:
+        output = _default_plot_output_path("bar", args.metric, None)
+    compare_scores(frames, names, args.metric, plot_title=None, output=output)
 
 
 # ---------------------------------------------------------------------------

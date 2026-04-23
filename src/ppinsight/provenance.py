@@ -9,7 +9,6 @@ to rich metadata about the run:
 * engine name and version (when available)
 * source directory
 * collection timestamp (ISO-8601)
-* hostname
 * engine-specific parameters extracted from config files
 
 This lets users (and future-you) answer: *"Where did this number come
@@ -26,9 +25,44 @@ from __future__ import annotations
 import datetime
 import json
 import os
-import platform
 import re
 from typing import Any
+
+from ppinsight.utils import _project_root
+
+_PROJECT_ROOT = os.path.abspath(_project_root())
+
+
+def _to_portable_path(path: str) -> str:
+    """Convert *path* to a reproducible, non-sensitive representation.
+
+    - If the path is inside the repository, return a repo-relative path.
+    - Otherwise return only the basename to avoid leaking local machine paths.
+    """
+    abs_path = os.path.abspath(path)
+    rel_path = os.path.relpath(abs_path, _PROJECT_ROOT)
+    if rel_path != "." and not rel_path.startswith(".."):
+        return rel_path
+    base = os.path.basename(abs_path.rstrip(os.sep))
+    return base or "."
+
+
+def _scrub_sensitive_values(value: Any) -> Any:
+    """Recursively scrub absolute paths from metadata payloads."""
+    if isinstance(value, dict):
+        return {
+            key: _scrub_sensitive_values(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_scrub_sensitive_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_sensitive_values(item) for item in value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped and os.path.isabs(stripped):
+            return _to_portable_path(stripped)
+    return value
 
 # ---------------------------------------------------------------------------
 # Run-ID generation
@@ -134,9 +168,8 @@ def extract_run_metadata(engine: str, run_dir: str) -> dict[str, Any]:
 
         {
             "engine": "lightdock",
-            "source_dir": "/abs/path/to/simulation",
+            "source_dir": "examples/lightdock/simulation",
             "collected_at": "2026-04-02T15:23:00",
-            "hostname": "okik-mbp",
             "engine_meta": { ... }   # engine-specific config/params
         }
     """
@@ -145,10 +178,9 @@ def extract_run_metadata(engine: str, run_dir: str) -> dict[str, Any]:
 
     return {
         "engine": engine,
-        "source_dir": os.path.abspath(run_dir),
+        "source_dir": _to_portable_path(run_dir),
         "collected_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "hostname": platform.node(),
-        "engine_meta": engine_meta,
+        "engine_meta": _scrub_sensitive_values(engine_meta),
     }
 
 

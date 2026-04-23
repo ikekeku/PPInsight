@@ -25,8 +25,8 @@ data/
     ├── rosetta_runs/      # One subdirectory per Rosetta run
     │   └── <ProteinA>_vs_<ProteinB>/
     ├── scores/            # Unified scores & batch results
-    │   ├── scores.tsv
-    │   ├── scores.tsv.provenance.json
+    │   ├── scores_<run>.tsv
+    │   ├── scores_<run>.tsv.provenance.json
     │   └── batch_results.csv
     └── plots/             # Saved figures
         └── *.png / *.svg / *.pdf
@@ -47,10 +47,10 @@ data/
 | What                        | Default location                         | CLI flag to override         |
 |-----------------------------|------------------------------------------|------------------------------|
 | Docking outputs             | `data/output/<engine>_runs/`             | `--output-root`              |
-| Unified scores file         | `data/output/scores/scores.tsv`          | `-o` on `ppinsight collect`  |
-| Run record (provenance)     | `data/output/scores/scores.tsv.provenance.json` | (accompanies scores file) |
+| Unified scores file         | auto-named in `data/output/scores/`      | `-o` on `ppinsight collect`  |
+| Run record (provenance)     | `<scores_file>.provenance.json`          | (accompanies scores file) |
 | Batch results table         | `data/output/scores/batch_results.csv`   | `-o` on `ppinsight batch`    |
-| Plots and figures           | shown interactively; saved when you add `-o <path>` | `-o` on `ppinsight compare`  |
+| Plots and figures           | auto-saved in `data/output/plots/` (use `--show` for interactive view) | `-o` on `ppinsight compare`  |
 
 ## Pairs file format
 
@@ -73,7 +73,6 @@ The pairs file is the input to `ppinsight batch` (and optionally
 |--------------|--------|----------------------|
 | `label`      | string | `interaction` or `non-interaction`.  Used by `--classify` and ROC analysis to separate true positives from true negatives.  If omitted, defaults to empty. |
 | `family`     | string | Protein family grouping (e.g. `Ephrin`, `FGFR`).  Carried through to outputs for filtering. |
-| `references` | string | Citation numbers from the source table (e.g. `5,8`).  Informational only. |
 
 Column names are **case-insensitive** and leading/trailing whitespace is
 stripped, so `ProteinA`, `proteinA`, and `proteinA ` all work.
@@ -90,11 +89,11 @@ EPHA1,FGFR3,non-interaction
 ### Full example (`pairs.tsv`)
 
 ```tsv
-proteinA	proteinB	label	family	references
-EPHA1	ERBB2	interaction	Ephrin	6
-EPHA1	FGFR2	interaction	Ephrin	7
-EPHA1	FGFR3	non-interaction	Ephrin	
-EPHA2	MET	interaction	Ephrin	10,12
+proteinA	proteinB	label	family
+EPHA1	ERBB2	interaction	Ephrin
+EPHA1	FGFR2	interaction	Ephrin
+EPHA1	FGFR3	non-interaction	Ephrin
+EPHA2	MET	interaction	Ephrin
 ```
 
 ### Notes

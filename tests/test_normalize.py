@@ -16,7 +16,6 @@ from ppinsight.visualizer import (
     model_agreement_scatter,
     normalize_scores,
     roc_curve_plot,
-    score_heatmap,
     violin_plot,
 )
 
@@ -433,17 +432,6 @@ class TestViolinPlot:
     def test_save_to_file(self, labeled_scores, tmp_path):
         out = str(tmp_path / "violin.png")
         violin_plot(labeled_scores, metric="luciferin_score", output=out)
-        assert os.path.isfile(out)
-
-
-class TestScoreHeatmap:
-    def test_basic(self, labeled_scores):
-        fig = score_heatmap(labeled_scores, metric="luciferin_score")
-        assert fig is not None
-
-    def test_save_to_file(self, labeled_scores, tmp_path):
-        out = str(tmp_path / "heatmap.png")
-        score_heatmap(labeled_scores, metric="luciferin_score", output=out)
         assert os.path.isfile(out)
 
 

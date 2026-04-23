@@ -34,6 +34,23 @@ pip install "ppinsight[prodigy]"
 pip install "ppinsight[quality,prodigy,dev]"
 ```
 
+### Does `ppinsight fetch` accept gene names like `VEGFA`?
+
+Yes. `ppinsight fetch` accepts:
+
+- UniProt accessions (for example `P15692`)
+- FASTA-style IDs (for example `sp|P15692|VEGFA_HUMAN`)
+- common human gene/name inputs (for example `VEGFA` or `"VEGFA human"`)
+
+Name-based inputs are resolved against reviewed human UniProt records
+(`organism_id=9606`) before sequence/PDB download.
+
+### What do `--fasta FILE` and `--csv FILE` write in `ppinsight fetch`?
+
+- `--fasta FILE`: combined FASTA records returned by UniProt.
+- `--csv FILE`: structured metadata columns:
+   `ID`, `Name`, `Description`, `Sequence Length`, `Sequence`.
+
 ---
 
 ## CAPRI Quality Assessment

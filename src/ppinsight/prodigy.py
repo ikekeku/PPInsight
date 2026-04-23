@@ -11,7 +11,8 @@ Install the optional dependency with::
 CLI usage::
 
     ppinsight prodigy scores.tsv --pdb-dir pdbs/ --output scores_prodigy.tsv
-    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --top-n 10 --metric score --engine HADDOCK
+    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --top-n 10 \
+        --metric score --engine HADDOCK
 """
 
 from __future__ import annotations
@@ -304,14 +305,24 @@ def add_prodigy_to_scores(
         for col in ("proteina", "proteinb", "proteinA", "proteinB"):
             if col in ranking_rows.columns:
                 group_cols.append(col)
-        if higher_is_better:
-            top_rows = ranking_rows.groupby(group_cols, group_keys=False).apply(
-                lambda g: g.nlargest(top_n, "score_value"), include_groups=False
-            )
-        else:
-            top_rows = ranking_rows.groupby(group_cols, group_keys=False).apply(
-                lambda g: g.nsmallest(top_n, "score_value"), include_groups=False
-            )
+        grouped = ranking_rows.groupby(group_cols, group_keys=False)
+        try:
+            if higher_is_better:
+                top_rows = grouped.apply(
+                    lambda g: g.nlargest(top_n, "score_value"),
+                    include_groups=False,
+                )
+            else:
+                top_rows = grouped.apply(
+                    lambda g: g.nsmallest(top_n, "score_value"),
+                    include_groups=False,
+                )
+        except TypeError:
+            # Pandas < 2.2 does not support include_groups.
+            if higher_is_better:
+                top_rows = grouped.apply(lambda g: g.nlargest(top_n, "score_value"))
+            else:
+                top_rows = grouped.apply(lambda g: g.nsmallest(top_n, "score_value"))
         # Restrict scoring to only the PDB files that appear in the top poses.
         top_pdbs = set(top_rows["pdb"].dropna().unique())
         subset = subset[subset["pdb"].isin(top_pdbs)]
@@ -390,7 +401,8 @@ def _build_parser():
         metavar="SCORE_TYPE",
         help=(
             "score_type value to rank poses by when --top-n is used "
-            "(e.g. 'score' for HADDOCK, 'luciferin_score' for LightDock).  Required with --top-n."
+            "(e.g. 'score' for HADDOCK, 'luciferin_score' for LightDock).  "
+            "Required with --top-n."
         ),
     )
     parser.add_argument(

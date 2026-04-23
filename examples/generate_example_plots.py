@@ -31,8 +31,6 @@ import matplotlib
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
-
 from ppinsight.visualizer import (
     DEFAULT_THEME,
     apply_theme,
@@ -44,6 +42,8 @@ from ppinsight.visualizer import (
     roc_curve_plot,
     violin_plot,
 )
+
+ROOT = Path(__file__).resolve().parent.parent
 
 OUT = ROOT / "examples" / "example_plots"
 OUT_SCORES = OUT / "fabricated_scores.tsv"

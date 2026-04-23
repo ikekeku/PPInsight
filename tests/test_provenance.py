@@ -45,9 +45,9 @@ class TestExtractMetadata:
         (tmp_path / "setup.json").write_text(json.dumps(setup))
         meta = extract_run_metadata("lightdock", str(tmp_path))
         assert meta["engine"] == "lightdock"
-        assert meta["source_dir"] == str(tmp_path.resolve())
+        assert meta["source_dir"] == tmp_path.name
+        assert not os.path.isabs(meta["source_dir"])
         assert "collected_at" in meta
-        assert "hostname" in meta
         assert meta["engine_meta"]["glowworms"] == 200
 
     def test_lightdock_no_setup(self, tmp_path):

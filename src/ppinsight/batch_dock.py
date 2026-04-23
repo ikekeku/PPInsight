@@ -266,8 +266,11 @@ def main(argv=None):
         "--output-root",
         default=None,
         help=(
-            "Root directory for docking outputs (default: auto-generated).  "
-            "Each pair × engine gets a subdirectory under this root."
+            "Root directory for engine run directories (default: data/output).  "
+            "Batch creates engine-specific folders under this root (for "
+            "example lightdock_runs/, haddock_runs/, rosetta_runs/), with one "
+            "subdirectory per pair × engine run.  This does not control the "
+            "batch results table path (use -o for that)."
         ),
     )
     parser.add_argument(

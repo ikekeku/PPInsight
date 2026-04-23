@@ -12,6 +12,7 @@ produces comparative visualisations.
 - [Install & quick start](#install--quick-start)
 - [CLI reference](#cli-reference)
 - [Tutorial](#tutorial)
+- [FAQ](#faq)
 - [Project structure](#project-structure)
 - [Team members](#team-members)
 - [License](#license)
@@ -69,20 +70,23 @@ The examples below use the umbrella form.  Replace
 > **Tip:** every command accepts `--help`.  When in doubt, run
 > `ppinsight <command> --help` to see all available options.
 
-Before expensive runs, do these quick preflight checks:
+Before heavy runs, do these quick checks:
 
 ```bash
 # Check which docking engines are currently runnable/parsible
 ppinsight batch --list-engines
 
 # Check which plot types and flags are valid for your scores file
-ppinsight compare data/output/scores/scores.tsv --guide
+ppinsight compare <scores_file.tsv> --guide
 ```
 
 ### 1. Fetch protein data
 
-PPInsight fetches protein structures for you — you provide UniProt
-accession IDs, and it downloads sequences and PDB files automatically.
+PPInsight fetches protein structures for you. You provide UniProt
+identifiers, and it downloads sequences and PDB files automatically.
+Accepted inputs include canonical accessions (for example `P15692`),
+FASTA-style IDs (`sp|P15692|VEGFA_HUMAN`), and common human
+gene/name forms such as `VEGFA` or `"VEGFA human"`.
 
 The downloaded structures are saved with the same accession stems you
 typed, for example `P69905.pdb`.  That means the next step can use the
@@ -90,14 +94,19 @@ same identifiers directly in `proteinA` and `proteinB` without manual
 renaming.
 
 ```bash
-# Give one or more UniProt accession IDs.
+# Give one or more UniProt identifiers.
 # Downloaded PDB files land in --pdb-dir (default: data/input/)
 # as accession-named files such as data/input/P69905.pdb.
 ppinsight fetch P69905 P68871
+
+# Name-style human inputs are also accepted and resolved to accessions.
+ppinsight fetch "VEGFR2 human" "VEGFA human"
 ```
 
 Optional flags: `--pdb-dir DIR` (override download location), `--fasta FILE`
-(save FASTA sequences), `--csv FILE` (save metadata).
+(save FASTA sequences), `--csv FILE` (save metadata columns:
+ID, Name, Description, Sequence Length, Sequence),
+`--pdb-name accession|uniprot|both` (control output filename stems).
 Run `ppinsight fetch --help` for the full list.
 
 ### 2. Run docking pipelines
@@ -137,7 +146,8 @@ contents.
 ```bash
 # Point at one or more docking output directories.
 # --pair tells collect which proteins are in this run.
-# Scores are written to data/output/scores/scores.tsv by default.
+# Without -o, collect auto-generates a descriptive TSV path under
+# data/output/scores/ and avoids overwriting by adding numeric suffixes.
 ppinsight collect data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
     --pair 2UUY_rec:2UUY_lig
 ```
@@ -154,8 +164,8 @@ ppinsight collect \
 ```
 
 Alongside the scores file, `collect` writes a **run record**
-(`scores.tsv.provenance.json`) that documents where the numbers came
-from — engine parameters and source directories.  The unified scores
+(`<scores_file>.provenance.json`) that documents where the numbers came
+from, including engine parameters and source directories.  The unified scores
 rows also retain lightweight traceability columns when available
 (`run_id`, `pose_id`, `output_path`, `source_file`) so you can tie a
 plot back to a specific run and pose.
@@ -166,7 +176,7 @@ annotation.
 
 Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 
-### 4. Visualise & compare
+### 4. Visualize & compare
 
 ```bash
 # Violin plot (default) — always prints a tabular summary first
@@ -183,6 +193,12 @@ ppinsight compare data/output/scores/scores.tsv --metric dockq \
 # Filter by protein pair and save to PNG
 ppinsight compare data/output/scores/scores.tsv --metric dockq \
     --pair 2UUY_rec:2UUY_lig -o data/output/plots/violin_2uuy.png
+
+# If you omit -o, compare auto-saves to data/output/plots/
+ppinsight compare data/output/scores/scores.tsv --metric dockq
+
+# Use --show to open interactively instead of auto-saving
+ppinsight compare data/output/scores/scores.tsv --metric dockq --show
 
 # Tabular summary only (no plot)
 ppinsight compare data/output/scores/scores.tsv --metric dockq --table
@@ -216,10 +232,8 @@ Use `ppinsight compare data/output/scores/scores.tsv --guide` for a
 data-aware summary of which plot types and flags work with your specific
 scores file.
 
-The retained CLI plot types are `violin`, `ridge`, `roc`, `scatter`,
-`quality_bar`, `cdf`, and `difference`.  The older bar/box/heatmap
-functions remain in the Python API for backward compatibility, but they
-are not part of the CLI analysis workflow.
+The supported CLI plot types are `violin`, `ridge`, `roc`, `scatter`,
+`quality_bar`, `cdf`, and `difference`.
 
 ### 5. Parse interaction tables & batch-dock
 
@@ -279,9 +293,18 @@ available, DockQ/CAPRI quality evaluation.
 ## Tutorial
 
 A complete end-to-end walkthrough is in [`tutorials/README.md`](tutorials/README.md).
-It uses pre-computed docking outputs from all three engines — no external
-tools required.  Start there to see every `ppinsight compare` plot type
+It uses pre-computed docking outputs from all three engines, so no external
+tools are required.  Start there to see every `ppinsight compare` plot type
 and the full collect → compare → classify workflow.
+
+Additional walkthrough assets live under [`examples/`](examples/) (including
+fabricated plotting galleries and engine-specific sample outputs). For common
+troubleshooting questions, see [`docs/FAQ.md`](docs/FAQ.md).
+
+## FAQ
+
+Common setup, plotting, CAPRI, and PRODIGY questions are covered in
+[`docs/FAQ.md`](docs/FAQ.md).
 
 ### Three-layer evaluation
 
@@ -303,11 +326,11 @@ src/ppinsight/
   pdb_to_haddock.py     # HADDOCK3 staging & execution
   pdb_to_rosetta.py     # PyRosetta docking wrapper
   collect_scores.py     # Score aggregator (unified TSV/CSV)
-    visualizer.py         # Plotting and ppinsight compare implementation
+  visualizer.py         # Plotting and ppinsight compare implementation
   batch_dock.py         # Batch docking for all pairs
   parse_pairs.py        # Protein interaction table → pairs file
   quality.py            # DockQ quality evaluation
-    prodigy.py            # PRODIGY binding-affinity scoring
+  prodigy.py            # PRODIGY binding-affinity scoring
   provenance.py         # Run-level metadata & record I/O
   utils.py              # Shared utilities (path resolution)
   rosetta/              # PyRosetta pipeline internals
@@ -353,10 +376,10 @@ data/
 | What the tool produces           | Default location                         |
 |----------------------------------|------------------------------------------|
 | Docking outputs                  | `data/output/<engine>_runs/`             |
-| Unified scores file              | `data/output/scores/scores.tsv`          |
+| Unified scores file              | auto-named in `data/output/scores/` (or your `-o` path) |
 | Batch results table              | `data/output/scores/batch_results.csv`   |
-| Run record (provenance)          | `data/output/scores/scores.tsv.provenance.json` |
-| Plots / figures                  | shown interactively; use `-o` to save, e.g. `-o data/output/plots/fig.png` |
+| Run record (provenance)          | `<scores_file>.provenance.json` alongside your scores file |
+| Plots / figures                  | auto-saved in `data/output/plots/` (or use `-o` / `--show`) |
 
 All default paths can be overridden with CLI flags (`--input-dir`,
 `--pdb-dir`, `--output-root`, `-o`).  See [`data/README.md`](data/README.md)
@@ -366,6 +389,8 @@ for the full layout and pairs file format.
 
 - For HPC runs, pass an absolute `--output-root` to place outputs on a
   shared filesystem (e.g. `/gscratch/...`).
+- `--output-root` controls where engine run directories are created in
+    batch mode; it does not set the batch results table path (use `-o`).
 - External docking tools must be installed separately for the engines
   you want to use.  The HADDOCK helper supports container execution
   (`--container docker|apptainer`).

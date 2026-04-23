@@ -291,6 +291,40 @@ class TestCLI:
         vis.main(per_model_csvs + ["--metric", "score", "--output", out])
         assert os.path.isfile(out)
 
+    def test_unified_file_pair_filter(self, unified_scores_csv, tmp_path, monkeypatch):
+        import matplotlib.pyplot as _plt
+        monkeypatch.setattr(_plt, "show", lambda: None)
+
+        out = str(tmp_path / "pair.png")
+        vis.main([
+            unified_scores_csv,
+            "--metric", "dockq",
+            "--pair", "2UUY_rec:2UUY_lig",
+            "--output", out,
+        ])
+        assert os.path.isfile(out)
+
+    def test_unified_file_auto_saves_without_output(
+        self,
+        unified_scores_csv,
+        tmp_path,
+        monkeypatch,
+    ):
+        import matplotlib.pyplot as _plt
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            _plt,
+            "show",
+            lambda: (_ for _ in ()).throw(AssertionError("show should not be called")),
+        )
+
+        vis.main([unified_scores_csv, "--metric", "dockq"])
+
+        plots_dir = tmp_path / "data" / "output" / "plots"
+        assert plots_dir.exists()
+        assert list(plots_dir.glob("*.png"))
+
     def test_list_metrics(self, unified_scores_csv, capsys):
         vis.main([unified_scores_csv, "--metric", "dockq", "--list-metrics"])
         captured = capsys.readouterr()

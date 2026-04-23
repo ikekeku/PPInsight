@@ -288,3 +288,124 @@ def test_fetch_tolerates_missing_raw_pdb_artifact(tmp_path, monkeypatch):
     assert pdb_info == {"P69905": "1A00"}
     assert structured_data and structured_data[0]["ID"].startswith("sp|P69905|")
     assert not (tmp_path / "P69905.pdb").exists()
+
+
+def test_fetch_writes_uniprot_aliases_when_requested(tmp_path, monkeypatch):
+    """--pdb-name both should save accession and UniProt entry aliases."""
+
+    class DummyResponse:
+        def __init__(self, text="", json_data=None):
+            self.text = text
+            self._json_data = json_data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._json_data
+
+    def fake_get(url, timeout=10):
+        if url.endswith(".fasta"):
+            return DummyResponse(
+                text=(
+                    ">sp|P15692|VEGFA_HUMAN Vascular endothelial growth factor A\n"
+                    "MST\n"
+                )
+            )
+        return DummyResponse(
+            json_data={
+                "uniProtKBCrossReferences": [
+                    {"database": "PDB", "id": "1BJ1"}
+                ]
+            }
+        )
+
+    class DummyPDBList:
+        def retrieve_pdb_file(self, pdb_id, pdir, file_format="pdb"):
+            raw_path = Path(pdir) / f"pdb{pdb_id.lower()}.ent"
+            raw_path.write_text("HEADER\n", encoding="utf-8")
+            return str(raw_path)
+
+    monkeypatch.setattr(protein_fetch.requests, "get", fake_get)
+    monkeypatch.setattr(protein_fetch, "PDBList", DummyPDBList)
+
+    _, pdb_info = protein_fetch.get_uniprot_data(
+        ["P15692"],
+        pdb_dir=str(tmp_path),
+        pdb_name_mode="both",
+    )
+
+    assert pdb_info == {"P15692": "1BJ1"}
+    assert (tmp_path / "P15692.pdb").exists()
+    assert (tmp_path / "VEGFA_HUMAN.pdb").exists()
+
+
+@pytest.mark.parametrize("identifier", ["VEGFA", "VEGFA human"])
+def test_fetch_resolves_human_name_inputs(identifier, tmp_path, monkeypatch):
+    """Gene/name-style inputs should resolve to the human VEGFA accession."""
+
+    class DummyResponse:
+        def __init__(self, text="", json_data=None):
+            self.text = text
+            self._json_data = json_data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._json_data
+
+    search_queries: list[str] = []
+
+    def fake_get(url, params=None, timeout=10):
+        if url.endswith("/search"):
+            query = str((params or {}).get("query", ""))
+            search_queries.append(query)
+            return DummyResponse(
+                json_data={
+                    "results": [
+                        {
+                            "primaryAccession": "P15692",
+                            "uniProtkbId": "VEGFA_HUMAN",
+                        }
+                    ]
+                }
+            )
+
+        accession = url.rsplit("/", 1)[-1].split(".")[0]
+        if url.endswith(".fasta"):
+            assert accession == "P15692"
+            return DummyResponse(
+                text=(
+                    ">sp|P15692|VEGFA_HUMAN Vascular endothelial growth factor A\n"
+                    "MST\n"
+                )
+            )
+        if url.endswith(".json"):
+            assert accession == "P15692"
+            return DummyResponse(
+                json_data={
+                    "uniProtKBCrossReferences": [
+                        {"database": "PDB", "id": "1BJ1"}
+                    ]
+                }
+            )
+        raise AssertionError(f"Unexpected URL in test stub: {url}")
+
+    class DummyPDBList:
+        def retrieve_pdb_file(self, pdb_id, pdir, file_format="pdb"):
+            raw_path = Path(pdir) / f"pdb{pdb_id.lower()}.ent"
+            raw_path.write_text("HEADER\n", encoding="utf-8")
+            return str(raw_path)
+
+    monkeypatch.setattr(protein_fetch.requests, "get", fake_get)
+    monkeypatch.setattr(protein_fetch, "PDBList", DummyPDBList)
+
+    _, pdb_info = protein_fetch.get_uniprot_data(
+        [identifier],
+        pdb_dir=str(tmp_path),
+    )
+
+    assert search_queries
+    assert pdb_info == {"P15692": "1BJ1"}
+    assert (tmp_path / "P15692.pdb").exists()

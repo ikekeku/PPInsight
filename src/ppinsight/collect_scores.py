@@ -480,10 +480,15 @@ def aggregate_scores(
         else:  # mean
             return vals.mean()
 
-    result = (
-        df.groupby(group_cols_full, as_index=False)
-        .apply(lambda g: pd.Series({"score_value": _agg(g)}), include_groups=False)
-    )
+    grouped = df.groupby(group_cols_full, as_index=False)
+    try:
+        result = grouped.apply(
+            lambda g: pd.Series({"score_value": _agg(g)}),
+            include_groups=False,
+        )
+    except TypeError:
+        # pandas < 2.2 does not support include_groups
+        result = grouped.apply(lambda g: pd.Series({"score_value": _agg(g)}))
     # Flatten if needed
     if isinstance(result.columns, pd.MultiIndex):
         result.columns = ["_".join(c).strip("_") for c in result.columns]
@@ -902,6 +907,41 @@ def _has_nonempty_pair_context(scores_df: pd.DataFrame) -> bool:
     return bool((pa.ne("") & pb.ne("")).any())
 
 
+def _slugify_filename_part(text: str) -> str:
+    """Return a filesystem-safe token for default output filenames."""
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", text.strip())
+    cleaned = cleaned.strip("._")
+    return cleaned or "run"
+
+
+def _next_available_file_path(path: str) -> str:
+    """Return *path* if free, else append ``_N`` before the extension."""
+    if not os.path.exists(path):
+        return path
+
+    base, ext = os.path.splitext(path)
+    idx = 1
+    while True:
+        candidate = f"{base}_{idx}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        idx += 1
+
+
+def _default_output_path(directories: list[str]) -> str:
+    """Build a descriptive default output path from input directory names."""
+    out_dir = os.path.join("data", "output", "scores")
+    stems = [
+        _slugify_filename_part(os.path.basename(os.path.normpath(d)))
+        for d in directories
+    ]
+    if len(stems) == 1:
+        stem = f"scores_{stems[0]}"
+    else:
+        stem = f"scores_{stems[0]}_plus_{len(stems) - 1}_runs"
+    return _next_available_file_path(os.path.join(out_dir, f"{stem}.tsv"))
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -924,9 +964,11 @@ def main(argv=None):
     )
     parser.add_argument(
         "-o", "--output",
-        default=os.path.join("data", "output", "scores", "scores.tsv"),
+        default=None,
         help=(
-            "Output file path (default: data/output/scores/scores.tsv).  "
+            "Output file path.  If omitted, collect writes an auto-named "
+            "TSV in data/output/scores/ based on input run directory names "
+            "and appends a numeric suffix when needed to avoid overwriting.  "
             "Extension determines the format: .tsv → tab-separated, "
             ".csv → comma-separated.  Parent directories are created "
             "automatically.  This unified file is the input for "
@@ -1077,7 +1119,9 @@ def main(argv=None):
         df = aggregate_scores(df, strategy=args.agg, n=args.agg_n)
 
     # Write output
-    out = args.output
+    out = args.output or _default_output_path(args.directories)
+    if args.output is None:
+        print(f"No --output provided; auto-selected: {out}")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     sep = "\t" if out.endswith(".tsv") else ","
     df.to_csv(out, sep=sep, index=False)
