@@ -72,20 +72,33 @@ class TestScorePdb:
         pdb_file = tmp_path / "complex.pdb"
         pdb_file.write_text("ATOM  ...\n", encoding="utf-8")
 
-        mock_runner = MagicMock()
-        mock_runner.ba_val = -9.5
-        mock_runner.kd_val = 1.2e-7
-        mock_runner.nis_a = 0.32
-        mock_runner.nis_c = 0.18
-        mock_runner.bins = {"CC": 5, "CP": 3, "AC": 2, "AA": 1, "PP": 0, "AP": 1}
-
-        MockProdigy = MagicMock(return_value=mock_runner)
         mock_chain = MagicMock()
         mock_chain.id = "A"
         mock_model = MagicMock()
         mock_model.get_chains.return_value = [mock_chain]
         mock_struct = MagicMock()
         mock_struct.__iter__ = MagicMock(return_value=iter([mock_model]))
+
+        class MockProdigy:
+            def __init__(self, struct_obj, selection=None, temp=25.0):
+                assert struct_obj is mock_struct
+                assert selection == ["A"]
+                assert temp == pytest.approx(25.0)
+                self.ba_val = -9.5
+                self.kd_val = 1.2e-7
+                self.nis_a = 0.32
+                self.nis_c = 0.18
+                self.bins = {
+                    "CC": 5,
+                    "CP": 3,
+                    "AC": 2,
+                    "AA": 1,
+                    "PP": 0,
+                    "AP": 1,
+                }
+
+            def predict(self, distance_cutoff=5.5, acc_threshold=0.05):
+                return None
 
         with patch("ppinsight.prodigy._require_prodigy", return_value=MockProdigy), \
              patch("ppinsight.prodigy._parse_pdb", return_value=mock_struct):
@@ -95,6 +108,40 @@ class TestScorePdb:
         assert result["prodigy_kd"] == pytest.approx(1.2e-7)
         assert result["nis_a"] == pytest.approx(0.32)
         assert result["n_contacts"] == 12
+
+    def test_mocked_successful_scoring_with_legacy_constructor(self, tmp_path):
+        pdb_file = tmp_path / "complex.pdb"
+        pdb_file.write_text("ATOM  ...\n", encoding="utf-8")
+
+        mock_chain = MagicMock()
+        mock_chain.id = "A"
+        mock_model = MagicMock()
+        mock_model.get_chains.return_value = [mock_chain]
+        mock_struct = MagicMock()
+        mock_struct.__iter__ = MagicMock(return_value=iter([mock_model]))
+
+        class LegacyProdigy:
+            def __init__(self, struct_obj, name, selection, temp=25.0):
+                assert struct_obj is mock_struct
+                assert name == "complex"
+                assert selection == ["A"]
+                assert temp == pytest.approx(25.0)
+                self.ba_val = -8.1
+                self.kd_val = 3.4e-7
+                self.nis_a = 0.21
+                self.nis_c = 0.11
+                self.bins = {"CC": 2, "CP": 1, "AC": 0, "AA": 0, "PP": 0, "AP": 0}
+
+            def predict(self, distance_cutoff=5.5, acc_threshold=0.05):
+                return None
+
+        with patch("ppinsight.prodigy._require_prodigy", return_value=LegacyProdigy), \
+             patch("ppinsight.prodigy._parse_pdb", return_value=mock_struct):
+            result = score_pdb(pdb_file)
+
+        assert result["prodigy_ddg"] == pytest.approx(-8.1)
+        assert result["prodigy_kd"] == pytest.approx(3.4e-7)
+        assert result["n_contacts"] == 3
 
     def test_no_contacts_returns_nan(self, tmp_path):
         pdb_file = tmp_path / "single_chain.pdb"

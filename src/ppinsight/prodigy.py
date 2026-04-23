@@ -17,9 +17,11 @@ CLI usage::
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 import warnings
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +56,38 @@ def _require_prodigy() -> Any:
             ) from exc
 
 
+def _build_prodigy_runner(
+    prodigy_class: Any,
+    structure: Any,
+    structure_name: str,
+    selection: str,
+    temperature: float,
+) -> Any:
+    """Instantiate ``Prodigy`` across old and new prodigy-prot APIs."""
+    try:
+        parameter_names = list(inspect.signature(prodigy_class).parameters)
+    except (TypeError, ValueError):
+        parameter_names = []
+
+    if "struct_obj" in parameter_names:
+        kwargs: dict[str, Any] = {
+            "struct_obj": structure,
+            "selection": selection,
+            "temp": temperature,
+        }
+        if "name" in parameter_names:
+            kwargs["name"] = structure_name
+        return prodigy_class(**kwargs)
+
+    if len(parameter_names) >= 4:
+        return prodigy_class(structure, structure_name, selection, temp=temperature)
+
+    if len(parameter_names) >= 3:
+        return prodigy_class(structure, selection, temp=temperature)
+
+    return prodigy_class(structure, selection=selection, temp=temperature)
+
+
 def _parse_pdb(pdb_path: str | Path) -> Any:
     """Parse a PDB file and return a Bio.PDB structure."""
     try:
@@ -67,6 +101,31 @@ def _parse_pdb(pdb_path: str | Path) -> Any:
     parser = PDBParser(QUIET=True)
     path = Path(pdb_path)
     return parser.get_structure(path.stem, str(path))
+
+
+def _filter_structure_for_prodigy(structure: Any) -> Any:
+    """Return a protein-only structure suitable for PRODIGY contact typing."""
+    try:
+        from Bio.PDB.Polypeptide import is_aa  # type: ignore[import]
+        from Bio.PDB.Structure import Structure  # type: ignore[import]
+    except ImportError:
+        return structure
+
+    if not isinstance(structure, Structure):
+        return structure
+
+    filtered = deepcopy(structure)
+    for model in filtered:
+        for chain in list(model):
+            for residue in list(chain):
+                keep_residue = (
+                    residue.id[0] == " " and is_aa(residue, standard=True)
+                )
+                if not keep_residue:
+                    chain.detach_child(residue.id)
+            if not list(chain):
+                model.detach_child(chain.id)
+    return filtered
 
 
 def score_pdb(
@@ -107,6 +166,7 @@ def score_pdb(
 
     try:
         structure = _parse_pdb(pdb_path)
+        structure = _filter_structure_for_prodigy(structure)
     except Exception as exc:
         return {
             "prodigy_ddg": float("nan"),
@@ -115,7 +175,7 @@ def score_pdb(
         }
 
     if chains:
-        selection = ",".join(chains)
+        selection = list(chains)
     else:
         seen: set[str] = set()
         unique_chains: list[str] = []
@@ -124,10 +184,16 @@ def score_pdb(
                 if ch.id not in seen:
                     seen.add(ch.id)
                     unique_chains.append(ch.id)
-        selection = ",".join(unique_chains)
+        selection = unique_chains
 
     try:
-        runner = Prodigy(structure, pdb_path.stem, selection, temp=temperature)
+        runner = _build_prodigy_runner(
+            Prodigy,
+            structure,
+            pdb_path.stem,
+            selection,
+            temperature,
+        )
         runner.predict(distance_cutoff=5.5, acc_threshold=0.05)
     except ValueError as exc:
         msg = str(exc).lower()

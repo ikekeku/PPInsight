@@ -27,8 +27,11 @@ Usage
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
+
+from Bio.PDB import PDBList
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -51,9 +54,6 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Step 1: Fetch PDB structure by PDB ID
 # ---------------------------------------------------------------------------
-
-import shutil  # noqa: E402
-from Bio.PDB import PDBList  # noqa: E402
 
 PDB_ID = "1IVO"  # ErbB2/ErbB3 heterodimer
 OUT_DIR = ROOT / "tutorials" / "prodigy_output"
