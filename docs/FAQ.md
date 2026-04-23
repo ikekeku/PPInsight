@@ -100,7 +100,7 @@ of each bar shows the total number of individual poses that were classified.
 ```bash
 pip install "ppinsight[quality]"
 # or:
-pip install "dockq @ git+https://github.com/bjornwallner/DockQ.git"
+pip install "dockq @ git+https://github.com/nrontsis/DockQ.git@update-to-numpy>2"
 ```
 
 ---
