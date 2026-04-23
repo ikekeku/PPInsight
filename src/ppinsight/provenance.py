@@ -38,17 +38,50 @@ def _to_portable_path(path: str) -> str:
 
     - If the path is inside the repository, return a repo-relative path.
     - Otherwise return only the basename to avoid leaking local machine paths.
+
+    On Windows, ``os.path.relpath`` raises ``ValueError`` when *path* and
+    *_PROJECT_ROOT* are on different drives.  We catch that and fall back to
+    the basename so provenance extraction never crashes.
     """
     abs_path = os.path.abspath(path)
-    rel_path = os.path.relpath(abs_path, _PROJECT_ROOT)
+    try:
+        rel_path = os.path.relpath(abs_path, _PROJECT_ROOT)
+    except ValueError:
+        # Different drives on Windows – just return the basename.
+        base = os.path.basename(abs_path.rstrip(os.sep))
+        return base or "."
     if rel_path != "." and not rel_path.startswith(".."):
         return rel_path
     base = os.path.basename(abs_path.rstrip(os.sep))
     return base or "."
 
 
+# Matches POSIX absolute paths (/foo/bar) and Windows absolute paths
+# (C:\foo\bar or \\server\share).  Used to scrub embedded path substrings.
+_ABS_PATH_RE = re.compile(
+    r"(?:"
+    r"[A-Za-z]:[/\\][^\s]*"   # Windows drive-absolute: C:\... or C:/...
+    r"|\\\\[^\s]+"             # UNC path: \\server\...
+    r"|/[^\s]+"                # POSIX absolute: /usr/...
+    r")"
+)
+
+
+def _scrub_path_substrings(s: str) -> str:
+    """Replace every absolute-path substring in *s* with its portable form."""
+    def _replace(m: re.Match) -> str:
+        return _to_portable_path(m.group(0))
+
+    return _ABS_PATH_RE.sub(_replace, s)
+
+
 def _scrub_sensitive_values(value: Any) -> Any:
-    """Recursively scrub absolute paths from metadata payloads."""
+    """Recursively scrub absolute paths from metadata payloads.
+
+    Handles both strings that *are* an absolute path and strings that
+    *contain* absolute paths as substrings (e.g. Rosetta flag files like
+    ``-in:file:s /abs/path/foo.pdb``).
+    """
     if isinstance(value, dict):
         return {
             key: _scrub_sensitive_values(item)
@@ -59,9 +92,8 @@ def _scrub_sensitive_values(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_scrub_sensitive_values(item) for item in value)
     if isinstance(value, str):
-        stripped = value.strip()
-        if stripped and os.path.isabs(stripped):
-            return _to_portable_path(stripped)
+        # Scrub any absolute-path substrings embedded in the string.
+        return _scrub_path_substrings(value)
     return value
 
 # ---------------------------------------------------------------------------
