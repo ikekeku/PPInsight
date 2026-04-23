@@ -437,10 +437,10 @@ def _build_parser():
 
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point for ``ppinsight prodigy``."""
-    _require_prodigy()
-
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    _require_prodigy()
 
     if args.top_n is not None and args.metric is None:
         parser.error("--metric is required when --top-n is used")
