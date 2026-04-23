@@ -2,8 +2,7 @@
 """PRODIGY binding-affinity tutorial for PPInsight.
 
 This script demonstrates how to:
-  1. Fetch PDB structures for a known protein-protein complex using
-     ppinsight.protein_fetch (UniProt accession → PDB → chain selection).
+  1. Fetch a PDB structure by PDB ID using Bio.PDB.PDBList directly.
   2. Score the docked complex with PRODIGY to obtain predicted ΔG and Kd.
   3. Append PRODIGY scores to an existing unified scores DataFrame.
   4. Visualise the distribution of predicted ΔG values with a CDF plot.
@@ -11,6 +10,9 @@ This script demonstrates how to:
 The example uses the ErbB2/ErbB3 receptor complex (PDB: 1IVO, UniProt
 P04626 + P21860), a well-characterised oncogenic protein-protein
 interaction.
+
+Note: For accession-based fetching (UniProt accession → PDB → chain
+selection), use ``ppinsight.protein_fetch.get_uniprot_data``.
 
 Prerequisites
 -------------
@@ -47,10 +49,11 @@ except ImportError:
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Step 1: Fetch PDB structure via protein_fetch
+# Step 1: Fetch PDB structure by PDB ID
 # ---------------------------------------------------------------------------
 
-from ppinsight.protein_fetch import fetch_pdb  # noqa: E402
+import shutil  # noqa: E402
+from Bio.PDB import PDBList  # noqa: E402
 
 PDB_ID = "1IVO"  # ErbB2/ErbB3 heterodimer
 OUT_DIR = ROOT / "tutorials" / "prodigy_output"
@@ -60,8 +63,13 @@ pdb_path = OUT_DIR / f"{PDB_ID}.pdb"
 
 print(f"Step 1 — Fetching {PDB_ID} from the PDB …")
 try:
-    fetch_pdb(PDB_ID, output_path=str(pdb_path))
-    print(f"  Saved to {pdb_path.relative_to(ROOT)}")
+    pdbl = PDBList()
+    raw_path = pdbl.retrieve_pdb_file(PDB_ID, pdir=str(OUT_DIR), file_format="pdb")
+    if raw_path and Path(raw_path).exists():
+        shutil.copy(raw_path, pdb_path)
+        print(f"  Saved to {pdb_path.relative_to(ROOT)}")
+    else:
+        raise FileNotFoundError(f"retrieve_pdb_file returned no file for {PDB_ID}")
 except Exception as exc:
     print(f"  WARNING: Could not fetch {PDB_ID}: {exc}")
     print("  Proceeding with mock data for illustration purposes.")
