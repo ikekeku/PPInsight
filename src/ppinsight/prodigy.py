@@ -117,9 +117,14 @@ def score_pdb(
     if chains:
         selection = ",".join(chains)
     else:
-        selection = ",".join(
-            ch.id for model in structure for ch in model.get_chains()
-        )
+        seen: set[str] = set()
+        unique_chains: list[str] = []
+        for model in structure:
+            for ch in model.get_chains():
+                if ch.id not in seen:
+                    seen.add(ch.id)
+                    unique_chains.append(ch.id)
+        selection = ",".join(unique_chains)
 
     try:
         runner = Prodigy(structure, pdb_path.stem, selection, temp=temperature)
