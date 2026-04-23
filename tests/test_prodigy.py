@@ -70,7 +70,7 @@ class TestScorePdb:
 
     def test_mocked_successful_scoring(self, tmp_path):
         pdb_file = tmp_path / "complex.pdb"
-        pdb_file.write_text("ATOM  …\n")
+        pdb_file.write_text("ATOM  ...\n", encoding="utf-8")
 
         mock_runner = MagicMock()
         mock_runner.ba_val = -9.5
@@ -98,7 +98,7 @@ class TestScorePdb:
 
     def test_no_contacts_returns_nan(self, tmp_path):
         pdb_file = tmp_path / "single_chain.pdb"
-        pdb_file.write_text("ATOM  …\n")
+        pdb_file.write_text("ATOM  ...\n", encoding="utf-8")
 
         mock_runner = MagicMock()
         mock_runner.predict.side_effect = ValueError(
@@ -128,8 +128,8 @@ class TestScoreDirectory:
         assert result.empty
 
     def test_returns_dataframe_with_pdb_column(self, tmp_path):
-        (tmp_path / "a.pdb").write_text("ATOM  …\n")
-        (tmp_path / "b.pdb").write_text("ATOM  …\n")
+        (tmp_path / "a.pdb").write_text("ATOM  ...\n", encoding="utf-8")
+        (tmp_path / "b.pdb").write_text("ATOM  ...\n", encoding="utf-8")
 
         with patch("ppinsight.prodigy.score_pdb") as mock_score:
             mock_score.return_value = {
