@@ -4,6 +4,8 @@ This test monkeypatches `run_command` so LightDock binaries are not invoked.
 """
 import os
 
+import pytest
+
 from ppinsight import pdb_to_lightdock
 
 
@@ -225,3 +227,146 @@ def test_make_output_dir_auto_increments_when_existing(sample_input_dirs):
 
     assert run1 != run2
     assert run2.endswith("_1")
+
+
+def test_clean_pdb_for_lightdock_removes_hetero_records(tmp_path):
+    """Protein-only cleaner should strip HETATM and other non-coordinate records."""
+    source = tmp_path / "input.pdb"
+    cleaned = tmp_path / "cleaned.pdb"
+    atom_line = (
+        "ATOM      1  N   GLY A   1      11.111  12.222  13.333  1.00 20.00"
+        "           N\n"
+    )
+    so4_line = (
+        "HETATM    2  S   SO4 A 232      10.666 -18.039  25.022  1.00 37.56"
+        "           S\n"
+    )
+    source.write_text(
+        "HEADER    TEST\n"
+        f"{atom_line}"
+        f"{so4_line}"
+        "TER\n",
+        encoding="utf-8",
+    )
+
+    report = pdb_to_lightdock.clean_pdb_for_lightdock(str(source), str(cleaned))
+
+    assert report["removed_hetatm"] == 1
+    assert report["removed_other"] == 1
+    assert cleaned.read_text(encoding="utf-8") == atom_line + "TER\n" + "END\n"
+
+
+def test_pipeline_raises_cleanable_error_for_unsupported_residue(
+    sample_input_dirs,
+    monkeypatch,
+):
+    """Missing swarm outputs plus a DFIRE residue error is cleanable."""
+    rec = sample_input_dirs["rec"]
+    lig = sample_input_dirs["lig"]
+    work_root = sample_input_dirs["work_root"]
+
+    class SimulationFailure:
+        def __call__(self, cmd, cwd=None):
+            if cmd[0].endswith("lightdock3.py"):
+                return (
+                    "[lightdock] ERROR: [NotSupportedInScoringError] "
+                    "Residue H.SO4.232 or atom S not supported."
+                )
+            return ""
+
+    monkeypatch.setattr(pdb_to_lightdock, "run_command", SimulationFailure())
+
+    run_dir = pdb_to_lightdock.make_output_dir(
+        str(rec), str(lig), base_root=str(work_root), method="lightdock_runs"
+    )
+
+    with pytest.raises(pdb_to_lightdock.LightDockSimulationError) as exc_info:
+        pdb_to_lightdock.lightdock_pipeline(
+            str(rec),
+            str(lig),
+            working_dir=run_dir,
+            steps=10,
+            skip_postprocess=True,
+        )
+
+    exc = exc_info.value
+    assert exc.cleanable is True
+    assert exc.unsupported_residue == "H.SO4.232"
+
+
+def test_main_auto_cleans_and_retries(sample_input_dirs, monkeypatch):
+    """--auto-clean-pdb should create cleaned copies and retry once."""
+    rec = sample_input_dirs["rec"]
+    lig = sample_input_dirs["lig"]
+    atom_line = (
+        "ATOM      1  N   GLY A   1      11.111  12.222  13.333  1.00 20.00"
+        "           N\n"
+    )
+    so4_line = (
+        "HETATM    2  S   SO4 A 232      10.666 -18.039  25.022  1.00 37.56"
+        "           S\n"
+    )
+    lig.write_text(
+        atom_line + so4_line + "END\n",
+        encoding="utf-8",
+    )
+
+    attempts = []
+
+    def fake_pipeline(receptor_pdb, ligand_pdb, working_dir, opts=None, **kwargs):
+        attempts.append((receptor_pdb, ligand_pdb, working_dir, dict(opts or {})))
+        if len(attempts) == 1:
+            raise pdb_to_lightdock.LightDockSimulationError(
+                "unsupported residue",
+                cleanable=True,
+                unsupported_residue="H.SO4.232",
+            )
+
+    monkeypatch.setattr(pdb_to_lightdock, "lightdock_pipeline", fake_pipeline)
+
+    pdb_to_lightdock.main([
+        str(rec),
+        str(lig),
+        "--auto-clean-pdb",
+    ])
+
+    assert len(attempts) == 2
+    first_receptor, first_ligand, workdir, _ = attempts[0]
+    second_receptor, second_ligand, second_workdir, _ = attempts[1]
+    assert first_receptor == str(rec)
+    assert first_ligand == str(lig)
+    assert second_workdir == workdir
+    expected_rec = os.path.join("cleaned_inputs", os.path.basename(str(rec)))
+    expected_lig = os.path.join("cleaned_inputs", os.path.basename(str(lig)))
+    assert second_receptor.endswith(expected_rec)
+    assert second_ligand.endswith(expected_lig)
+    cleaned_ligand_text = open(second_ligand, encoding="utf-8").read()
+    assert "HETATM" not in cleaned_ligand_text
+    assert "ATOM" in cleaned_ligand_text
+
+
+def test_main_noninteractive_cleanable_failure_exits_with_hint(
+    sample_input_dirs,
+    monkeypatch,
+    capsys,
+):
+    """Non-interactive runs should fail with guidance instead of prompting."""
+    rec = sample_input_dirs["rec"]
+    lig = sample_input_dirs["lig"]
+
+    def fake_pipeline(*args, **kwargs):
+        raise pdb_to_lightdock.LightDockSimulationError(
+            "unsupported residue",
+            cleanable=True,
+            unsupported_residue="H.SO4.232",
+        )
+
+    monkeypatch.setattr(pdb_to_lightdock, "lightdock_pipeline", fake_pipeline)
+    monkeypatch.setattr(pdb_to_lightdock, "_is_interactive_session", lambda: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        pdb_to_lightdock.main([str(rec), str(lig)])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 1
+    assert "--auto-clean-pdb" in captured.err

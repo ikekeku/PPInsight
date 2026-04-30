@@ -29,15 +29,252 @@ Output folders::
 import argparse
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
 import warnings
 
-from ppinsight.utils import (  # noqa: F401 — re-exported
-    _project_root,
-    resolve_input_path,
+from ppinsight.utils import _project_root, resolve_input_path  # noqa: F401
+
+_LIGHTDOCK_ALLOWED_PDB_RECORDS = {
+    "ATOM",
+    "MODEL",
+    "TER",
+    "ENDMDL",
+    "END",
+}
+_LIGHTDOCK_UNSUPPORTED_RESIDUE_RE = re.compile(
+    r"\[NotSupportedInScoringError\]\s+Residue\s+(?P<residue>\S+)\s+"
+    r"or atom\s+(?P<atom>\S+)\s+not supported"
 )
+
+
+class LightDockSimulationError(RuntimeError):
+    """Raised when LightDock simulation fails after setup completed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        cleanable: bool = False,
+        unsupported_residue: str | None = None,
+        simulation_output: str = "",
+    ):
+        super().__init__(message)
+        self.cleanable = cleanable
+        self.unsupported_residue = unsupported_residue
+        self.simulation_output = simulation_output
+
+
+def clean_pdb_for_lightdock(
+    input_pdb: str,
+    output_pdb: str | None = None,
+) -> dict[str, int | str]:
+    """Write a protein-only PDB copy that avoids common LightDock failures.
+
+    LightDock's DFIRE scoring accepts standard amino-acid coordinates but can
+    fail on hetero records such as sulfate ions. This helper keeps only core
+    coordinate records needed for protein-only docking.
+    """
+    if output_pdb is None:
+        stem, ext = os.path.splitext(input_pdb)
+        output_pdb = f"{stem}_lightdock_clean{ext or '.pdb'}"
+
+    kept_records = 0
+    removed_hetatm = 0
+    removed_other = 0
+    saw_end = False
+
+    with open(input_pdb, encoding="utf-8") as src, open(
+        output_pdb, "w", encoding="utf-8"
+    ) as dst:
+        for line in src:
+            record = line[:6].strip()
+            if record in _LIGHTDOCK_ALLOWED_PDB_RECORDS:
+                dst.write(line)
+                kept_records += 1
+                if record.startswith("END"):
+                    saw_end = True
+                continue
+
+            if record == "HETATM":
+                removed_hetatm += 1
+            elif line.strip():
+                removed_other += 1
+
+        if not saw_end:
+            dst.write("END\n")
+
+    return {
+        "input_path": input_pdb,
+        "output_path": output_pdb,
+        "kept_records": kept_records,
+        "removed_hetatm": removed_hetatm,
+        "removed_other": removed_other,
+    }
+
+
+def _stage_cleaned_lightdock_inputs(
+    receptor_pdb: str,
+    ligand_pdb: str,
+    working_dir: str,
+):
+    """Create cleaned protein-only copies under the run directory."""
+    clean_dir = os.path.join(working_dir, "cleaned_inputs")
+    os.makedirs(clean_dir, exist_ok=True)
+
+    receptor_clean = os.path.join(clean_dir, os.path.basename(receptor_pdb))
+    ligand_clean = os.path.join(clean_dir, os.path.basename(ligand_pdb))
+
+    receptor_report = clean_pdb_for_lightdock(receptor_pdb, receptor_clean)
+    ligand_report = clean_pdb_for_lightdock(ligand_pdb, ligand_clean)
+
+    return receptor_clean, ligand_clean, {
+        "receptor": receptor_report,
+        "ligand": ligand_report,
+    }
+
+
+def _lightdock_simulation_outputs(working_dir: str, steps: int) -> list[str]:
+    """Return all swarm simulation outputs for the requested step count."""
+    pattern = os.path.join(working_dir, "swarm_*", f"gso_{steps}.out")
+    return sorted(glob.glob(pattern))
+
+
+def _unsupported_lightdock_residue(simulation_output: str | None):
+    """Return the unsupported residue marker reported by LightDock, if any."""
+    if not simulation_output:
+        return None
+    match = _LIGHTDOCK_UNSUPPORTED_RESIDUE_RE.search(simulation_output)
+    if not match:
+        return None
+    return match.group("residue"), match.group("atom")
+
+
+def _raise_if_lightdock_simulation_failed(
+    working_dir: str,
+    steps: int,
+    simulation_output,
+):
+    """Fail fast when LightDock produced no simulation outputs."""
+    if simulation_output is None:
+        return
+    if _lightdock_simulation_outputs(working_dir, steps):
+        return
+
+    unsupported = _unsupported_lightdock_residue(simulation_output)
+    if unsupported:
+        residue, atom = unsupported
+        raise LightDockSimulationError(
+            "LightDock simulation failed because the scoring function "
+            f"rejected unsupported residue {residue} (atom {atom}).",
+            cleanable=True,
+            unsupported_residue=residue,
+            simulation_output=simulation_output,
+        )
+
+    raise LightDockSimulationError(
+        "LightDock simulation failed because no swarm outputs were produced.",
+        simulation_output=simulation_output,
+    )
+
+
+def _is_interactive_session() -> bool:
+    """Return True when the command is attached to an interactive terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _should_clean_and_retry_interactively(
+    exc: LightDockSimulationError,
+    working_dir: str,
+) -> bool:
+    """Prompt the user to clean and retry when interactive."""
+    residue = exc.unsupported_residue or "an unsupported residue"
+    print(
+        "\nLightDock rejected a non-protein residue during scoring: "
+        f"{residue}."
+    )
+    print(
+        "PPInsight can create protein-only copies of the input PDBs under:\n"
+        f"  {os.path.join(working_dir, 'cleaned_inputs')}"
+    )
+    print("Original input files will not be modified.")
+
+    try:
+        reply = input("Clean the PDBs and retry LightDock? [y/N]: ")
+    except EOFError:
+        return False
+    return reply.strip().lower() in {"y", "yes"}
+
+
+def _print_cleaned_input_report(cleaned_inputs):
+    """Print a short summary of generated cleaned PDB copies."""
+    print("\nCreated LightDock-ready protein-only copies:")
+    for role in ("receptor", "ligand"):
+        report = cleaned_inputs[role]
+        print(
+            f"  {role.capitalize()}: {report['output_path']} "
+            f"(removed {report['removed_hetatm']} HETATM records, "
+            f"{report['removed_other']} other records)"
+        )
+
+
+def _print_lightdock_failure_and_exit(exc: Exception):
+    """Emit a user-facing LightDock error with actionable guidance."""
+    print(f"\nERROR: {exc}", file=sys.stderr)
+    if isinstance(exc, LightDockSimulationError) and exc.cleanable:
+        print(
+            "Hint: rerun with --auto-clean-pdb to create protein-only copies "
+            "and retry automatically, or clean the PDB manually.",
+            file=sys.stderr,
+        )
+    sys.exit(1)
+
+
+def _run_lightdock_attempt(receptor: str, ligand: str, workdir: str, opts):
+    """Run one LightDock attempt after clearing prior run artifacts."""
+    print(f"\nCleaning previous LightDock outputs in: {workdir} (if any)")
+    file_count, folder_count = _cleanup_previous_outputs(workdir)
+    print(f"\nRemoved {file_count} files and {folder_count} folders.")
+
+    print(
+        "\nRunning LightDock global-docking pipeline for:\n"
+        f" Receptor: {receptor}\n"
+        f" Ligand:   {ligand}\n"
+        f" Output dir: {workdir}\n",
+    )
+    lightdock_pipeline(receptor, ligand, working_dir=workdir, opts=opts)
+
+
+def _print_lightdock_success_summary(
+    workdir: str,
+    opts,
+    *,
+    cleaned_retry_used: bool = False,
+):
+    """Print the final successful-run summary for the CLI."""
+    summary_lines = [
+        "LightDock global docking completed.",
+        f"Run folder: {workdir}",
+        "Parameters used:",
+        "- Swarms: " + (str(opts["swarms"]) if opts["swarms"] else "default"),
+        "- Glowworms: "
+        + (str(opts["glowworms"]) if opts["glowworms"] else "default"),
+        "- Steps: " + str(opts["steps"]),
+        "- CPU cores: " + str(opts["cores"]),
+        "- ANM flexibility: " + ("enabled" if opts["anm"] else "disabled"),
+        "- Scoring function: " + (opts["scoring"] or "default (DFIRE)"),
+        "- Post-processing: "
+        + ("skipped" if opts["skip_postprocess"]
+           else "full (generate+cluster+rank)"),
+    ]
+    if cleaned_retry_used:
+        summary_lines.append(
+            "- Input cleanup: retried with protein-only copies under cleaned_inputs/"
+        )
+    summary_lines.append(f"Results directory: {workdir}")
+    print("\n".join(summary_lines))
 
 
 def run_command(cmd, cwd=None):
@@ -48,7 +285,14 @@ def run_command(cmd, cwd=None):
     """
     print(">>", " ".join(cmd))
     try:
-        subprocess.run(cmd, cwd=cwd, check=True)
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
     except FileNotFoundError:
         exe = cmd[0]
         print(
@@ -64,6 +308,18 @@ def run_command(cmd, cwd=None):
             file=sys.stderr,
         )
         sys.exit(2)
+
+    output_lines: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line, end="")
+        output_lines.append(line)
+
+    return_code = proc.wait()
+    output = "".join(output_lines)
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, cmd, output=output)
+    return output
 
 
 def make_output_dir(receptor_pdb, ligand_pdb,
@@ -152,7 +408,20 @@ def _run_lightdock_simulation(working_dir, steps, cores, swarm_list, scoring=Non
         cmd += ["-s", scoring]
     if swarm_list:
         cmd += ["-l"] + list(map(str, swarm_list))
-    run_command(cmd, cwd=working_dir)
+    try:
+        return run_command(cmd, cwd=working_dir)
+    except subprocess.CalledProcessError as exc:
+        unsupported = _unsupported_lightdock_residue(exc.output)
+        if unsupported:
+            residue, atom = unsupported
+            raise LightDockSimulationError(
+                "LightDock simulation failed because the scoring function "
+                f"rejected unsupported residue {residue} (atom {atom}).",
+                cleanable=True,
+                unsupported_residue=residue,
+                simulation_output=exc.output or "",
+            ) from exc
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -260,12 +529,13 @@ def _execute_lightdock_stages(receptor_pdb, ligand_pdb, working_dir, opts):
     )
 
     # Stage 2 — simulation
-    _run_lightdock_simulation(
+    simulation_output = _run_lightdock_simulation(
         working_dir, steps,
         opts.get("cores", 1),
         opts.get("swarm_list"),
         scoring=opts.get("scoring"),
     )
+    _raise_if_lightdock_simulation_failed(working_dir, steps, simulation_output)
 
     # Stages 3–5: post-processing (generate + cluster + rank)
     if opts.get("skip_postprocess", False):
@@ -435,6 +705,28 @@ def main(argv=None):
             "live in a shared directory outside the project tree."
         ),
     )
+    clean_group = parser.add_mutually_exclusive_group()
+    clean_group.add_argument(
+        "--auto-clean-pdb",
+        action="store_true",
+        help=(
+            "If LightDock fails because DFIRE rejects unsupported non-protein "
+            "residues (for example ions or other HETATM records), create "
+            "protein-only copies under the run directory and retry "
+            "automatically.  Use this for scripted runs where interactive "
+            "prompts would block.  Original input files are not modified."
+        ),
+    )
+    clean_group.add_argument(
+        "--no-clean-pdb",
+        action="store_true",
+        help=(
+            "Disable the interactive clean-and-retry prompt when LightDock "
+            "rejects unsupported residues.  Use this when you want the "
+            "command to fail immediately so you can inspect the input files "
+            "manually."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -457,17 +749,6 @@ def main(argv=None):
 
     workdir = make_output_dir(receptor, ligand, method="lightdock_runs")
 
-    print(f"\nCleaning previous LightDock outputs in: {workdir} (if any)")
-    file_count, folder_count = _cleanup_previous_outputs(workdir)
-    print(f"\nRemoved {file_count} files and {folder_count} folders.")
-
-    print(
-        "\nRunning LightDock global-docking pipeline for:\n"
-        f" Receptor: {receptor}\n"
-        f" Ligand:   {ligand}\n"
-        f" Output dir: {workdir}\n",
-    )
-
     opts = {
         "swarms": args.swarms,
         "glowworms": args.glowworms,
@@ -479,25 +760,48 @@ def main(argv=None):
         "skip_postprocess": args.skip_postprocess,
     }
 
-    lightdock_pipeline(receptor, ligand, working_dir=workdir, opts=opts)
+    cleaned_retry_used = False
 
-    summary_lines = [
-        "LightDock global docking completed.",
-        f"Run folder: {workdir}",
-        "Parameters used:",
-        "- Swarms: " + (str(opts["swarms"]) if opts["swarms"] else "default"),
-        "- Glowworms: "
-        + (str(opts["glowworms"]) if opts["glowworms"] else "default"),
-        "- Steps: " + str(opts["steps"]),
-        "- CPU cores: " + str(opts["cores"]),
-        "- ANM flexibility: " + ("enabled" if opts["anm"] else "disabled"),
-        "- Scoring function: " + (opts["scoring"] or "default (DFIRE)"),
-        "- Post-processing: "
-        + ("skipped" if opts["skip_postprocess"]
-           else "full (generate+cluster+rank)"),
-        f"Results directory: {workdir}",
-    ]
-    print("\n".join(summary_lines))
+    try:
+        _run_lightdock_attempt(receptor, ligand, workdir, opts)
+    except LightDockSimulationError as exc:
+        if not exc.cleanable:
+            _print_lightdock_failure_and_exit(exc)
+
+        should_retry = False
+        if args.auto_clean_pdb:
+            should_retry = True
+        elif not args.no_clean_pdb and _is_interactive_session():
+            should_retry = _should_clean_and_retry_interactively(exc, workdir)
+
+        if not should_retry:
+            _print_lightdock_failure_and_exit(exc)
+
+        (
+            cleaned_receptor,
+            cleaned_ligand,
+            cleaned_inputs,
+        ) = _stage_cleaned_lightdock_inputs(
+            receptor,
+            ligand,
+            workdir,
+        )
+        _print_cleaned_input_report(cleaned_inputs)
+        print("\nRetrying LightDock with cleaned protein-only copies...")
+
+        try:
+            _run_lightdock_attempt(cleaned_receptor, cleaned_ligand, workdir, opts)
+        except (LightDockSimulationError, subprocess.CalledProcessError) as retry_exc:
+            _print_lightdock_failure_and_exit(retry_exc)
+        cleaned_retry_used = True
+    except subprocess.CalledProcessError as exc:
+        _print_lightdock_failure_and_exit(exc)
+
+    _print_lightdock_success_summary(
+        workdir,
+        opts,
+        cleaned_retry_used=cleaned_retry_used,
+    )
 
 
 if __name__ == '__main__':
