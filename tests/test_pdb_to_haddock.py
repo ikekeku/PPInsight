@@ -4,6 +4,8 @@ Tests for `pdb_to_haddock.py`.
 
 The tests monkeypatch `run_command` so haddock3 is not actually invoked.
 """
+import subprocess
+
 import pytest
 
 from ppinsight import pdb_to_haddock
@@ -423,6 +425,88 @@ def test_execute_haddock_run_explicit_docker_requires_daemon(
         )
 
 
+def test_run_in_container_builds_docker_command_with_haddock_entrypoint(
+    tmp_path,
+    monkeypatch,
+):
+    commands = []
+    run_dir = tmp_path / "output" / "haddock_runs" / "run1"
+    run_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "run_command",
+        lambda cmd, cwd=None: commands.append((list(cmd), cwd)),
+    )
+
+    pdb_to_haddock._run_in_container(
+        "docker",
+        "ghcr.io/haddocking/haddock3:latest",
+        str(tmp_path),
+        run_dir,
+        "run1.cfg",
+    )
+
+    assert commands == [
+        (
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{tmp_path}:/workspace",
+                "-w",
+                "/workspace/output/haddock_runs/run1",
+                "--entrypoint",
+                "haddock3",
+                "ghcr.io/haddocking/haddock3:latest",
+                "run1.cfg",
+            ],
+            None,
+        )
+    ]
+
+
+def test_run_in_container_builds_apptainer_command_in_run_dir(
+    tmp_path,
+    monkeypatch,
+):
+    commands = []
+    run_dir = tmp_path / "output" / "haddock_runs" / "run1"
+    run_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "run_command",
+        lambda cmd, cwd=None: commands.append((list(cmd), cwd)),
+    )
+
+    pdb_to_haddock._run_in_container(
+        "apptainer",
+        "ghcr.io/haddocking/haddock3:latest",
+        str(tmp_path),
+        run_dir,
+        "run1.cfg",
+    )
+
+    assert commands == [
+        (
+            [
+                "apptainer",
+                "exec",
+                "--bind",
+                f"{tmp_path}:/workspace",
+                "--pwd",
+                "/workspace/output/haddock_runs/run1",
+                "docker://ghcr.io/haddocking/haddock3:latest",
+                "haddock3",
+                "run1.cfg",
+            ],
+            None,
+        )
+    ]
+
+
 def test_main_reports_runtime_error_cleanly(tmp_path, monkeypatch, capsys):
     inp = tmp_path / "input"
     inp.mkdir()
@@ -443,3 +527,27 @@ def test_main_reports_runtime_error_cleanly(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert exc_info.value.code == 1
     assert "ERROR: arch mismatch" in captured.err
+
+
+def test_main_reports_called_process_error_cleanly(tmp_path, monkeypatch, capsys):
+    inp = tmp_path / "input"
+    inp.mkdir()
+    rec = inp / "rec.pdb"
+    lig = inp / "lig.pdb"
+    rec.write_text("ATOM\n")
+    lig.write_text("ATOM\n")
+
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "haddock_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(2, ["docker", "run", "... "])
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        pdb_to_haddock.main([str(rec), str(lig), "--run", "--container", "docker"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 1
+    assert "ERROR: command failed with exit code 2: docker run ... " in captured.err

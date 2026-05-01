@@ -112,49 +112,43 @@ def _run_in_container(
     This uses `run_command` so tests that monkeypatch it will intercept the call.
     """
     host_workspace = os.path.abspath(host_workspace)
-    # Compute run_dir relative to the workspace root so we can
-    # `cd` correctly inside the container
+    # Compute run_dir relative to the workspace root so the staged run directory
+    # can become the container working directory.
     rel_run = os.path.relpath(str(run_dir_path), host_workspace)
-    # Ensure paths are safe for commands
     rel_run_posix = rel_run.replace(os.path.sep, "/")
+    container_run_dir = (
+        f"/workspace/{rel_run_posix}" if rel_run_posix != "." else "/workspace"
+    )
+    cfg_base = os.path.basename(cfg_name)
+
     if runtime == "docker":
-        # Mount the workspace into /workspace in the container
-        workdir = (
-            f"/workspace/{os.path.dirname(rel_run_posix)}"
-            if os.path.dirname(rel_run_posix)
-            else "/workspace"
-        )
-        cfg_base = os.path.basename(cfg_name)
+        # The HADDOCK image uses ENTRYPOINT ["haddock3"]. Override explicitly so
+        # custom images with a different entrypoint still run the workflow file.
         cmd = [
             "docker", "run", "--rm",
             "-v", f"{host_workspace}:/workspace",
-            "-w", workdir,
+            "-w", container_run_dir,
+            "--entrypoint", "haddock3",
             image,
-            "bash", "-lc", f"haddock3 {shlex.quote(cfg_base)}"
+            cfg_base,
         ]
     else:
-        # Apptainer can execute docker images directly via the docker:// prefix
+        # Apptainer can execute docker images directly via the docker:// prefix.
+        # Use the run directory as the working directory and execute haddock3
+        # directly rather than relying on a shell wrapper.
         image_spec = image
         if not image_spec.startswith("docker://") and not image_spec.startswith("shub://"):
             image_spec = f"docker://{image_spec}"
-        # apptainer exec --bind host:/workspace --pwd /workspace docker://image \
-        # bash -lc 'cd ... && haddock3 cfg'
         cmd = [
             "apptainer",
             "exec",
             "--bind",
             f"{host_workspace}:/workspace",
             "--pwd",
-            "/workspace",
+            container_run_dir,
             image_spec,
-            "bash",
-            "-lc",
-            (
-                "cd /workspace/"
-                + rel_run_posix
-                + " && haddock3 "
-                + shlex.quote(os.path.basename(cfg_name))
-            ),
+            "haddock3",
+            cfg_base,
         ]
     run_command(cmd)
 
@@ -730,6 +724,13 @@ def main(argv=None):
         sys.exit(1)
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        cmd = " ".join(map(str, e.cmd))
+        print(
+            f"ERROR: command failed with exit code {e.returncode}: {cmd}",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
