@@ -61,12 +61,36 @@ METHOD = "haddock_runs"
 CONTAINER_IMAGE = "ghcr.io/haddocking/haddock3:latest"
 
 
+def _docker_runtime_usable(docker_executable: str | None = None) -> bool:
+    """Return True when Docker is installed and the daemon is reachable."""
+    docker_executable = docker_executable or shutil.which("docker")
+    if not docker_executable:
+        return False
+
+    try:
+        subprocess.run(
+            [docker_executable, "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=5,
+        )
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ):
+        return False
+    return True
+
+
 def _detect_container_runtime():
     """Detect available container runtimes.
 
     Returns 'docker', 'apptainer' (or 'singularity'), or None.
     """
-    if shutil.which("docker"):
+    docker_path = shutil.which("docker")
+    if docker_path and _docker_runtime_usable(docker_path):
         return "docker"
     # Apptainer may be installed under 'apptainer' or legacy 'singularity'
     if shutil.which("apptainer"):
@@ -448,19 +472,19 @@ def _execute_haddock_run(
     if not run_haddock:
         return executed_cmd
 
-    # Try to detect obvious CNS binary mismatches first.
-    try:
-        _check_cns_compatibility()
-    except RuntimeError:
-        # Propagate helpful runtime errors (architecture mismatch)
-        raise
-
     # Decide container use
     chosen_container = None
     if container == "auto":
         chosen_container = _detect_container_runtime()
     elif container in ("docker", "apptainer", "singularity"):
         chosen_container = container if container != "singularity" else "apptainer"
+
+    if chosen_container == "docker" and not _docker_runtime_usable():
+        raise RuntimeError(
+            "Docker is installed but the Docker daemon is not running or is not "
+            "reachable. Start Docker Desktop (or dockerd), or use "
+            "--container apptainer on systems where Apptainer is available."
+        )
 
     if chosen_container:
         host_ws = workspace_root if workspace_root else _project_root()
@@ -475,6 +499,11 @@ def _execute_haddock_run(
         return executed_cmd
 
     # No container runtime found; run locally
+    try:
+        _check_cns_compatibility()
+    except RuntimeError:
+        raise
+
     cmd = shlex.split(haddock_cmd) + [cfg_path.name]
     run_command(cmd, cwd=run_dir)
     executed_cmd = " ".join(map(str, cmd))
@@ -700,6 +729,9 @@ def main(argv=None):
               "or omit --runname to auto-increment.", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 

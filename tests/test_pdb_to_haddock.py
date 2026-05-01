@@ -278,3 +278,168 @@ def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
     assert str(work_root.resolve()) in str(run_dir.resolve())
     assert "custom_method" in str(run_dir)
     assert cfg_path.exists()
+
+
+def test_execute_haddock_run_uses_container_before_local_cns_check(
+    tmp_path,
+    monkeypatch,
+):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    cfg_path = run_dir / "test.cfg"
+    cfg_path.write_text("run_dir = \"test\"\n")
+
+    container_calls = []
+
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_detect_container_runtime",
+        lambda: "docker",
+    )
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_docker_runtime_usable",
+        lambda docker_executable=None: True,
+    )
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_check_cns_compatibility",
+        lambda: pytest.fail("local CNS check should be skipped in container mode"),
+    )
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_run_in_container",
+        lambda runtime, image, host_workspace, run_dir_path, cfg_name: (
+            container_calls.append(
+                (runtime, image, host_workspace, run_dir_path, cfg_name)
+            )
+        ),
+    )
+
+    executed = pdb_to_haddock._execute_haddock_run(
+        run_dir,
+        cfg_path,
+        run_haddock=True,
+        haddock_cmd="haddock3",
+        container="auto",
+        container_image="ghcr.io/haddocking/haddock3:latest",
+        workspace_root=str(tmp_path),
+    )
+
+    assert container_calls == [
+        (
+            "docker",
+            "ghcr.io/haddocking/haddock3:latest",
+            str(tmp_path),
+            run_dir,
+            cfg_path.name,
+        )
+    ]
+    assert executed.startswith("container:docker image=")
+
+
+def test_execute_haddock_run_checks_cns_compatibility_for_local_runs(
+    tmp_path,
+    monkeypatch,
+):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    cfg_path = run_dir / "test.cfg"
+    cfg_path.write_text("run_dir = \"test\"\n")
+
+    monkeypatch.setattr(pdb_to_haddock, "_detect_container_runtime", lambda: None)
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_check_cns_compatibility",
+        lambda: (_ for _ in ()).throw(RuntimeError("arch mismatch")),
+    )
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "run_command",
+        lambda *args, **kwargs: pytest.fail("local run should not start on mismatch"),
+    )
+
+    with pytest.raises(RuntimeError, match="arch mismatch"):
+        pdb_to_haddock._execute_haddock_run(
+            run_dir,
+            cfg_path,
+            run_haddock=True,
+            haddock_cmd="haddock3",
+            container="auto",
+            container_image="ghcr.io/haddocking/haddock3:latest",
+            workspace_root=str(tmp_path),
+        )
+
+
+def test_detect_container_runtime_skips_unusable_docker(monkeypatch):
+    def fake_which(name):
+        if name == "docker":
+            return "/usr/local/bin/docker"
+        if name == "apptainer":
+            return "/usr/bin/apptainer"
+        return None
+
+    monkeypatch.setattr(pdb_to_haddock.shutil, "which", fake_which)
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_docker_runtime_usable",
+        lambda docker_executable=None: False,
+    )
+
+    assert pdb_to_haddock._detect_container_runtime() == "apptainer"
+
+
+def test_execute_haddock_run_explicit_docker_requires_daemon(
+    tmp_path,
+    monkeypatch,
+):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    cfg_path = run_dir / "test.cfg"
+    cfg_path.write_text("run_dir = \"test\"\n")
+
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_docker_runtime_usable",
+        lambda docker_executable=None: False,
+    )
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "_run_in_container",
+        lambda *args, **kwargs: pytest.fail(
+            "container run should not start when Docker daemon is unavailable"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Docker is installed but the Docker daemon"):
+        pdb_to_haddock._execute_haddock_run(
+            run_dir,
+            cfg_path,
+            run_haddock=True,
+            haddock_cmd="haddock3",
+            container="docker",
+            container_image="ghcr.io/haddocking/haddock3:latest",
+            workspace_root=str(tmp_path),
+        )
+
+
+def test_main_reports_runtime_error_cleanly(tmp_path, monkeypatch, capsys):
+    inp = tmp_path / "input"
+    inp.mkdir()
+    rec = inp / "rec.pdb"
+    lig = inp / "lig.pdb"
+    rec.write_text("ATOM\n")
+    lig.write_text("ATOM\n")
+
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "haddock_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("arch mismatch")),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        pdb_to_haddock.main([str(rec), str(lig), "--run"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 1
+    assert "ERROR: arch mismatch" in captured.err
