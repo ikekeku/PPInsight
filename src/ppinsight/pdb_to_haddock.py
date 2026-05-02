@@ -67,7 +67,44 @@ def _component_label(component_id: str) -> str:
     return component_id if component_id != "(blank)" else "<blank>"
 
 
-def _pdb_component_ids(pdb_path: str | Path) -> list[str]:
+def _dbref_chains_for_accession(
+    pdb_path: str | Path,
+    accession: str | None,
+) -> list[str]:
+    """Return coordinate chain IDs whose DBREF mapping matches *accession*."""
+    if not accession:
+        return []
+
+    accession = accession.upper()
+    matched_chains = []
+    seen = set()
+    with open(pdb_path, encoding="utf-8") as handle:
+        for line in handle:
+            record = line[:6].strip()
+            tokens = line.split()
+            chain = None
+            mapped_accession = None
+
+            if record == "DBREF" and len(tokens) >= 7:
+                chain = tokens[2].strip()
+                mapped_accession = tokens[6].strip().upper()
+            elif record == "DBREF2" and len(tokens) >= 5:
+                chain = tokens[2].strip()
+                mapped_accession = tokens[4].strip().upper()
+
+            if not chain or mapped_accession != accession or chain in seen:
+                continue
+
+            seen.add(chain)
+            matched_chains.append(chain)
+
+    return matched_chains
+
+
+def _pdb_component_ids(
+    pdb_path: str | Path,
+    allowed_chains: set[str] | None = None,
+) -> list[str]:
     """Return ordered chain/segid component IDs present in a PDB file.
 
     HADDOCK expects each docking partner to be a single component with a
@@ -82,6 +119,8 @@ def _pdb_component_ids(pdb_path: str | Path) -> list[str]:
                 continue
             segid = line[72:76].strip()
             chain = line[21].strip()
+            if allowed_chains is not None and chain not in allowed_chains:
+                continue
             component = segid or chain or "(blank)"
             if component in seen:
                 continue
@@ -94,6 +133,7 @@ def _rewrite_pdb_as_single_chain(
     input_pdb: str | Path,
     output_pdb: str | Path,
     target_chain: str,
+    allowed_chains: set[str] | None = None,
 ) -> dict[str, object]:
     """Rewrite a PDB so all components become one renumbered HADDOCK partner.
 
@@ -106,6 +146,7 @@ def _rewrite_pdb_as_single_chain(
     model_id = 1
     residue_counter = 0
     last_residue_key = None
+    previous_coord_was_written = False
 
     with open(input_pdb, encoding="utf-8") as src, open(
         output_pdb, "w", encoding="utf-8"
@@ -123,6 +164,9 @@ def _rewrite_pdb_as_single_chain(
             if record in _PDB_COORD_RECORDS:
                 segid = line[72:76].strip()
                 chain = line[21].strip()
+                if allowed_chains is not None and chain not in allowed_chains:
+                    previous_coord_was_written = False
+                    continue
                 component = segid or chain or "(blank)"
                 if component not in seen_set:
                     seen_set.add(component)
@@ -151,9 +195,12 @@ def _rewrite_pdb_as_single_chain(
                 chars[26] = " "
                 chars[72:76] = list(f"{target_chain:<4}")
                 dst.write("".join(chars).rstrip() + "\n")
+                previous_coord_was_written = True
                 continue
 
             if record == "TER":
+                if not previous_coord_was_written:
+                    continue
                 padded = line.rstrip("\n").ljust(80)
                 chars = list(padded)
                 chars[21] = target_chain
@@ -161,6 +208,7 @@ def _rewrite_pdb_as_single_chain(
                 chars[26] = " "
                 chars[72:76] = list(f"{target_chain:<4}")
                 dst.write("".join(chars).rstrip() + "\n")
+                previous_coord_was_written = False
                 continue
 
             dst.write(line)
@@ -188,8 +236,26 @@ def _maybe_normalize_haddock_partners(
     chains would invalidate the user's CNS selections, so we fail early with
     a precise error instead.
     """
-    rec_components = _pdb_component_ids(rec_path)
-    lig_components = _pdb_component_ids(lig_path)
+    rec_accession = rec_path.stem.upper()
+    lig_accession = lig_path.stem.upper()
+    rec_allowed_chains = set(_dbref_chains_for_accession(rec_path, rec_accession)) or None
+    lig_allowed_chains = set(_dbref_chains_for_accession(lig_path, lig_accession)) or None
+
+    if rec_allowed_chains is not None:
+        info(
+            "Selected HADDOCK receptor chains from DBREF for "
+            f"{rec_accession}: "
+            + ", ".join(sorted(rec_allowed_chains))
+        )
+    if lig_allowed_chains is not None:
+        info(
+            "Selected HADDOCK ligand chains from DBREF for "
+            f"{lig_accession}: "
+            + ", ".join(sorted(lig_allowed_chains))
+        )
+
+    rec_components = _pdb_component_ids(rec_path, allowed_chains=rec_allowed_chains)
+    lig_components = _pdb_component_ids(lig_path, allowed_chains=lig_allowed_chains)
     shared_components = set(rec_components) & set(lig_components)
 
     needs_normalization = (
@@ -227,8 +293,18 @@ def _maybe_normalize_haddock_partners(
         )
         raise RuntimeError("\n".join(detail_lines))
 
-    rec_report = _rewrite_pdb_as_single_chain(rec_path, rec_dst, "A")
-    lig_report = _rewrite_pdb_as_single_chain(lig_path, lig_dst, "B")
+    rec_report = _rewrite_pdb_as_single_chain(
+        rec_path,
+        rec_dst,
+        "A",
+        allowed_chains=rec_allowed_chains,
+    )
+    lig_report = _rewrite_pdb_as_single_chain(
+        lig_path,
+        lig_dst,
+        "B",
+        allowed_chains=lig_allowed_chains,
+    )
 
     info(
         "Normalized HADDOCK receptor to single chain A from components: "
@@ -412,7 +488,9 @@ def write_cfg(
 
     If no ambiguous restraints file is provided (empty *ambig_rel*),
     ``cmrest = true`` is injected into the rigid-body stage to enable
-    centre-of-mass restraint-based ab-initio docking.
+    centre-of-mass restraint-based ab-initio docking. The same no-AIR path
+    keeps ``cmrest`` in ``flexref`` so HADDOCK does not abort when there are
+    no AIR restraints.
     """
     # If no ambiguous restraints are provided, keep the ab-initio workflow
     # restrained by center-of-mass terms through rigid-body docking and
