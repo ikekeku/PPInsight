@@ -2,6 +2,7 @@
 
 import os
 import sys
+import types
 
 from ppinsight import pdb_to_rosetta
 
@@ -47,3 +48,38 @@ def test_pyrosetta_installer_env_prefers_active_env(monkeypatch):
     assert os.environ["PYTHONPATH"] == "/tmp/project-src"
     assert os.environ["PIP_USER"] == "1"
     assert os.environ["PYTHONNOUSERSITE"] == "0"
+
+
+def test_cli_can_disable_dbref_auto_filter(monkeypatch):
+    class _FakePipeline:
+        kwargs = None
+
+        def __init__(self, *args, **kwargs):
+            type(self).kwargs = kwargs
+
+        def run(self):
+            return {"final_score": 0.0}
+
+        def save_scores(self, output_path):
+            return None
+
+    monkeypatch.setattr(
+        pdb_to_rosetta,
+        "resolve_input_path",
+        lambda path, search_root=None: f"/tmp/{path}.pdb",
+    )
+    monkeypatch.setattr(pdb_to_rosetta, "_ensure_pyrosetta", lambda: None)
+    monkeypatch.setattr(pdb_to_rosetta, "_make_output_dir", lambda *a, **k: "/tmp/out")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ppinsight.docking",
+        types.SimpleNamespace(DockingPipeline=_FakePipeline),
+    )
+
+    try:
+        pdb_to_rosetta.main(["rec", "lig", "--no-auto-filter", "--quiet"])
+    finally:
+        sys.modules.pop("ppinsight.docking", None)
+
+    assert _FakePipeline.kwargs["auto_filter"] is False

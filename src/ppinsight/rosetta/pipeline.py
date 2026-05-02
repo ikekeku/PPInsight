@@ -42,7 +42,8 @@ class DockingPipeline:
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     def __init__(self, protein1_pdb, protein2_pdb, n_runs=10, top_n=20,
                  relax=True, jump_distance=15.0, verbose=True,
-                 cluster=True, cluster_top_n=200, rmsd_cutoff=4.0):
+                 cluster=True, cluster_top_n=200, rmsd_cutoff=4.0,
+                 auto_filter=True):
         """
         Initialize the docking pipeline.
 
@@ -57,6 +58,8 @@ class DockingPipeline:
             cluster: If True, cluster decoys after docking (default: True)
             cluster_top_n: Number of top decoys to cluster (default: 200)
             rmsd_cutoff: Cα-RMSD cutoff in Å for clustering (default: 4.0)
+            auto_filter: If True, keep only accession-mapped DBREF chains when
+                an accession-named input PDB is a mixed complex (default: True)
         """
         self._ensure_pyrosetta()  # make sure PyRosetta is available
         self.protein1_pdb = Path(protein1_pdb)
@@ -75,6 +78,7 @@ class DockingPipeline:
         self.cluster = cluster
         self.cluster_top_n = cluster_top_n
         self.rmsd_cutoff = rmsd_cutoff
+        self.auto_filter = auto_filter
 
         # Results storage
         self.complex_pose = None
@@ -124,7 +128,8 @@ class DockingPipeline:
             self.protein2_pdb,
             relax=self.relax,
             jump_distance=self.jump_distance,
-            verbose=self.verbose
+            verbose=self.verbose,
+            auto_filter=self.auto_filter,
         )
 
         if self.verbose:

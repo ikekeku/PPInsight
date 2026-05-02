@@ -126,6 +126,12 @@ ppinsight haddock 2UUY_rec 2UUY_lig --input-dir data/input/ --run
 
 # Rosetta — minimum required: receptor, ligand (needs PyRosetta installed)
 ppinsight rosetta 2UUY_rec 2UUY_lig --input-dir data/input/
+
+# If an accession-named PDB is actually a mixed co-complex, PPInsight will
+# auto-filter to the chains mapped to that accession for HADDOCK and Rosetta.
+# Use --no-auto-filter only when you intentionally want the full deposited
+# complex.
+ppinsight rosetta P35968 P15692 --input-dir data/input/ --no-auto-filter
 ```
 
 Each engine has its own tuning flags (swarm count, number of runs,

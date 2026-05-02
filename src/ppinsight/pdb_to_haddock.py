@@ -18,7 +18,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ppinsight.utils import _project_root, resolve_input_path  # noqa: F401
+from ppinsight.utils import (  # noqa: F401
+    _project_root,
+    dbref_chains_for_accession,
+    resolve_input_path,
+)
 
 
 def info(msg: str):
@@ -65,40 +69,6 @@ _PDB_COORD_RECORDS = {"ATOM", "HETATM", "ANISOU"}
 def _component_label(component_id: str) -> str:
     """Render a human-readable component identifier for logs/errors."""
     return component_id if component_id != "(blank)" else "<blank>"
-
-
-def _dbref_chains_for_accession(
-    pdb_path: str | Path,
-    accession: str | None,
-) -> list[str]:
-    """Return coordinate chain IDs whose DBREF mapping matches *accession*."""
-    if not accession:
-        return []
-
-    accession = accession.upper()
-    matched_chains = []
-    seen = set()
-    with open(pdb_path, encoding="utf-8") as handle:
-        for line in handle:
-            record = line[:6].strip()
-            tokens = line.split()
-            chain = None
-            mapped_accession = None
-
-            if record == "DBREF" and len(tokens) >= 7:
-                chain = tokens[2].strip()
-                mapped_accession = tokens[6].strip().upper()
-            elif record == "DBREF2" and len(tokens) >= 5:
-                chain = tokens[2].strip()
-                mapped_accession = tokens[4].strip().upper()
-
-            if not chain or mapped_accession != accession or chain in seen:
-                continue
-
-            seen.add(chain)
-            matched_chains.append(chain)
-
-    return matched_chains
 
 
 def _pdb_component_ids(
@@ -226,6 +196,7 @@ def _maybe_normalize_haddock_partners(
     lig_path: Path,
     data_dir: Path,
     ambig: str | None,
+    auto_filter: bool = True,
 ) -> tuple[Path, Path]:
     """Stage HADDOCK inputs, normalizing invalid chain layouts when safe.
 
@@ -236,27 +207,30 @@ def _maybe_normalize_haddock_partners(
     chains would invalidate the user's CNS selections, so we fail early with
     a precise error instead.
     """
-    rec_accession = rec_path.stem.upper()
-    lig_accession = lig_path.stem.upper()
-    rec_allowed_chains = (
-        set(_dbref_chains_for_accession(rec_path, rec_accession)) or None
-    )
-    lig_allowed_chains = (
-        set(_dbref_chains_for_accession(lig_path, lig_accession)) or None
-    )
+    rec_allowed_chains = None
+    lig_allowed_chains = None
+    if auto_filter:
+        rec_accession = rec_path.stem.upper()
+        lig_accession = lig_path.stem.upper()
+        rec_allowed_chains = (
+            set(dbref_chains_for_accession(rec_path, rec_accession)) or None
+        )
+        lig_allowed_chains = (
+            set(dbref_chains_for_accession(lig_path, lig_accession)) or None
+        )
 
-    if rec_allowed_chains is not None:
-        info(
-            "Selected HADDOCK receptor chains from DBREF for "
-            f"{rec_accession}: "
-            + ", ".join(sorted(rec_allowed_chains))
-        )
-    if lig_allowed_chains is not None:
-        info(
-            "Selected HADDOCK ligand chains from DBREF for "
-            f"{lig_accession}: "
-            + ", ".join(sorted(lig_allowed_chains))
-        )
+        if rec_allowed_chains is not None:
+            info(
+                "Selected HADDOCK receptor chains from DBREF for "
+                f"{rec_accession}: "
+                + ", ".join(sorted(rec_allowed_chains))
+            )
+        if lig_allowed_chains is not None:
+            info(
+                "Selected HADDOCK ligand chains from DBREF for "
+                f"{lig_accession}: "
+                + ", ".join(sorted(lig_allowed_chains))
+            )
 
     rec_components = _pdb_component_ids(rec_path, allowed_chains=rec_allowed_chains)
     lig_components = _pdb_component_ids(lig_path, allowed_chains=lig_allowed_chains)
@@ -440,7 +414,7 @@ def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
     return run_dir, data_dir
 
 
-def copy_inputs(data_dir, rec, lig, ambig=None):
+def copy_inputs(data_dir, rec, lig, ambig=None, auto_filter=True):
     """Copy receptor, ligand (and optionally ambig) into the run data dir.
 
     Accepts either full paths or short basenames; callers should resolve
@@ -459,6 +433,7 @@ def copy_inputs(data_dir, rec, lig, ambig=None):
         lig_path,
         data_dir,
         ambig,
+        auto_filter=auto_filter,
     )
 
     ambig_dst = None
@@ -689,6 +664,7 @@ def _stage_run(
     ambig: str | None,
     mode: str,
     ncores: int,
+    auto_filter: bool,
 ):
     """Create run dir, copy inputs, and write the HADDOCK cfg file.
 
@@ -702,7 +678,13 @@ def _stage_run(
     )
 
     # Copy input files (they are already resolved)
-    rec_dst, lig_dst, ambig_dst = copy_inputs(data_dir, rec, lig, ambig)
+    rec_dst, lig_dst, ambig_dst = copy_inputs(
+        data_dir,
+        rec,
+        lig,
+        ambig,
+        auto_filter=auto_filter,
+    )
 
     # data-relative paths inside .cfg
     rec_rel = f"data/{rec_dst.name}"
@@ -810,6 +792,7 @@ def haddock_pipeline(
     container = opts.get("container", "auto")
     container_image = opts.get("container_image", CONTAINER_IMAGE)
     workspace_root = opts.get("workspace_root")
+    auto_filter = opts.get("auto_filter", True)
 
     # Resolve inputs so short basenames like "2UUY_rec" work (searches the repo)
     rec = resolve_input_path(rec)
@@ -840,6 +823,7 @@ def haddock_pipeline(
         ambig=ambig,
         mode=mode,
         ncores=ncores,
+        auto_filter=auto_filter,
     )
 
     # Execute haddock if requested (local or container).
@@ -938,6 +922,17 @@ def main(argv=None):
             "live in a shared directory outside the project tree."
         ),
     )
+    parser.add_argument(
+        "--no-auto-filter",
+        action="store_true",
+        help=(
+            "Disable PPInsight's accession-based DBREF chain filtering.  "
+            "By default, accession-named mixed-complex PDBs are reduced to "
+            "the chains mapped to that accession before HADDOCK staging.  "
+            "Use this only when you intentionally want the full deposited "
+            "complex or a non-accession partner definition."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -984,6 +979,7 @@ def main(argv=None):
             container=container_runtime,
             container_image=container_image,
             workspace_root=_project_root(),
+            auto_filter=not args.no_auto_filter,
         )
     except FileExistsError as e:
         print(f"ERROR: {e}", file=sys.stderr)

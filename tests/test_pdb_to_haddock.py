@@ -454,6 +454,39 @@ def test_copy_inputs_prefers_dbref_chains_for_matching_accession(tmp_path):
     assert ligand_residues == ["1", "2"]
 
 
+def test_copy_inputs_can_disable_dbref_auto_filter(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    rec = tmp_path / "rec.pdb"
+    lig = tmp_path / "P12345.pdb"
+    _write_simple_pdb(rec, chain="A")
+    lig.write_text(
+        "DBREF  1ABC A    1     1  UNP    P12345   TEST_HUMAN      1      1\n"
+        "DBREF  1ABC B    1     1  UNP    P12345   TEST_HUMAN      2      2\n"
+        "DBREF  1ABC X    1     1  UNP    Q99999   OTHER_HUMAN     1      1\n"
+        + _make_atom_line(1, "N", "GLY", "A", 1, segid="A", element="N")
+        + _make_atom_line(2, "CA", "GLY", "A", 1, segid="A")
+        + "TER       3      GLY A   1\n"
+        + _make_atom_line(4, "N", "SER", "B", 5, segid="B", element="N")
+        + _make_atom_line(5, "CA", "SER", "B", 5, segid="B")
+        + "TER       6      SER B   5\n"
+        + _make_atom_line(7, "N", "TYR", "X", 9, segid="X", element="N")
+        + _make_atom_line(8, "CA", "TYR", "X", 9, segid="X")
+        + "END\n"
+    )
+
+    _, lig_dst, _ = pdb_to_haddock.copy_inputs(
+        data_dir,
+        str(rec),
+        str(lig),
+        auto_filter=False,
+    )
+
+    lig_atoms = _atom_lines(lig_dst)
+    assert len(lig_atoms) == 6
+
+
 def test_copy_inputs_rejects_multichain_inputs_with_ambig(tmp_path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()

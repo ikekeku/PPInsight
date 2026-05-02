@@ -85,11 +85,18 @@ def _assign_unique_chain_ids(pose):
     return _pose_chain_ids(pose)
 
 
-def _load_partner_pose(pdb_path, verbose=False, partner_label="Partner"):
+def _load_partner_pose(
+    pdb_path,
+    verbose=False,
+    partner_label="Partner",
+    auto_filter=True,
+):
     """Load one docking partner, filtering to accession-mapped protein chains."""
     pdb_path = Path(pdb_path)
     accession = pdb_path.stem.upper()
-    allowed_chains = set(dbref_chains_for_accession(pdb_path, accession))
+    allowed_chains = set()
+    if auto_filter:
+        allowed_chains = set(dbref_chains_for_accession(pdb_path, accession))
 
     filtered_path = None
     load_path = pdb_path
@@ -132,7 +139,7 @@ def _load_partner_pose(pdb_path, verbose=False, partner_label="Partner"):
     return pose, chain_ids
 
 
-def load_structure(pdb_path):
+def load_structure(pdb_path, auto_filter=True):
     """
     Load a protein structure from PDB file.
 
@@ -150,7 +157,7 @@ def load_structure(pdb_path):
     if not pdb_path.exists():
         raise FileNotFoundError(f"PDB file not found: {pdb_path}")
 
-    pose, _ = _load_partner_pose(pdb_path)
+    pose, _ = _load_partner_pose(pdb_path, auto_filter=auto_filter)
 
     # Disulfide detection is handled by the -detect_disulf init flag.
     # No additional fix_disulfides call is needed.
@@ -277,6 +284,7 @@ def combine_proteins(
 def prepare_structures(
     protein1_pdb, protein2_pdb,
     relax=True, jump_distance=15.0, verbose=False,
+    auto_filter=True,
 ):
     """
     Complete structure preparation pipeline.
@@ -301,6 +309,7 @@ def prepare_structures(
         protein1_pdb,
         verbose=verbose,
         partner_label="Receptor",
+        auto_filter=auto_filter,
     )
 
     if verbose:
@@ -309,6 +318,7 @@ def prepare_structures(
         protein2_pdb,
         verbose=verbose,
         partner_label="Ligand",
+        auto_filter=auto_filter,
     )
 
     if verbose:

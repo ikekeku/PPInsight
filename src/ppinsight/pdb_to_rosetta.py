@@ -171,6 +171,17 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
+        "--no-auto-filter",
+        action="store_true",
+        help=(
+            "Disable PPInsight's accession-based DBREF chain filtering.  "
+            "By default, accession-named mixed-complex PDBs are reduced to "
+            "the chains mapped to that accession before Rosetta preparation.  "
+            "Use this only when you intentionally want the full deposited "
+            "complex or a non-accession partner definition."
+        ),
+    )
+    parser.add_argument(
         "--no-cluster", action="store_true",
         help=(
             "Skip decoy clustering after docking.  Clustering groups decoys "
@@ -242,6 +253,7 @@ def main(argv=None):
         top_n=args.top_n,
         relax=not args.no_relax,
         verbose=verbose,
+        auto_filter=not args.no_auto_filter,
     )
     result = pipeline.run()
 
