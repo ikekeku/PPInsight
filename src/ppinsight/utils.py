@@ -3,6 +3,8 @@
 import glob
 import os
 
+_PDB_COORD_RECORDS = {"ATOM", "HETATM", "ANISOU"}
+
 
 def _project_root() -> str:
     """Return the absolute path to the PPInsight repository root."""
@@ -70,3 +72,73 @@ def resolve_input_path(path: str, search_root: str | None = None) -> str:
     raise FileNotFoundError(
         f"Could not find input file '{path}' (searched {proj})."
     )
+
+
+def dbref_chains_for_accession(
+    pdb_path: str | os.PathLike[str],
+    accession: str | None,
+) -> list[str]:
+    """Return coordinate chain IDs whose DBREF mapping matches *accession*."""
+    if not accession:
+        return []
+
+    accession = accession.upper()
+    matched_chains = []
+    seen = set()
+
+    with open(pdb_path, encoding="utf-8") as handle:
+        for line in handle:
+            record = line[:6].strip()
+            tokens = line.split()
+            chain = None
+            mapped_accession = None
+
+            if record == "DBREF" and len(tokens) >= 7:
+                chain = tokens[2].strip()
+                mapped_accession = tokens[6].strip().upper()
+            elif record == "DBREF2" and len(tokens) >= 4:
+                chain = tokens[2].strip()
+                accession_index = 4 if len(tokens) >= 5 else 3
+                mapped_accession = tokens[accession_index].strip().upper()
+
+            if not chain or mapped_accession != accession or chain in seen:
+                continue
+
+            seen.add(chain)
+            matched_chains.append(chain)
+
+    return matched_chains
+
+
+def copy_pdb_selected_chains(
+    input_pdb: str | os.PathLike[str],
+    output_pdb: str | os.PathLike[str],
+    allowed_chains: set[str],
+) -> None:
+    """Copy a PDB while keeping only coordinate records for *allowed_chains*."""
+    previous_coord_was_written = False
+
+    with open(input_pdb, encoding="utf-8") as src, open(
+        output_pdb,
+        "w",
+        encoding="utf-8",
+    ) as dst:
+        for line in src:
+            record = line[:6].strip()
+
+            if record in _PDB_COORD_RECORDS:
+                chain = line[21].strip()
+                if chain not in allowed_chains:
+                    previous_coord_was_written = False
+                    continue
+                dst.write(line)
+                previous_coord_was_written = True
+                continue
+
+            if record == "TER":
+                if previous_coord_was_written:
+                    dst.write(line)
+                previous_coord_was_written = False
+                continue
+
+            dst.write(line)

@@ -10,10 +10,37 @@ Usage matches the style of the other PPInsight pipeline scripts::
 import argparse
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 # Shared path resolver
 from ppinsight.utils import resolve_input_path
+
+
+@contextmanager
+def _pyrosetta_installer_env():
+    """Ensure pyrosetta-installer shells out through this Python env."""
+    env_bin_dir = os.path.dirname(sys.executable)
+    original = {
+        "PATH": os.environ.get("PATH"),
+        "PYTHONNOUSERSITE": os.environ.get("PYTHONNOUSERSITE"),
+        "PYTHONPATH": os.environ.get("PYTHONPATH"),
+        "PIP_USER": os.environ.get("PIP_USER"),
+    }
+
+    os.environ["PATH"] = env_bin_dir + os.pathsep + (original["PATH"] or "")
+    os.environ["PYTHONNOUSERSITE"] = "1"
+    os.environ.pop("PYTHONPATH", None)
+    os.environ.pop("PIP_USER", None)
+
+    try:
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _ensure_pyrosetta():
@@ -29,7 +56,8 @@ def _ensure_pyrosetta():
         print("PyRosetta not found — installing via pyrosetta-installer …")
         try:
             import pyrosetta_installer
-            pyrosetta_installer.install_pyrosetta(skip_if_installed=False)
+            with _pyrosetta_installer_env():
+                pyrosetta_installer.install_pyrosetta(skip_if_installed=False)
             import pyrosetta  # noqa: F401
         except Exception as exc:
             print(
