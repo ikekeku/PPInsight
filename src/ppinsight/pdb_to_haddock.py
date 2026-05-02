@@ -59,6 +59,186 @@ def run_command(cmd, cwd=None):
 BASE_ROOT = Path(_project_root()) / "data" / "output"
 METHOD = "haddock_runs"
 CONTAINER_IMAGE = "ghcr.io/haddocking/haddock3:latest"
+_PDB_COORD_RECORDS = {"ATOM", "HETATM", "ANISOU"}
+
+
+def _component_label(component_id: str) -> str:
+    """Render a human-readable component identifier for logs/errors."""
+    return component_id if component_id != "(blank)" else "<blank>"
+
+
+def _pdb_component_ids(pdb_path: str | Path) -> list[str]:
+    """Return ordered chain/segid component IDs present in a PDB file.
+
+    HADDOCK expects each docking partner to be a single component with a
+    unique chain/segid relative to the other partner. We treat a non-empty
+    segid as the authoritative identifier and fall back to the chain ID.
+    """
+    components = []
+    seen = set()
+    with open(pdb_path, encoding="utf-8") as handle:
+        for line in handle:
+            if line[:6].strip() not in _PDB_COORD_RECORDS:
+                continue
+            segid = line[72:76].strip()
+            chain = line[21].strip()
+            component = segid or chain or "(blank)"
+            if component in seen:
+                continue
+            seen.add(component)
+            components.append(component)
+    return components
+
+
+def _rewrite_pdb_as_single_chain(
+    input_pdb: str | Path,
+    output_pdb: str | Path,
+    target_chain: str,
+) -> dict[str, object]:
+    """Rewrite a PDB so all components become one renumbered HADDOCK partner.
+
+    This mirrors the preprocessing recommended by HADDOCK's own tutorials for
+    multi-chain partners: merge chains into one logical partner, assign one
+    chain/segid, and renumber residues sequentially.
+    """
+    seen_components = []
+    seen_set = set()
+    model_id = 1
+    residue_counter = 0
+    last_residue_key = None
+
+    with open(input_pdb, encoding="utf-8") as src, open(
+        output_pdb, "w", encoding="utf-8"
+    ) as dst:
+        for line in src:
+            record = line[:6].strip()
+            if record == "MODEL":
+                model_text = line[10:14].strip()
+                model_id = int(model_text) if model_text.isdigit() else model_id + 1
+                residue_counter = 0
+                last_residue_key = None
+                dst.write(line)
+                continue
+
+            if record in _PDB_COORD_RECORDS:
+                segid = line[72:76].strip()
+                chain = line[21].strip()
+                component = segid or chain or "(blank)"
+                if component not in seen_set:
+                    seen_set.add(component)
+                    seen_components.append(component)
+
+                residue_key = (
+                    model_id,
+                    component,
+                    line[17:20],
+                    line[22:26],
+                    line[26],
+                )
+                if residue_key != last_residue_key:
+                    residue_counter += 1
+                    if residue_counter > 9999:
+                        raise RuntimeError(
+                            "Cannot normalize HADDOCK input with more than 9999 "
+                            f"residues in one model: {input_pdb}"
+                        )
+                    last_residue_key = residue_key
+
+                padded = line.rstrip("\n").ljust(80)
+                chars = list(padded)
+                chars[21] = target_chain
+                chars[22:26] = list(f"{residue_counter:>4}")
+                chars[26] = " "
+                chars[72:76] = list(f"{target_chain:<4}")
+                dst.write("".join(chars).rstrip() + "\n")
+                continue
+
+            if record == "TER":
+                padded = line.rstrip("\n").ljust(80)
+                chars = list(padded)
+                chars[21] = target_chain
+                chars[22:26] = list(f"{max(residue_counter, 1):>4}")
+                chars[26] = " "
+                chars[72:76] = list(f"{target_chain:<4}")
+                dst.write("".join(chars).rstrip() + "\n")
+                continue
+
+            dst.write(line)
+
+    return {
+        "components": seen_components,
+        "residues": residue_counter,
+        "output_path": str(output_pdb),
+        "target_chain": target_chain,
+    }
+
+
+def _maybe_normalize_haddock_partners(
+    rec_path: Path,
+    lig_path: Path,
+    data_dir: Path,
+    ambig: str | None,
+) -> tuple[Path, Path]:
+    """Stage HADDOCK inputs, normalizing invalid chain layouts when safe.
+
+    HADDOCK's own guidance is that each docking partner should be a single
+    chain with unique chain/segid identifiers across partners. For ab-initio
+    runs without user-supplied restraints we can normalize staged copies to
+    satisfy that requirement. When a restraints file is provided, renaming
+    chains would invalidate the user's CNS selections, so we fail early with
+    a precise error instead.
+    """
+    rec_components = _pdb_component_ids(rec_path)
+    lig_components = _pdb_component_ids(lig_path)
+    shared_components = set(rec_components) & set(lig_components)
+
+    needs_normalization = (
+        len(rec_components) != 1
+        or len(lig_components) != 1
+        or bool(shared_components)
+        or "(blank)" in rec_components
+        or "(blank)" in lig_components
+    )
+
+    rec_dst = data_dir / rec_path.name
+    lig_dst = data_dir / lig_path.name
+
+    if not needs_normalization:
+        shutil.copy(str(rec_path), str(rec_dst))
+        shutil.copy(str(lig_path), str(lig_dst))
+        return rec_dst, lig_dst
+
+    if ambig:
+        rec_desc = ", ".join(_component_label(c) for c in rec_components)
+        lig_desc = ", ".join(_component_label(c) for c in lig_components)
+        shared_desc = ", ".join(sorted(_component_label(c) for c in shared_components))
+        detail_lines = [
+            "HADDOCK input preprocessing is required before using --ambig.",
+            f"Receptor components: {rec_desc}",
+            f"Ligand components: {lig_desc}",
+        ]
+        if shared_components:
+            detail_lines.append(f"Shared chain/seg IDs across partners: {shared_desc}")
+        detail_lines.append(
+            "HADDOCK expects each docking partner to be a single chain with "
+            "unique chain/seg IDs. PPInsight will not rewrite user-provided "
+            "restraints automatically because that would invalidate their "
+            "chain references. Preprocess the PDBs first, then rerun."
+        )
+        raise RuntimeError("\n".join(detail_lines))
+
+    rec_report = _rewrite_pdb_as_single_chain(rec_path, rec_dst, "A")
+    lig_report = _rewrite_pdb_as_single_chain(lig_path, lig_dst, "B")
+
+    info(
+        "Normalized HADDOCK receptor to single chain A from components: "
+        + ", ".join(_component_label(c) for c in rec_report["components"])
+    )
+    info(
+        "Normalized HADDOCK ligand to single chain B from components: "
+        + ", ".join(_component_label(c) for c in lig_report["components"])
+    )
+    return rec_dst, lig_dst
 
 
 def _docker_runtime_usable(docker_executable: str | None = None) -> bool:
@@ -194,10 +374,12 @@ def copy_inputs(data_dir, rec, lig, ambig=None):
     if not lig_path.exists():
         raise FileNotFoundError(f"Ligand file not found: {lig}")
 
-    rec_dst = data_dir / rec_path.name
-    lig_dst = data_dir / lig_path.name
-    shutil.copy(str(rec_path), str(rec_dst))
-    shutil.copy(str(lig_path), str(lig_dst))
+    rec_dst, lig_dst = _maybe_normalize_haddock_partners(
+        rec_path,
+        lig_path,
+        data_dir,
+        ambig,
+    )
 
     ambig_dst = None
     if ambig:
@@ -232,9 +414,12 @@ def write_cfg(
     ``cmrest = true`` is injected into the rigid-body stage to enable
     centre-of-mass restraint-based ab-initio docking.
     """
-    # If no ambiguous restraints are provided, enable ab-initio sampling
-    # for the rigid-body stage using `cmrest = true`.
-    abinitio_block = "" if ambig_rel else "cmrest = true\n"
+    # If no ambiguous restraints are provided, keep the ab-initio workflow
+    # restrained by center-of-mass terms through rigid-body docking and
+    # semi-flexible refinement. HADDOCK's flexref stage aborts when there are
+    # no AIR restraints and cmrest is disabled.
+    rigidbody_abinitio_block = "" if ambig_rel else "cmrest = true\n"
+    flexref_abinitio_block = "" if ambig_rel else "cmrest = true\n"
 
     text = f"""# ====================================================================
     # Protein-protein docking example (auto-generated by PPInsight)
@@ -275,7 +460,7 @@ def write_cfg(
     ambig_fname = "{ambig_rel}"
     sampling = 20
 
-    {abinitio_block}
+    {rigidbody_abinitio_block}
     # Score evaluation against reference (leave blank for no reference)
     [caprieval]
     reference_fname = ""
@@ -288,6 +473,7 @@ def write_cfg(
     [flexref]
     tolerance = 20
     ambig_fname = "{ambig_rel}"
+    {flexref_abinitio_block}
 
     # Final energy minimization in explicit solvent (itw)
     [emref]

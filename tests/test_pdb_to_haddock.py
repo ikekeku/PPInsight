@@ -11,6 +11,32 @@ import pytest
 from ppinsight import pdb_to_haddock
 
 
+def _make_atom_line(
+    serial: int,
+    atom: str,
+    resname: str,
+    chain: str,
+    resseq: int,
+    *,
+    segid: str | None = None,
+    element: str = "C",
+) -> str:
+    segid = chain if segid is None else segid
+    return (
+        f"ATOM  {serial:5d} {atom:>4} {resname:>3} {chain:1}{resseq:4d}    "
+        f"{0.0:8.3f}{0.0:8.3f}{0.0:8.3f}{1.00:6.2f}{20.00:6.2f}      "
+        f"{segid:<4}{element:>2}\n"
+    )
+
+
+def _write_simple_pdb(path, *, chain: str, segid: str | None = None):
+    path.write_text(
+        _make_atom_line(1, "N", "GLY", chain, 1, segid=segid, element="N")
+        + _make_atom_line(2, "CA", "GLY", chain, 1, segid=segid)
+        + "END\n"
+    )
+
+
 class CmdRecorder:
     """Record calls to run_command(cmd, cwd=...).
 
@@ -36,8 +62,8 @@ def test_smoke_haddock_pipeline_runs(tmp_path, monkeypatch):
     inp.mkdir()
     rec = inp / "rec.pdb"
     lig = inp / "lig.pdb"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
 
     work_root = tmp_path / "output"
     work_root.mkdir()
@@ -75,8 +101,8 @@ def test_oneshot_cfg_contains_expected_entries(tmp_path, monkeypatch):
     inp.mkdir()
     rec = inp / "R1_rec.pdb"
     lig = inp / "L1_lig.pdb"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
 
     work_root = tmp_path / "output"
     work_root.mkdir()
@@ -115,7 +141,7 @@ def test_edge_invalid_input_raises(tmp_path, monkeypatch):
     inp.mkdir()
     rec = inp / "missing_rec.pdb"  # does not exist
     lig = inp / "lig.pdb"
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(lig, chain="B")
 
     work_root = tmp_path / "output"
     work_root.mkdir()
@@ -149,8 +175,8 @@ def test_pattern_ncores_reflected_in_cfg(tmp_path, monkeypatch):
     inp.mkdir()
     rec = inp / "rec.pdb"
     lig = inp / "lig.pdb"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
 
     work_root = tmp_path / "output"
     work_root.mkdir()
@@ -184,8 +210,8 @@ def test_cfg_custom_runname_and_filename(tmp_path, monkeypatch):
     inp.mkdir()
     rec = inp / "recX.pdb"
     lig = inp / "ligY.pdb"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
 
     work_root = tmp_path / "output"
     work_root.mkdir()
@@ -220,8 +246,8 @@ def test_cfg_includes_ambig_file(tmp_path, monkeypatch):
     rec = inp / "rec.pdb"
     lig = inp / "lig.pdb"
     ambig = inp / "restraints.tbl"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
     ambig.write_text("{0} 1 2\n")
 
     work_root = tmp_path / "output"
@@ -245,6 +271,33 @@ def test_cfg_includes_ambig_file(tmp_path, monkeypatch):
     assert f'"data/{rec.name}"' in text
     assert f'"data/{lig.name}"' in text
     assert "ambig_fname = " in text
+    assert "cmrest = true" not in text
+
+
+def test_cfg_carries_cmrest_into_flexref_for_ab_initio_runs(tmp_path, monkeypatch):
+    inp = tmp_path / "input"
+    inp.mkdir()
+    rec = inp / "rec.pdb"
+    lig = inp / "lig.pdb"
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
+
+    work_root = tmp_path / "output"
+    work_root.mkdir()
+
+    monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
+
+    _, cfg_path, _ = pdb_to_haddock.haddock_pipeline(
+        str(rec),
+        str(lig),
+        runname="abinitio_cmrest",
+        run_haddock=False,
+        base_root=str(work_root),
+        method="haddock_runs",
+    )
+
+    text = cfg_path.read_text()
+    assert text.count("cmrest = true") == 2
 
 
 def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
@@ -259,8 +312,8 @@ def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
     inp.mkdir()
     rec = inp / "rec.pdb"
     lig = inp / "lig.pdb"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
 
     work_root = tmp_path / "myroot"
     work_root.mkdir()
@@ -280,6 +333,96 @@ def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
     assert str(work_root.resolve()) in str(run_dir.resolve())
     assert "custom_method" in str(run_dir)
     assert cfg_path.exists()
+
+
+def test_copy_inputs_normalizes_multichain_partner_without_restraints(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    rec = tmp_path / "rec.pdb"
+    lig = tmp_path / "lig.pdb"
+    rec.write_text(
+        _make_atom_line(1, "N", "GLY", "R", 10, segid="R", element="N")
+        + _make_atom_line(2, "CA", "GLY", "R", 10, segid="R")
+        + "END\n"
+    )
+    lig.write_text(
+        _make_atom_line(1, "N", "ALA", "H", 5, segid="H", element="N")
+        + _make_atom_line(2, "CA", "ALA", "H", 5, segid="H")
+        + "TER       3      ALA H   5\n"
+        + _make_atom_line(4, "N", "SER", "J", 5, segid="J", element="N")
+        + _make_atom_line(5, "CA", "SER", "J", 5, segid="J")
+        + "END\n"
+    )
+
+    rec_dst, lig_dst, ambig_dst = pdb_to_haddock.copy_inputs(
+        data_dir,
+        str(rec),
+        str(lig),
+    )
+
+    assert ambig_dst is None
+
+    rec_atoms = [line for line in rec_dst.read_text().splitlines() if line.startswith("ATOM")]
+    lig_atoms = [line for line in lig_dst.read_text().splitlines() if line.startswith("ATOM")]
+
+    assert {line[21] for line in rec_atoms} == {"A"}
+    assert {line[21] for line in lig_atoms} == {"B"}
+    assert {line[72:76].strip() for line in rec_atoms} == {"A"}
+    assert {line[72:76].strip() for line in lig_atoms} == {"B"}
+
+    ligand_residues = []
+    last_residue = None
+    for line in lig_atoms:
+        residue_id = line[21:27]
+        if residue_id != last_residue:
+            ligand_residues.append(line[22:26].strip())
+            last_residue = residue_id
+
+    assert ligand_residues == ["1", "2"]
+
+
+def test_copy_inputs_normalizes_shared_chain_ids_without_restraints(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    rec = tmp_path / "rec.pdb"
+    lig = tmp_path / "lig.pdb"
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="A")
+
+    rec_dst, lig_dst, _ = pdb_to_haddock.copy_inputs(
+        data_dir,
+        str(rec),
+        str(lig),
+    )
+
+    rec_atoms = [line for line in rec_dst.read_text().splitlines() if line.startswith("ATOM")]
+    lig_atoms = [line for line in lig_dst.read_text().splitlines() if line.startswith("ATOM")]
+    assert {line[21] for line in rec_atoms} == {"A"}
+    assert {line[21] for line in lig_atoms} == {"B"}
+
+
+def test_copy_inputs_rejects_multichain_inputs_with_ambig(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    rec = tmp_path / "rec.pdb"
+    lig = tmp_path / "lig.pdb"
+    ambig = tmp_path / "ambig.tbl"
+    _write_simple_pdb(rec, chain="A")
+    lig.write_text(
+        _make_atom_line(1, "N", "ALA", "H", 5, segid="H", element="N")
+        + _make_atom_line(2, "CA", "ALA", "H", 5, segid="H")
+        + "TER       3      ALA H   5\n"
+        + _make_atom_line(4, "N", "SER", "J", 5, segid="J", element="N")
+        + _make_atom_line(5, "CA", "SER", "J", 5, segid="J")
+        + "END\n"
+    )
+    ambig.write_text("assign (segid A) (segid B) 2.0 2.0 0.0\n")
+
+    with pytest.raises(RuntimeError, match="before using --ambig"):
+        pdb_to_haddock.copy_inputs(data_dir, str(rec), str(lig), str(ambig))
 
 
 def test_execute_haddock_run_uses_container_before_local_cns_check(
@@ -512,8 +655,8 @@ def test_main_reports_runtime_error_cleanly(tmp_path, monkeypatch, capsys):
     inp.mkdir()
     rec = inp / "rec.pdb"
     lig = inp / "lig.pdb"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
 
     monkeypatch.setattr(
         pdb_to_haddock,
@@ -534,8 +677,8 @@ def test_main_reports_called_process_error_cleanly(tmp_path, monkeypatch, capsys
     inp.mkdir()
     rec = inp / "rec.pdb"
     lig = inp / "lig.pdb"
-    rec.write_text("ATOM\n")
-    lig.write_text("ATOM\n")
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
 
     monkeypatch.setattr(
         pdb_to_haddock,
