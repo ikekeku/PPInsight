@@ -37,6 +37,14 @@ def _write_simple_pdb(path, *, chain: str, segid: str | None = None):
     )
 
 
+def _atom_lines(path):
+    return [
+        line
+        for line in path.read_text().splitlines()
+        if line.startswith("ATOM")
+    ]
+
+
 class CmdRecorder:
     """Record calls to run_command(cmd, cwd=...).
 
@@ -363,8 +371,8 @@ def test_copy_inputs_normalizes_multichain_partner_without_restraints(tmp_path):
 
     assert ambig_dst is None
 
-    rec_atoms = [line for line in rec_dst.read_text().splitlines() if line.startswith("ATOM")]
-    lig_atoms = [line for line in lig_dst.read_text().splitlines() if line.startswith("ATOM")]
+    rec_atoms = _atom_lines(rec_dst)
+    lig_atoms = _atom_lines(lig_dst)
 
     assert {line[21] for line in rec_atoms} == {"A"}
     assert {line[21] for line in lig_atoms} == {"B"}
@@ -397,8 +405,8 @@ def test_copy_inputs_normalizes_shared_chain_ids_without_restraints(tmp_path):
         str(lig),
     )
 
-    rec_atoms = [line for line in rec_dst.read_text().splitlines() if line.startswith("ATOM")]
-    lig_atoms = [line for line in lig_dst.read_text().splitlines() if line.startswith("ATOM")]
+    rec_atoms = _atom_lines(rec_dst)
+    lig_atoms = _atom_lines(lig_dst)
     assert {line[21] for line in rec_atoms} == {"A"}
     assert {line[21] for line in lig_atoms} == {"B"}
 
@@ -431,7 +439,7 @@ def test_copy_inputs_prefers_dbref_chains_for_matching_accession(tmp_path):
         str(lig),
     )
 
-    lig_atoms = [line for line in lig_dst.read_text().splitlines() if line.startswith("ATOM")]
+    lig_atoms = _atom_lines(lig_dst)
     assert len(lig_atoms) == 4
     assert {line[21] for line in lig_atoms} == {"B"}
 

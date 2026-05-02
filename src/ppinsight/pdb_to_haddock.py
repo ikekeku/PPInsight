@@ -238,8 +238,12 @@ def _maybe_normalize_haddock_partners(
     """
     rec_accession = rec_path.stem.upper()
     lig_accession = lig_path.stem.upper()
-    rec_allowed_chains = set(_dbref_chains_for_accession(rec_path, rec_accession)) or None
-    lig_allowed_chains = set(_dbref_chains_for_accession(lig_path, lig_accession)) or None
+    rec_allowed_chains = (
+        set(_dbref_chains_for_accession(rec_path, rec_accession)) or None
+    )
+    lig_allowed_chains = (
+        set(_dbref_chains_for_accession(lig_path, lig_accession)) or None
+    )
 
     if rec_allowed_chains is not None:
         info(
