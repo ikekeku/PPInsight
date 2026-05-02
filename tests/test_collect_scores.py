@@ -48,7 +48,12 @@ def rosetta_dir(tmp_path):
     root = tmp_path / "rosetta_run"
     root.mkdir()
     csv_path = root / "docking_scores.csv"
-    csv_path.write_text("run,score\n1,-9.8\n2,-11.2\n3,-7.5\n")
+    csv_path.write_text(
+        "run,total_score,i_sc\n"
+        "1,-109.8,-9.8\n"
+        "2,-111.2,-11.2\n"
+        "3,-107.5,-7.5\n"
+    )
     return str(root)
 
 
@@ -158,8 +163,19 @@ class TestParseLightdock:
 class TestParseRosetta:
     def test_basic(self, rosetta_dir):
         df = collect_scores._parse_rosetta(rosetta_dir)
-        assert len(df) == 3
-        assert (df["score_type"] == "interface_score").all()
+        assert len(df) == 6
+        assert set(df["score_type"].unique()) == {"i_sc", "total_score"}
+        assert df["pose_id"].nunique() == 3
+
+    def test_legacy_csv_maps_to_total_score(self, tmp_path):
+        root = tmp_path / "rosetta_legacy_csv"
+        root.mkdir()
+        (root / "docking_scores.csv").write_text("run,score\n1,-9.8\n2,-11.2\n")
+
+        df = collect_scores._parse_rosetta(str(root))
+
+        assert len(df) == 2
+        assert set(df["score_type"].unique()) == {"total_score"}
 
     def test_missing_csv(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="docking_scores.csv"):
@@ -320,7 +336,8 @@ class TestCLI:
         out = str(tmp_path / "out.csv")
         collect_scores.main([rosetta_dir, "-o", out])
         df = pd.read_csv(out)
-        assert len(df) == 3
+        assert len(df) == 6
+        assert set(df["score_type"].unique()) == {"i_sc", "total_score"}
 
     def test_pair_flag(self, lightdock_dir, tmp_path):
         out = str(tmp_path / "out.tsv")

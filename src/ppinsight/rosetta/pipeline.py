@@ -230,7 +230,8 @@ class DockingPipeline:
         top_results = self.analysis['top_results'][:top_n]
 
         for i, result in enumerate(top_results, 1):
-            output_path = output_dir / f"docked_top_{i}_score_{result['score']:.2f}.pdb"
+            score_value = result.get('i_sc', result.get('score'))
+            output_path = output_dir / f"docked_top_{i}_score_{score_value:.2f}.pdb"
             save_docked_structure(result['pose'], output_path)
 
             if self.verbose:

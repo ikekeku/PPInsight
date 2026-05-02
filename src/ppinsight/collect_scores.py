@@ -520,9 +520,11 @@ def _parse_rosetta(out_dir: str,
        - ``rms`` (ligand RMSD, if present)
        - ``Fnat`` (fraction of native contacts, if present)
 
-    3. **PPInsight ``docking_scores.csv``** — the legacy CSV written by
-       the PyRosetta wrapper (``ppinsight.rosetta.dock``).  Falls back to
-       this when no ``.sc`` file is found.
+        3. **PPInsight ``docking_scores.csv``** — the CSV written by the
+             PyRosetta wrapper.  Current files export explicit
+             ``run,total_score,i_sc`` columns; older ``run,score`` files are
+             still accepted as a total-score-only fallback when no ``.sc`` file
+             is found.
 
     Returns a DataFrame with unified columns.
     """
@@ -549,21 +551,35 @@ def _parse_rosetta(out_dir: str,
 
     rows: list[dict] = []
     pA, pB = pair or ("", "")
-    score_col = "score" if "score" in df.columns else df.columns[-1]
+    if "i_sc" in df.columns or "total_score" in df.columns:
+        metric_columns = [
+            (metric_name, metric_name)
+            for metric_name in ("i_sc", "total_score")
+            if metric_name in df.columns
+        ]
+    elif "score" in df.columns:
+        metric_columns = [("total_score", "score")]
+    else:
+        raise KeyError(
+            "Rosetta docking_scores.csv must contain 'total_score' and 'i_sc' "
+            "columns, or the legacy 'score' column."
+        )
+
     for row_idx, (_, row) in enumerate(df.iterrows(), start=1):
         run_ref = row.get("run", row_idx)
         pose_id = f"run_{int(run_ref):04d}" if str(run_ref).isdigit() else str(run_ref)
-        rows.append({
-            "model": label,
-            "score_type": "interface_score",
-            "score_value": float(row[score_col]),
-            "proteinA": pA,
-            "proteinB": pB,
-            "pose_id": pose_id,
-            "output_path": "",
-            "source_file": csv_path,
-            "pose_rank": row_idx,
-        })
+        for score_type, column_name in metric_columns:
+            rows.append({
+                "model": label,
+                "score_type": score_type,
+                "score_value": float(row[column_name]),
+                "proteinA": pA,
+                "proteinB": pB,
+                "pose_id": pose_id,
+                "output_path": "",
+                "source_file": csv_path,
+                "pose_rank": row_idx,
+            })
     return pd.DataFrame(rows)
 
 

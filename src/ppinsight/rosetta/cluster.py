@@ -8,7 +8,7 @@ the **largest cluster** is the recommended prediction.
 
 Algorithm
 ---------
-1. Load scores, sort by total_score, take top *n* decoys.
+1. Load scores, sort by I_sc, take top *n* decoys.
 2. Load each decoy PDB as a PyRosetta ``Pose``.
 3. Compute an *n × n* pairwise Cα-RMSD matrix.
 4. Convert to a condensed distance vector (``squareform``).
@@ -90,7 +90,7 @@ def cluster_decoys(
     scores_df: pd.DataFrame,
     pdb_dir: str | Path,
     *,
-    score_col: str = "total_score",
+    score_col: str = "i_sc",
     top_n: int = 200,
     rmsd_cutoff: float = 4.0,
     pdb_pattern: str = "docked_{description}.pdb",
@@ -142,14 +142,14 @@ def cluster_decoys(
     pdb_dir = Path(pdb_dir)
 
     # ── 1. Sort & trim ───────────────────────────────────────────
+    if "description" not in scores_df.columns:
+        raise KeyError(
+            "DataFrame must have a 'description' column identifying each decoy."
+        )
     if score_col not in scores_df.columns:
         raise KeyError(
             f"Score column '{score_col}' not found in DataFrame. "
             f"Available: {list(scores_df.columns)}"
-        )
-    if "description" not in scores_df.columns:
-        raise KeyError(
-            "DataFrame must have a 'description' column identifying each decoy."
         )
 
     df = scores_df.sort_values(score_col, ascending=True).head(top_n).copy()

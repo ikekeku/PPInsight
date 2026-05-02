@@ -14,7 +14,7 @@ Example usage:
 
     pipeline = DockingPipeline("protein1.pdb", "protein2.pdb", n_runs=10)
     result = pipeline.run()
-    print(f"Final docking score: {result['score']:.2f}")
+    print(f"Final docking score: {result['final_score']:.2f}")
 
 Note:
     Importing this sub-package requires PyRosetta.  Install it with::

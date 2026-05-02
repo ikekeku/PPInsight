@@ -8,6 +8,7 @@ Usage matches the style of the other PPInsight pipeline scripts::
 """
 
 import argparse
+import csv
 import os
 import sys
 from contextlib import contextmanager
@@ -99,6 +100,48 @@ def _make_output_dir(receptor_pdb, ligand_pdb,
     return run_dir
 
 
+def _rosetta_outputs_support_clustering(scores_csv, pdb_dir):
+    """Return whether the current Rosetta outputs can be clustered."""
+    with open(scores_csv, encoding="utf8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            return False, f"{Path(scores_csv).name} is empty."
+
+        fieldnames = {name.strip().lower() for name in reader.fieldnames if name}
+        if "description" not in fieldnames:
+            return False, (
+                "current PPInsight Rosetta outputs only save per-run scores; "
+                "clustering needs per-decoy identifiers and decoy PDB files"
+            )
+
+        descriptions = []
+        for row in reader:
+            description = str(row.get("description", "")).strip()
+            if description:
+                descriptions.append(description)
+
+    if not descriptions:
+        return False, "score file does not list any decoy identifiers"
+
+    matched_pdbs = 0
+    output_dir = Path(pdb_dir)
+    for description in descriptions:
+        candidates = [
+            output_dir / f"{description}.pdb",
+            output_dir / f"docked_{description}.pdb",
+            output_dir / f"decoy_{description}.pdb",
+        ]
+        if any(candidate.is_file() for candidate in candidates):
+            matched_pdbs += 1
+        if matched_pdbs >= 2:
+            return True, None
+
+    return False, (
+        "current Rosetta run directory does not contain at least two decoy "
+        "PDB files required for clustering"
+    )
+
+
 # ── CLI ──────────────────────────────────────────────────────────
 
 def main(argv=None):
@@ -185,10 +228,10 @@ def main(argv=None):
         "--no-cluster", action="store_true",
         help=(
             "Skip decoy clustering after docking.  Clustering groups decoys "
-            "by Cα-RMSD to identify distinct binding modes — the best-scoring "
-            "member of the largest cluster is the recommended prediction "
-            "(standard Rosetta best practice).  Skip only when scipy or "
-            "PyRosetta is unavailable, or for quick debugging."
+            "by Cα-RMSD to identify distinct binding modes when per-decoy "
+            "identifiers and decoy PDB files are available.  Minimal score-"
+            "only runs are skipped automatically.  Use this flag to disable "
+            "clustering entirely in scripted or debugging runs."
         ),
     )
     parser.add_argument(
@@ -238,6 +281,7 @@ def main(argv=None):
 
     # ── output directory ─────────────────────────────────────────
     output_dir = args.output_dir or _make_output_dir(receptor, ligand)
+    os.makedirs(output_dir, exist_ok=True)
     verbose = not args.quiet
 
     if verbose:
@@ -261,8 +305,9 @@ def main(argv=None):
     if args.save_top > 0:
         pipeline.save_top_structures(output_dir, top_n=args.save_top)
 
-    # Always save per-decoy scores — needed for downstream clustering
-    # and for 'ppinsight collect' to parse Rosetta results.
+    # Always save per-decoy scores for downstream collection.  The
+    # explicit CSV schema is truthful about Rosetta metrics, but it is
+    # not sufficient on its own for structural clustering.
     csv_path = os.path.join(output_dir, "docking_scores.csv")
     pipeline.save_scores(csv_path)
 
@@ -272,20 +317,29 @@ def main(argv=None):
     # is the recommended prediction (standard Rosetta best practice).
     if not args.no_cluster:
         if os.path.isfile(csv_path):
-            try:
-                from ppinsight.rosetta.analyze import cluster_and_rank
-                clustered = cluster_and_rank(
-                    csv_path,
-                    output_dir,
-                    top_n=args.cluster_top_n,
-                    rmsd_cutoff=args.rmsd_cutoff,
-                )
-                if clustered is not None and verbose:
-                    n_clusters = clustered["cluster"].nunique()
-                    print(f"✓ Clustered decoys into {n_clusters} group(s)")
-            except Exception as exc:
+            cluster_ready, cluster_reason = _rosetta_outputs_support_clustering(
+                csv_path,
+                output_dir,
+            )
+            if not cluster_ready:
                 if verbose:
-                    print(f"⚠ Clustering skipped: {exc}")
+                    print(f"Skipping clustering: {cluster_reason}")
+            else:
+                try:
+                    from ppinsight.rosetta.analyze import cluster_and_rank
+                    clustered = cluster_and_rank(
+                        csv_path,
+                        output_dir,
+                        score_col="i_sc",
+                        top_n=args.cluster_top_n,
+                        rmsd_cutoff=args.rmsd_cutoff,
+                    )
+                    if clustered is not None and verbose:
+                        n_clusters = clustered["cluster"].nunique()
+                        print(f"✓ Clustered decoys into {n_clusters} group(s)")
+                except Exception as exc:
+                    if verbose:
+                        print(f"⚠ Clustering skipped: {exc}")
 
     # ── summary ──────────────────────────────────────────────────
     if verbose:

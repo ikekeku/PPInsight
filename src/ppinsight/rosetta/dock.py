@@ -310,7 +310,8 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
     Returns:
         List of dictionaries with keys:
             - 'pose': Docked Pose object (if save_all=True)
-            - 'score': Total score
+            - 'score': Legacy alias of the Rosetta total score
+            - 'total_score': Rosetta total score
             - 'i_sc': Interface score (dG_separated)
             - 'run': Run number
 
@@ -361,7 +362,7 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
             print(f"  Completed {i + 1}/{n_runs} runs...")
 
         # Run docking with randomization
-        docked_pose, score = run_single_docking(
+        docked_pose, total_score = run_single_docking(
             pose,
             docking_protocol,
             scorefxn,
@@ -375,7 +376,8 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
         # Store results
         result = {
             'run': i + 1,
-            'score': score,
+            'score': total_score,
+            'total_score': total_score,
             'i_sc': i_sc,
         }
 

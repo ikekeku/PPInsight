@@ -14,7 +14,7 @@ Supports three input modes (from simplest to most flexible):
 
 3. **Native tool outputs** read directly
    - HADDOCK ``capri_ss.tsv``  → columns like *score*, *dockq*, *irmsd*, *fnat*, …
-   - Rosetta ``docking_scores.csv`` → columns *run*, *score*
+    - Rosetta ``docking_scores.csv`` → columns *run*, *total_score*, *i_sc*
    → :func:`to_plot` handles both CSV and TSV automatically.
 
 CLI usage::
@@ -958,8 +958,8 @@ METRIC_METADATA: dict[str, dict] = {
         "higher_is_better": False,
         "display_name": "Interface Score",
         "description": (
-            "Rosetta interface energy (REU) from PyRosetta"
-            " wrapper. Lower = better."
+            "Legacy Rosetta interface-score label retained for backward "
+            "compatibility with older collected files. Lower = better."
         ),
     },
     "i_sc": {
