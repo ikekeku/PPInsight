@@ -2055,6 +2055,104 @@ def tabular_summary(
     return agg.sort_values(["pair", "model"]).reset_index(drop=True)
 
 
+def metric_overview_table(scores_df: pd.DataFrame) -> pd.DataFrame:
+    """Metric-agnostic overview table grouped by model and pair.
+
+    This summary does not require a metric filter. It is meant as a quick
+    inventory of what data is present before choosing plot/metric options.
+
+    Returns
+    -------
+    DataFrame
+        Columns: ``model``, ``pair``, ``rows``, ``poses``, ``metrics``,
+        ``metric_count``, ``labels_present``, ``paths_present``.
+    """
+    df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+    if "model" not in df.columns:
+        raise ValueError("overview table requires a 'model' column")
+
+    if "proteina" in df.columns and "proteinb" in df.columns:
+        df["pair"] = (
+            df["proteina"].fillna("").astype(str)
+            + " vs "
+            + df["proteinb"].fillna("").astype(str)
+        )
+        df.loc[df["pair"].str.strip() == "vs", "pair"] = "all"
+    else:
+        df["pair"] = "all"
+
+    def _joined_metrics(values: pd.Series) -> str:
+        tokens = sorted({str(v).strip() for v in values if str(v).strip()})
+        return ";".join(tokens)
+
+    group_cols = ["model", "pair"]
+    overview = df.groupby(group_cols, dropna=False).size().reset_index(name="rows")
+
+    if "pose_id" in df.columns:
+        pose_counts = (
+            df.assign(_pose=df["pose_id"].fillna("").astype(str).str.strip())
+            .groupby(group_cols)["_pose"]
+            .apply(lambda s: s[s != ""].nunique())
+            .reset_index(name="poses")
+        )
+        overview = overview.merge(pose_counts, on=group_cols, how="left")
+        overview["poses"] = overview["poses"].fillna(0).astype(int)
+    else:
+        overview["poses"] = overview["rows"].astype(int)
+
+    if "score_type" in df.columns:
+        metrics = (
+            df.groupby(group_cols)["score_type"]
+            .agg(metrics=_joined_metrics, metric_count="nunique")
+            .reset_index()
+        )
+        overview = overview.merge(metrics, on=group_cols, how="left")
+    else:
+        overview["metrics"] = ""
+        overview["metric_count"] = 0
+
+    if "label" in df.columns:
+        labels_present = (
+            df.assign(_label=df["label"].fillna("").astype(str).str.strip())
+            .groupby(group_cols)["_label"]
+            .apply(lambda s: any(v and v.lower() != "unknown" for v in s))
+            .reset_index(name="labels_present")
+        )
+        overview = overview.merge(labels_present, on=group_cols, how="left")
+    else:
+        overview["labels_present"] = False
+
+    if "output_path" in df.columns:
+        paths_present = (
+            df.assign(_path=df["output_path"].fillna("").astype(str).str.strip())
+            .groupby(group_cols)["_path"]
+            .apply(lambda s: any(v for v in s))
+            .reset_index(name="paths_present")
+        )
+        overview = overview.merge(paths_present, on=group_cols, how="left")
+    else:
+        overview["paths_present"] = False
+
+    overview["metric_count"] = overview["metric_count"].fillna(0).astype(int)
+    overview["metrics"] = overview["metrics"].fillna("")
+    overview["labels_present"] = overview["labels_present"].fillna(False)
+    overview["paths_present"] = overview["paths_present"].fillna(False)
+
+    return overview.sort_values(["pair", "model"]).reset_index(drop=True)
+
+
+def _print_metric_overview_table(scores_df: pd.DataFrame) -> pd.DataFrame:
+    """Print the metric-agnostic overview table for unified scores."""
+    tbl = metric_overview_table(scores_df)
+    print()
+    print("── Metric-Agnostic Overview ──")
+    print(tbl.to_string(index=False))
+    print()
+    return tbl
+
+
 def _print_tabular_summary(scores_df: pd.DataFrame, metric: str) -> pd.DataFrame:
     """Print the tabular summary to stdout with a clear header.
 
@@ -2493,7 +2591,7 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     )
     extras.append(
         "--table          Tabular summary "
-        "(mean, std, median, min, max) for a metric."
+        "for a metric, or metric-agnostic overview when --metric is omitted."
     )
     extras.append(
         "--rank           Per-pair ranking: which "
@@ -2645,7 +2743,7 @@ def main(argv=None):
             "'score_type' column of the scores file.  Use --list-metrics "
             "to see what is available.  Required for plotting and "
             "classification; not needed for --list-metrics, --list-pairs, "
-            "or --guide."
+            "--guide, or metric-agnostic --table mode."
         ),
     )
     parser.add_argument(
@@ -2794,9 +2892,10 @@ def main(argv=None):
         "--table",
         action="store_true",
         help=(
-            "Print the tabular summary only (no plot).  The tabular "
-            "summary is always printed before any plot — this flag "
-            "suppresses the plot if you only need the numbers."
+            "Print tables only (no plot).  With --metric, prints the "
+            "per-metric summary (mean/std/median/min/max).  Without "
+            "--metric, prints a metric-agnostic overview of models, "
+            "pairs, and available metrics."
         ),
     )
     parser.add_argument(
@@ -2899,6 +2998,14 @@ def main(argv=None):
                 print(summary.to_string(index=False))
                 return
 
+            if args.table and not args.metric:
+                try:
+                    _print_metric_overview_table(analysis_df)
+                except ValueError as exc:
+                    print(f"ERROR: {exc}", file=sys.stderr)
+                    sys.exit(1)
+                return
+
             # --metric is required for everything below this point
             # (unless --plot-type quality_bar, which also doesn't need it).
             if args.plot_type == "quality_bar":
@@ -2927,7 +3034,8 @@ def main(argv=None):
                     "ERROR: --metric is required for plotting and "
                     "classification.  Use --list-metrics to see available "
                     "values, or --guide to see which plot types work with "
-                    "your data.",
+                    "your data.  If you only need a metric-agnostic table, "
+                    "use --table without --metric.",
                     file=sys.stderr,
                 )
                 sys.exit(2)

@@ -996,10 +996,11 @@ def main(argv=None):
         nargs="*",
         default=None,
         help=(
-            "Model display labels for each directory (default: auto-detected "
-            "engine name, e.g. 'lightdock', 'haddock').  Must match the "
-            "number of directories if given.  Use this when you have "
-            "multiple runs of the same engine and need distinct names "
+            "Override model names in the output 'model' column (one label "
+            "per directory).  This is not interaction labeling; it only "
+            "renames model identities used in legends/tables (default: "
+            "auto-detected engine names).  Use when you collect multiple "
+            "runs of the same engine and need distinct model names "
             "(e.g. 'haddock_ambig' vs 'haddock_noambig')."
         ),
     )
@@ -1068,9 +1069,10 @@ def main(argv=None):
         type=int,
         default=5,
         help=(
-            "How many top scores to average for --agg topN_mean (default: 5).  "
-            "Higher values smooth out stochastic noise but may dilute the "
-            "signal if only one or two poses are near-native."
+            "How many top scores to average when --agg topN_mean is used "
+            "(default: 5).  Ignored for other --agg modes.  Higher values "
+            "smooth stochastic noise but may dilute near-native signal "
+            "if only a few poses are strong."
         ),
     )
 

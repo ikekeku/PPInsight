@@ -264,6 +264,15 @@ class TestHelpers:
         assert len(pairs) == 2
         assert ("2uuy_rec", "2uuy_lig") in pairs or ("2UUY_rec", "2UUY_lig") in pairs
 
+    def test_metric_overview_table(self, unified_scores_csv):
+        df = vis.load_scores(unified_scores_csv)
+        overview = vis.metric_overview_table(df)
+        assert not overview.empty
+        assert {"model", "pair", "rows", "metric_count", "metrics"} <= set(
+            overview.columns
+        )
+        assert overview["metric_count"].max() >= 1
+
 
 # ---------------------------------------------------------------------------
 # CLI main()
@@ -334,6 +343,11 @@ class TestCLI:
         vis.main([unified_scores_csv, "--metric", "dockq", "--list-pairs"])
         captured = capsys.readouterr()
         assert "2uuy_rec" in captured.out.lower()
+
+    def test_table_without_metric_prints_overview(self, unified_scores_csv, capsys):
+        vis.main([unified_scores_csv, "--table"])
+        captured = capsys.readouterr()
+        assert "Metric-Agnostic Overview" in captured.out
 
 
 # ---------------------------------------------------------------------------

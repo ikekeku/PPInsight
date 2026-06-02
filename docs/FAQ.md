@@ -51,6 +51,21 @@ Name-based inputs are resolved against reviewed human UniProt records
 - `--csv FILE`: structured metadata columns:
    `ID`, `Name`, `Description`, `Sequence Length`, `Sequence`.
 
+### What does `--no-auto-filter` mean for HADDOCK or Rosetta?
+
+Some accession-named PDB files are mixed co-complex depositions that contain
+extra proteins beyond the accession in the filename. For HADDOCK and Rosetta,
+PPInsight checks DBREF metadata and keeps only the chains mapped to the
+requested accession by default.
+
+Use `--no-auto-filter` only when you intentionally want to dock the full
+deposited complex (all co-complex chains), not the accession-mapped subset.
+
+Why this exists: accession-based runs are usually meant to evaluate the
+specific protein partner named in your pair file. Auto-filtering keeps the
+input aligned with that intent and avoids docking unrelated co-crystallized
+chains by accident.
+
 ---
 
 ## CAPRI Quality Assessment
@@ -83,11 +98,12 @@ You are passing energy scores (score, total_score, luciferin_score) rather
 than quality metrics.  Run DockQ to obtain fnat/irmsd/lrmsd/dockq values:
 
 ```bash
-ppinsight quality native.pdb pdbs/ -o quality.tsv
+ppinsight quality all_scores.tsv native.pdb -o all_scores_quality.tsv
 ```
 
-Then merge the quality scores into your unified scores file before calling
-`quality_bar_chart`.
+This reads the collected pose paths from `output_path` and appends
+DockQ/CAPRI evaluation rows directly into a new unified scores file that
+`compare` can consume.
 
 ### What does the `quality_bar_chart` show?
 
@@ -137,15 +153,19 @@ print(result["prodigy_kd"])    # Kd in M
 
 # Append to a unified scores DataFrame
 scores = pd.read_csv("all_scores.tsv", sep="\t")
-scores = add_prodigy_to_scores(scores, pdb_dir="pdbs/")
+scores = add_prodigy_to_scores(scores)
 ```
 
 Or use the command-line tool:
 
 ```bash
-ppinsight prodigy all_scores.tsv --pdb-dir pdbs/ --output scored.tsv
-ppinsight prodigy all_scores.tsv --pdb-dir pdbs/ --top-n 5 --engine HADDOCK
+ppinsight prodigy all_scores.tsv --output scored.tsv
+ppinsight prodigy all_scores.tsv --top-n 5 --engine HADDOCK
 ```
+
+If your scores file does not have `output_path`, keep using `--pdb-dir` as a
+fallback together with a `pdb` filename column, for example with manually
+assembled or external scores tables.
 
 ### `score_pdb` returns `{"error": "no_contacts", …}` with NaN values
 
