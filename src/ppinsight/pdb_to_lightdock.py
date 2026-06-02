@@ -622,9 +622,11 @@ def main(argv=None):
         help=(
             "Number of swarms — independent search starting points spread "
             "over the protein surface.  More swarms explore more of the "
-            "surface but increase runtime linearly.  Use the default for "
-            "standard-size proteins; raise to 400+ for large complexes "
-            "where the binding site is unknown.  (LightDock default if not set.)"
+            "surface but increase runtime linearly.  If omitted, LightDock "
+            "auto-calculates the swarm count from the receptor surface; "
+            "there is no single fixed numeric default.  Leaving this unset "
+            "is usually reasonable for standard-size proteins; raise to 400+ "
+            "for large complexes where the binding site is unknown."
         ),
     )
     parser.add_argument(
@@ -698,10 +700,10 @@ def main(argv=None):
     )
     parser.add_argument(
         "--input-dir",
-        default=None,
+        default="data/input",
         help=(
             "Directory to search when receptor/ligand are basenames instead "
-            "of full paths (default: repo root).  Useful when PDB files "
+            "of full paths (default: data/input).  Useful when PDB files "
             "live in a shared directory outside the project tree."
         ),
     )

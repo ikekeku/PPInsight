@@ -778,3 +778,26 @@ def test_main_reports_called_process_error_cleanly(tmp_path, monkeypatch, capsys
     captured = capsys.readouterr()
     assert exc_info.value.code == 1
     assert "ERROR: command failed with exit code 2: docker run ... " in captured.err
+
+
+def test_main_defaults_input_dir_to_data_input(tmp_path, monkeypatch):
+    seen_roots = []
+
+    def _resolve(path, search_root=None):
+        seen_roots.append(search_root)
+        return f"/tmp/{path}.pdb"
+
+    run_dir = tmp_path / "output" / "haddock_runs" / "run1"
+    run_dir.mkdir(parents=True)
+    cfg_path = run_dir / "run1.cfg"
+    cfg_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(pdb_to_haddock, "resolve_input_path", _resolve)
+    monkeypatch.setattr(
+        pdb_to_haddock,
+        "haddock_pipeline",
+        lambda *args, **kwargs: (run_dir, cfg_path, None),
+    )
+
+    pdb_to_haddock.main(["rec", "lig"])
+    assert seen_roots == ["data/input", "data/input"]

@@ -409,3 +409,199 @@ def test_fetch_resolves_human_name_inputs(identifier, tmp_path, monkeypatch):
     assert search_queries
     assert pdb_info == {"P15692": "1BJ1"}
     assert (tmp_path / "P15692.pdb").exists()
+
+
+def test_exact_human_entry_name_resolves_before_fuzzy(monkeypatch):
+    """Exact-looking *_HUMAN inputs should try id:<entry> first."""
+
+    class DummyResponse:
+        def __init__(self, json_data=None):
+            self._json_data = json_data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._json_data
+
+    seen_queries: list[str] = []
+
+    def fake_get(url, params=None, timeout=10):
+        if url.endswith("/search"):
+            query = str((params or {}).get("query", ""))
+            seen_queries.append(query)
+            if query.startswith("id:NRP1_HUMAN"):
+                return DummyResponse(
+                    json_data={"results": [{"primaryAccession": "O14786"}]}
+                )
+            return DummyResponse(json_data={"results": []})
+        raise AssertionError(f"Unexpected URL in test stub: {url}")
+
+    monkeypatch.setattr(protein_fetch.requests, "get", fake_get)
+
+    resolved = protein_fetch._resolve_to_accession("NRP1_HUMAN")
+    assert resolved == "O14786"
+    assert seen_queries
+    assert seen_queries[0].startswith("id:NRP1_HUMAN")
+
+
+def test_fetch_default_no_clobber_keeps_existing_alias(tmp_path, monkeypatch):
+    """Existing aliases should be preserved unless --force is set."""
+
+    class DummyResponse:
+        def __init__(self, text="", json_data=None):
+            self.text = text
+            self._json_data = json_data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._json_data
+
+    def fake_get(url, timeout=10):
+        accession = url.rsplit("/", 1)[-1].split(".")[0]
+        if url.endswith(".fasta"):
+            assert accession == "P69905"
+            return DummyResponse(
+                text=(
+                    ">sp|P69905|HBA_HUMAN Hemoglobin subunit alpha\n"
+                    "MVLSPADKTN\n"
+                )
+            )
+        if url.endswith(".json"):
+            assert accession == "P69905"
+            return DummyResponse(
+                json_data={
+                    "uniProtKBCrossReferences": [
+                        {"database": "PDB", "id": "1A00"}
+                    ]
+                }
+            )
+        raise AssertionError(f"Unexpected URL in test stub: {url}")
+
+    class DummyPDBList:
+        def retrieve_pdb_file(self, pdb_id, pdir, file_format="pdb"):
+            raw_path = Path(pdir) / f"pdb{pdb_id.lower()}.ent"
+            raw_path.write_text("NEW\n", encoding="utf-8")
+            return str(raw_path)
+
+    alias_path = tmp_path / "P69905.pdb"
+    alias_path.write_text("OLD\n", encoding="utf-8")
+
+    monkeypatch.setattr(protein_fetch.requests, "get", fake_get)
+    monkeypatch.setattr(protein_fetch, "PDBList", DummyPDBList)
+
+    protein_fetch.get_uniprot_data(["P69905"], pdb_dir=str(tmp_path))
+    assert alias_path.read_text(encoding="utf-8") == "OLD\n"
+
+
+def test_fetch_force_overwrites_existing_alias(tmp_path, monkeypatch):
+    """--force behavior should replace existing aliases intentionally."""
+
+    class DummyResponse:
+        def __init__(self, text="", json_data=None):
+            self.text = text
+            self._json_data = json_data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._json_data
+
+    def fake_get(url, timeout=10):
+        accession = url.rsplit("/", 1)[-1].split(".")[0]
+        if url.endswith(".fasta"):
+            assert accession == "P69905"
+            return DummyResponse(
+                text=(
+                    ">sp|P69905|HBA_HUMAN Hemoglobin subunit alpha\n"
+                    "MVLSPADKTN\n"
+                )
+            )
+        if url.endswith(".json"):
+            assert accession == "P69905"
+            return DummyResponse(
+                json_data={
+                    "uniProtKBCrossReferences": [
+                        {"database": "PDB", "id": "1A00"}
+                    ]
+                }
+            )
+        raise AssertionError(f"Unexpected URL in test stub: {url}")
+
+    class DummyPDBList:
+        def retrieve_pdb_file(self, pdb_id, pdir, file_format="pdb"):
+            raw_path = Path(pdir) / f"pdb{pdb_id.lower()}.ent"
+            raw_path.write_text("NEW\n", encoding="utf-8")
+            return str(raw_path)
+
+    alias_path = tmp_path / "P69905.pdb"
+    alias_path.write_text("OLD\n", encoding="utf-8")
+
+    monkeypatch.setattr(protein_fetch.requests, "get", fake_get)
+    monkeypatch.setattr(protein_fetch, "PDBList", DummyPDBList)
+
+    protein_fetch.get_uniprot_data(["P69905"], pdb_dir=str(tmp_path), force=True)
+    assert alias_path.read_text(encoding="utf-8") == "NEW\n"
+
+
+def test_cli_search_preview_prints_matches(monkeypatch, capsys):
+    """--search should print candidate rows without downloading files."""
+
+    class DummyResponse:
+        def __init__(self, json_data=None):
+            self._json_data = json_data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._json_data
+
+    def fake_get(url, params=None, timeout=10):
+        if url.endswith("/search"):
+            return DummyResponse(
+                json_data={
+                    "results": [
+                        {
+                            "primaryAccession": "O14786",
+                            "uniProtkbId": "NRP1_HUMAN",
+                            "proteinDescription": {
+                                "recommendedName": {
+                                    "fullName": {"value": "Neuropilin-1"}
+                                }
+                            },
+                            "genes": [{"geneName": {"value": "NRP1"}}],
+                            "organism": {"scientificName": "Homo sapiens"},
+                            "sequence": {"length": 923},
+                            "proteinExistence": "1: Evidence at protein level",
+                            "annotationScore": 5,
+                        }
+                    ]
+                }
+            )
+        raise AssertionError(f"Unexpected URL in test stub: {url}")
+
+    monkeypatch.setattr(protein_fetch.requests, "get", fake_get)
+
+    protein_fetch.main(["--search", "Neuropilin-1 human", "--search-limit", "5"])
+    captured = capsys.readouterr()
+    assert "NRP1_HUMAN" in captured.out
+    assert "O14786" in captured.out
+    assert "Neuropilin-1" in captured.out
+
+
+def test_cli_remove_deletes_alias_file(tmp_path):
+    """--remove should delete a local alias from the fetch directory."""
+    alias = tmp_path / "P69905.pdb"
+    alias.write_text("HEADER\n", encoding="utf-8")
+
+    protein_fetch.main([
+        "--remove",
+        "P69905",
+        "--pdb-dir",
+        str(tmp_path),
+    ])
+    assert not alias.exists()

@@ -51,6 +51,26 @@ Name-based inputs are resolved against reviewed human UniProt records
 - `--csv FILE`: structured metadata columns:
    `ID`, `Name`, `Description`, `Sequence Length`, `Sequence`.
 
+### How do I preview ambiguous fetch terms before downloading?
+
+Use `--search`:
+
+```bash
+ppinsight fetch --search "Neuropilin-1 human"
+```
+
+This prints top reviewed-human UniProt matches (accession, entry name,
+protein name, genes, organism, sequence length, evidence, annotation score)
+and exits without downloading files.
+
+### How do I avoid accidental overwrite of local fetched PDB files?
+
+`ppinsight fetch` is safe-by-default: existing aliases in `--pdb-dir` are
+kept and conflicting writes are skipped.
+
+- Use `--force` to overwrite intentionally.
+- Use `--remove ...` to delete mistaken local fetch outputs first.
+
 ### What does `--no-auto-filter` mean for HADDOCK or Rosetta?
 
 Some accession-named PDB files are mixed co-complex depositions that contain

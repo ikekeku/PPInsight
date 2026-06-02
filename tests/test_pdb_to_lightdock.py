@@ -370,3 +370,32 @@ def test_main_noninteractive_cleanable_failure_exits_with_hint(
     captured = capsys.readouterr()
     assert exc_info.value.code == 1
     assert "--auto-clean-pdb" in captured.err
+
+
+def test_cli_defaults_input_dir_to_data_input(monkeypatch):
+    seen_roots = []
+
+    def _resolve(path, search_root=None):
+        seen_roots.append(search_root)
+        return f"/tmp/{path}.pdb"
+
+    monkeypatch.setattr(pdb_to_lightdock, "resolve_input_path", _resolve)
+    monkeypatch.setattr(
+        pdb_to_lightdock,
+        "make_output_dir",
+        lambda *args, **kwargs: "/tmp/lightdock_run",
+    )
+    monkeypatch.setattr(
+        pdb_to_lightdock,
+        "_run_lightdock_attempt",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        pdb_to_lightdock,
+        "_print_lightdock_success_summary",
+        lambda *args, **kwargs: None,
+    )
+
+    pdb_to_lightdock.main(["rec", "lig"])
+
+    assert seen_roots == ["data/input", "data/input"]

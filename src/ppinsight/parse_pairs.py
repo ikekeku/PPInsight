@@ -196,7 +196,8 @@ def main(argv=None):
         help=(
             "Output file (default: pairs.csv).  Extension determines format "
             "(.tsv → tab-separated, .csv → comma-separated).  This file is "
-            "consumed by 'ppinsight batch' and 'ppinsight collect --pairs'."
+            "consumed by 'ppinsight batch' and 'ppinsight collect --label-file' "
+            "(legacy alias: --pairs)."
         ),
     )
     parser.add_argument(

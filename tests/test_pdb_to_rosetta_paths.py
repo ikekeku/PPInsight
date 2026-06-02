@@ -63,6 +63,9 @@ def test_cli_can_disable_dbref_auto_filter(monkeypatch):
         def save_scores(self, output_path):
             return None
 
+        def save_all_decoys(self, output_dir):
+            return None
+
     monkeypatch.setattr(
         pdb_to_rosetta,
         "resolve_input_path",
@@ -99,7 +102,10 @@ def test_cli_creates_explicit_output_dir(monkeypatch, tmp_path):
             assert os.path.isdir(output_dir)
             assert output_path == str(output_dir / "docking_scores.csv")
             with open(output_path, "w", encoding="utf-8") as handle:
-                handle.write("run,total_score,i_sc\n1,-1.0,-2.0\n")
+                handle.write("run,description,total_score,i_sc\n1,decoy_1,-1.0,-2.0\n")
+
+        def save_all_decoys(self, output_dir):
+            return None
 
     monkeypatch.setattr(
         pdb_to_rosetta,
@@ -160,3 +166,42 @@ def test_rosetta_outputs_allow_clustering_with_decoys(tmp_path):
 
     assert ready is True
     assert reason is None
+
+
+def test_cli_defaults_input_dir_to_data_input(monkeypatch):
+    seen_roots = []
+
+    class _FakePipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self):
+            return {"final_score": 0.0}
+
+        def save_scores(self, output_path):
+            with open(output_path, "w", encoding="utf-8") as handle:
+                handle.write("run,description,total_score,i_sc\n1,decoy_1,-1.0,-2.0\n")
+
+        def save_all_decoys(self, output_dir):
+            return None
+
+    def _resolve(path, search_root=None):
+        seen_roots.append(search_root)
+        return f"/tmp/{path}.pdb"
+
+    monkeypatch.setattr(pdb_to_rosetta, "resolve_input_path", _resolve)
+    monkeypatch.setattr(pdb_to_rosetta, "_ensure_pyrosetta", lambda: None)
+    monkeypatch.setattr(pdb_to_rosetta, "_make_output_dir", lambda *a, **k: "/tmp/out")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ppinsight.docking",
+        types.SimpleNamespace(DockingPipeline=_FakePipeline),
+    )
+
+    try:
+        pdb_to_rosetta.main(["rec", "lig", "--quiet", "--no-cluster"])
+    finally:
+        sys.modules.pop("ppinsight.docking", None)
+
+    assert seen_roots == ["data/input", "data/input"]

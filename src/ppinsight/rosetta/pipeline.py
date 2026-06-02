@@ -43,7 +43,7 @@ class DockingPipeline:
     def __init__(self, protein1_pdb, protein2_pdb, n_runs=10, top_n=20,
                  relax=True, jump_distance=15.0, verbose=True,
                  cluster=True, cluster_top_n=200, rmsd_cutoff=4.0,
-                 auto_filter=True):
+                 auto_filter=True, pyrosetta_debug=False):
         """
         Initialize the docking pipeline.
 
@@ -60,6 +60,8 @@ class DockingPipeline:
             rmsd_cutoff: Cα-RMSD cutoff in Å for clustering (default: 4.0)
             auto_filter: If True, keep only accession-mapped DBREF chains when
                 an accession-named input PDB is a mixed complex (default: True)
+            pyrosetta_debug: If True, keep verbose PyRosetta tracer output.
+                Default False.
         """
         self._ensure_pyrosetta()  # make sure PyRosetta is available
         self.protein1_pdb = Path(protein1_pdb)
@@ -79,6 +81,7 @@ class DockingPipeline:
         self.cluster_top_n = cluster_top_n
         self.rmsd_cutoff = rmsd_cutoff
         self.auto_filter = auto_filter
+        self.pyrosetta_debug = pyrosetta_debug
 
         # Results storage
         self.complex_pose = None
@@ -130,6 +133,7 @@ class DockingPipeline:
             jump_distance=self.jump_distance,
             verbose=self.verbose,
             auto_filter=self.auto_filter,
+            pyrosetta_debug=self.pyrosetta_debug,
         )
 
         if self.verbose:
@@ -249,6 +253,30 @@ class DockingPipeline:
         if self.verbose:
             print(f"Scores saved to: {output_path}")
 
+    def save_all_decoys(self, output_dir):
+        """Save all generated decoys as stable per-run PDB files."""
+        if self.docking_results is None:
+            raise RuntimeError("Must run docking before saving decoys")
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        written = 0
+        for result in self.docking_results:
+            pose = result.get("pose")
+            if pose is None:
+                continue
+            description = str(result.get("description", "")).strip()
+            if not description:
+                run_num = int(result.get("run", written + 1))
+                description = f"decoy_{run_num}"
+            output_path = output_dir / f"{description}.pdb"
+            save_docked_structure(pose, output_path)
+            written += 1
+
+        if self.verbose:
+            print(f"Saved {written} decoy PDB file(s) to: {output_dir}")
+
     def get_best_structure(self):
         """
         Get the best scoring docked structure.
@@ -274,11 +302,13 @@ class DockingPipeline:
         print(f"Protein 1: {self.protein1_pdb.name}")
         print(f"Protein 2: {self.protein2_pdb.name}")
         print(f"Number of docking runs: {self.n_runs}")
-        print(f"Top N for averaging: {self.top_n}")
+        actual_top_n = int(self.analysis.get("top_n", self.top_n))
+        print(f"Top N requested: {self.top_n}")
+        print(f"Top N used for I_sc averaging: {actual_top_n}")
         print()
-        print(f"Best score: {self.analysis['best_score']:.2f}")
+        print(f"Best I_sc: {self.analysis['best_score']:.2f}")
         print(
-            f"Final score (avg of top {self.top_n}): "
+            f"Final I_sc (avg of top {actual_top_n}): "
             f"{self.analysis['final_score']:.2f}"
         )
         print("=" * 70)

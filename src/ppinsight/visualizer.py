@@ -447,7 +447,8 @@ def compare_scores_by_label(
     if "label" not in df.columns:
         raise ValueError(
             "No 'label' column in scores — cannot split by interaction status. "
-            "Use --pairs with collect_scores to annotate, or add a 'label' column."
+            "Use --label-file (or legacy --pairs) with collect_scores to "
+            "annotate, or add a 'label' column."
         )
 
     df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
@@ -2470,7 +2471,7 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
         rows.append((
             "roc", "❌ no",
             "Needs a 'label' column. Re-run "
-            "'ppinsight collect' with --pairs <pairs_file>.",
+            "'ppinsight collect' with --label-file <pairs_file>.",
         ))
 
     # scatter — needs ≥2 models sharing a metric on the same pairs
@@ -2579,11 +2580,11 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     else:
         extras.append(
             "--classify       ❌ needs labels "
-            "(collect with --pairs)."
+            "(collect with --label-file)."
         )
         extras.append(
             "--split-label    ❌ needs labels "
-            "(collect with --pairs)."
+            "(collect with --label-file)."
         )
     extras.append(
         "--normalize      Normalise scores for "
@@ -2627,7 +2628,7 @@ def _cli_error_with_hint(msg: str, metric: str, scores_df) -> None:
         # Missing interaction labels — need to annotate at collection time
         print(
             "Hint: your scores file has no 'label' column.  Re-run "
-            "'ppinsight collect' with --pairs <pairs_file> to annotate "
+            "'ppinsight collect' with --label-file <pairs_file> to annotate "
             "rows with interaction / non-interaction labels.",
             file=sys.stderr,
         )
@@ -2652,7 +2653,7 @@ def _cli_error_with_hint(msg: str, metric: str, scores_df) -> None:
     elif "proteinA" in lower or "proteinB" in lower:
         print(
             "Hint: this plot needs proteinA and proteinB columns.  "
-            "Re-run 'ppinsight collect' with --pair or --pairs.",
+            "Re-run 'ppinsight collect' with --pair or --label-file.",
             file=sys.stderr,
         )
     sys.exit(1)
@@ -2816,7 +2817,8 @@ def main(argv=None):
         help=(
             "Split violins by interaction label (interaction vs "
             "non-interaction).  Requires a 'label' column (added by "
-            "'ppinsight collect --pairs').  Lets you visually assess "
+            "'ppinsight collect --label-file'; --pairs is an alias).  "
+            "Lets you visually assess "
             "whether an engine separates known binders from non-binders."
         ),
     )
@@ -2972,7 +2974,7 @@ def main(argv=None):
                         file=sys.stderr,
                     )
                     print(
-                        "Hint: re-run 'ppinsight collect' with --pair or --pairs.",
+                        "Hint: re-run 'ppinsight collect' with --pair or --label-file.",
                         file=sys.stderr,
                     )
                     sys.exit(2)

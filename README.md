@@ -108,7 +108,10 @@ ppinsight fetch "VEGFR2 human" "VEGFA human"
 Optional flags: `--pdb-dir DIR` (override download location), `--fasta FILE`
 (save FASTA sequences), `--csv FILE` (save metadata columns:
 ID, Name, Description, Sequence Length, Sequence),
-`--pdb-name accession|uniprot|both` (control output filename stems).
+`--pdb-name accession|uniprot|both` (control output filename stems),
+`--search TERM` (preview top reviewed-human UniProt matches without
+downloading), `--remove ...` (delete mistaken local fetch outputs from
+`--pdb-dir`), `--force` (overwrite existing local aliases).
 Run `ppinsight fetch --help` for the full list.
 
 ### 1b. Find native experimental complexes
@@ -143,7 +146,8 @@ with `--select`. The `--pairs` input uses the same flat `proteinA` /
 
 Each docking command takes two positional arguments: **receptor** and
 **ligand**.  These are PDB filenames (basenames or full paths).  Use
-`--input-dir` to tell the CLI where the PDB files live.
+`--input-dir` to tell the CLI where the PDB files live.  By default,
+all docking commands search `data/input/`.
 
 ```bash
 # LightDock — minimum required: receptor, ligand
@@ -205,10 +209,10 @@ rows also retain lightweight traceability columns when available
 (`run_id`, `pose_id`, `output_path`, `source_file`) so you can tie a
 plot back to a specific run and pose.
 
-If you use `--pairs` to add interaction labels during single-run
-collection, also pass `--pair proteinA:proteinB`.  `--pair` tells
-`collect` which two proteins are in that run, and `--pairs` uses those
-names to find the matching label.
+Use `--label-file` (legacy alias: `--pairs`) to add interaction labels.
+For mixed multi-pair collections in one command, use `--pair-map`
+(`directory,proteinA,proteinB`) or rely on run-directory names such as
+`ProteinA_vs_ProteinB`.
 
 Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 
@@ -236,6 +240,9 @@ ppinsight compare data/output/scores/scores.tsv --metric dockq --show
 
 # Tabular summary only (no plot)
 ppinsight compare data/output/scores/scores.tsv --metric dockq --table
+
+# Metric-agnostic overview table (no metric required)
+ppinsight compare data/output/scores/scores.tsv --table
 
 # CAPRI quality classification (high/medium/acceptable/incorrect)
 ppinsight compare data/output/scores/scores.tsv --capri-quality

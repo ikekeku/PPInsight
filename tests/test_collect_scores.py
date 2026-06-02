@@ -373,7 +373,7 @@ class TestCLI:
         assert exc.value.code == 2
 
         captured = capsys.readouterr()
-        assert "--pairs requires populated proteinA/proteinB" in captured.err
+        assert "--label-file/--pairs requires populated" in captured.err
         assert "pass --pair" in captured.err
 
     def test_pairs_annotation_with_pair_flag(self, lightdock_dir, tmp_path):
@@ -390,6 +390,69 @@ class TestCLI:
         ])
         df = pd.read_csv(out, sep="\t")
         assert (df["label"] == "interaction").all()
+
+    def test_label_file_preferred_flag(self, lightdock_dir, tmp_path):
+        """--label-file should behave the same as the legacy --pairs alias."""
+        pairs = tmp_path / "pairs.tsv"
+        pairs.write_text("proteinA\tproteinB\tlabel\nrecA\tligB\tinteraction\n")
+        out = str(tmp_path / "out.tsv")
+
+        collect_scores.main([
+            lightdock_dir,
+            "-o", out,
+            "--pair", "recA:ligB",
+            "--label-file", str(pairs),
+        ])
+        df = pd.read_csv(out, sep="\t")
+        assert (df["label"] == "interaction").all()
+
+    def test_pair_map_supports_multi_pair_collection(
+        self,
+        lightdock_dir,
+        rosetta_dir,
+        tmp_path,
+    ):
+        """Different directories can carry different pair annotations."""
+        pair_map = tmp_path / "pair_map.tsv"
+        pair_map.write_text(
+            "directory\tproteinA\tproteinB\n"
+            f"{lightdock_dir}\trecA\tligB\n"
+            f"{rosetta_dir}\trecC\tligD\n"
+        )
+        out = str(tmp_path / "out.tsv")
+
+        collect_scores.main([
+            lightdock_dir,
+            rosetta_dir,
+            "-o", out,
+            "--pair-map", str(pair_map),
+        ])
+
+        df = pd.read_csv(out, sep="\t")
+        ld_rows = df[df["model"] == "lightdock"]
+        ros_rows = df[df["model"] == "rosetta"]
+        assert not ld_rows.empty
+        assert not ros_rows.empty
+        assert (ld_rows["proteinA"] == "recA").all()
+        assert (ld_rows["proteinB"] == "ligB").all()
+        assert (ros_rows["proteinA"] == "recC").all()
+        assert (ros_rows["proteinB"] == "ligD").all()
+
+    def test_collect_infers_pair_from_directory_name(self, tmp_path):
+        """Directory names like A_vs_B should auto-populate pair columns."""
+        run_dir = tmp_path / "A_vs_B"
+        swarm = run_dir / "swarm_0"
+        swarm.mkdir(parents=True)
+        (swarm / "gso_100.out").write_text(
+            "#Coordinates  RecID  LigID  Luciferin  Neighbor  Vision  Scoring\n"
+            "(0.0, 0.0, 0.0)  0  0  27.83  6  0.32  18.66\n"
+        )
+        out = str(tmp_path / "out.tsv")
+
+        collect_scores.main([str(run_dir), "-o", out])
+        df = pd.read_csv(out, sep="\t")
+        assert (df["proteinA"] == "A").all()
+        assert (df["proteinB"] == "B").all()
 
 
 # ---------------------------------------------------------------------------

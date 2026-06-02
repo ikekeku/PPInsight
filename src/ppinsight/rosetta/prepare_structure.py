@@ -25,24 +25,28 @@ except ImportError:
 _CHAIN_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 
-def initialize_pyrosetta(verbose=False):
+def initialize_pyrosetta(pyrosetta_debug=False):
     """
     Initialize PyRosetta with appropriate options.
 
     Args:
-        verbose: If True, show PyRosetta output. Default False.
+        pyrosetta_debug: If True, keep PyRosetta tracer output enabled.
+            Default False (muted).
 
     Returns:
         True if successful
     """
+    is_initialized = getattr(pyrosetta, "is_initialized", None)
+    if callable(is_initialized) and is_initialized():
+        return True
+
     # Initialize with flags suitable for docking.
     # -detect_disulf false: prevents RuntimeError when docking perturbation
     #   separates chains that share a disulfide bond (the scoring
     #   function cannot find the partner after rigid-body moves).
-    init_flags = "-mute all -detect_disulf false -ignore_unrecognized_res true"
-
-    if verbose:
-        init_flags = "-detect_disulf false -ignore_unrecognized_res true"
+    init_flags = "-detect_disulf false -ignore_unrecognized_res true"
+    if not pyrosetta_debug:
+        init_flags = "-mute all " + init_flags
 
     pyrosetta.init(init_flags) # pylint: disable=no-member, import-error
     return True
@@ -100,12 +104,14 @@ def _load_partner_pose(
 
     filtered_path = None
     load_path = pdb_path
+    used_auto_filter = False
     if allowed_chains:
         with tempfile.NamedTemporaryFile(suffix=".pdb", delete=False) as handle:
             filtered_path = Path(handle.name)
 
         copy_pdb_selected_chains(pdb_path, filtered_path, allowed_chains)
         load_path = filtered_path
+        used_auto_filter = True
 
         if verbose:
             print(
@@ -119,9 +125,13 @@ def _load_partner_pose(
         if filtered_path is not None:
             filtered_path.unlink(missing_ok=True)
 
+    total_before_nonprotein = pose.total_residue()
+
     # Rosetta docking expects protein-only partners unless extra params are
     # supplied for ligands or other non-canonical residues.
     rosetta.core.pose.remove_nonprotein_residues(pose)
+
+    removed_nonprotein = max(0, total_before_nonprotein - pose.total_residue())
 
     if pose.total_residue() == 0:
         raise RuntimeError(
@@ -136,7 +146,16 @@ def _load_partner_pose(
             f"chains {', '.join(chain_ids)}"
         )
 
-    return pose, chain_ids
+    prep_stats = {
+        "input_path": str(pdb_path),
+        "used_auto_filter": used_auto_filter,
+        "kept_dbref_chains": sorted(allowed_chains),
+        "removed_nonprotein_residues": removed_nonprotein,
+        "final_residues": pose.total_residue(),
+        "final_chains": list(chain_ids),
+    }
+
+    return pose, chain_ids, prep_stats
 
 
 def load_structure(pdb_path, auto_filter=True):
@@ -157,7 +176,7 @@ def load_structure(pdb_path, auto_filter=True):
     if not pdb_path.exists():
         raise FileNotFoundError(f"PDB file not found: {pdb_path}")
 
-    pose, _ = _load_partner_pose(pdb_path, auto_filter=auto_filter)
+    pose, _, _ = _load_partner_pose(pdb_path, auto_filter=auto_filter)
 
     # Disulfide detection is handled by the -detect_disulf init flag.
     # No additional fix_disulfides call is needed.
@@ -285,6 +304,7 @@ def prepare_structures(
     protein1_pdb, protein2_pdb,
     relax=True, jump_distance=15.0, verbose=False,
     auto_filter=True,
+    pyrosetta_debug=False,
 ):
     """
     Complete structure preparation pipeline.
@@ -301,11 +321,11 @@ def prepare_structures(
     """
     if verbose:
         print("Initializing PyRosetta...")
-    initialize_pyrosetta(verbose=verbose)
+    initialize_pyrosetta(pyrosetta_debug=pyrosetta_debug)
 
     if verbose:
         print(f"Loading {protein1_pdb}...")
-    pose1, pose1_chain_ids = _load_partner_pose(
+    pose1, pose1_chain_ids, prep1 = _load_partner_pose(
         protein1_pdb,
         verbose=verbose,
         partner_label="Receptor",
@@ -314,7 +334,7 @@ def prepare_structures(
 
     if verbose:
         print(f"Loading {protein2_pdb}...")
-    pose2, pose2_chain_ids = _load_partner_pose(
+    pose2, pose2_chain_ids, prep2 = _load_partner_pose(
         protein2_pdb,
         verbose=verbose,
         partner_label="Ligand",
@@ -333,6 +353,21 @@ def prepare_structures(
         if verbose:
             print("Relaxing protein 2...")
         relax_structure(pose2)
+
+    if verbose:
+        print("\nRosetta preprocessing summary:")
+        for role, prep in (("Receptor", prep1), ("Ligand", prep2)):
+            chain_text = ",".join(prep["final_chains"]) or "-"
+            filter_text = (
+                ",".join(prep["kept_dbref_chains"])
+                if prep["used_auto_filter"]
+                else "none"
+            )
+            print(
+                f"  {role}: residues={prep['final_residues']}, "
+                f"removed_nonprotein={prep['removed_nonprotein_residues']}, "
+                f"chains={chain_text}, auto_filter_chains={filter_text}"
+            )
 
     if verbose:
         print(f"Combining proteins (jump distance: {jump_distance} Å)...")

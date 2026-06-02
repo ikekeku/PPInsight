@@ -915,10 +915,10 @@ def main(argv=None):
     )
     parser.add_argument(
         "--input-dir",
-        default=None,
+        default="data/input",
         help=(
             "Directory to search when receptor/ligand are basenames instead "
-            "of full paths (default: repo root).  Useful when PDB files "
+            "of full paths (default: data/input).  Useful when PDB files "
             "live in a shared directory outside the project tree."
         ),
     )

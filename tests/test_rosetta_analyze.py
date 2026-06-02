@@ -35,9 +35,9 @@ def test_export_scores_to_csv_writes_explicit_rosetta_schema(tmp_path):
     export_scores_to_csv(results, output_path)
 
     assert output_path.read_text(encoding="utf-8") == (
-        "run,total_score,i_sc\n"
-        "1,-140.0,-9.0\n"
-        "2,-110.0,-15.0\n"
+        "run,description,total_score,i_sc\n"
+        "1,decoy_1,-140.0,-9.0\n"
+        "2,decoy_2,-110.0,-15.0\n"
     )
 
 

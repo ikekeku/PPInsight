@@ -238,12 +238,17 @@ def export_scores_to_csv(results, output_path):
         writer = csv.writer(f)
 
         # Header
-        writer.writerow(['run', 'total_score', 'i_sc'])
+        writer.writerow(['run', 'description', 'total_score', 'i_sc'])
 
         # Data
         for result in results:
+            run_num = result.get('run', '')
+            description = str(result.get('description', '')).strip()
+            if not description:
+                description = f"decoy_{run_num}"
             writer.writerow([
-                result['run'],
+                run_num,
+                description,
                 _get_total_score(result),
                 _get_primary_score(result),
             ])

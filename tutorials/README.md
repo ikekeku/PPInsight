@@ -3,8 +3,8 @@
 This tutorial is split into two honest paths:
 
 1. **Real pipeline map** — fetch → dock → collect → compare.
-2. **Shipped example-output walkthrough** — rebuild and explore the
-    precomputed tutorial scores file in `tutorials/all_scores.tsv`.
+2. **Prebuilt tutorial-data walkthrough** — explore the precomputed
+    tutorial scores file in `tutorials/all_scores.tsv`.
 
 By the end you will have:
 
@@ -25,11 +25,11 @@ pip install -e .
 pip install -e ".[quality]"
 ```
 
-For the shipped-output rebuild, you do **not** need HADDOCK, LightDock,
-or Rosetta installed because the repo already includes example outputs
-under `examples/`.
+For the prebuilt tutorial-data walkthrough, you do **not** need HADDOCK,
+LightDock, or Rosetta installed because the repo already includes example
+outputs under `examples/`.
 
-For a literal end-to-end run, install the engine runtimes you plan to
+For an end-to-end run, install the engine runtimes you plan to
 use. In this environment, `lightdock3_setup.py` and `lightdock3.py` are
 available, but HADDOCK is not, so the examples below distinguish
 verified commands from the intended full workflow.
@@ -73,9 +73,6 @@ and `ppinsight collect` is still the next step.
 ```bash
 # Which engines are currently available in this environment?
 ppinsight batch --list-engines
-
-# Which compare plot types/flags are valid for this scores file?
-ppinsight compare tutorials/all_scores.tsv --guide
 ```
 
 ### Step 1 — Fetch protein data
@@ -102,9 +99,13 @@ docking walkthrough switches back to the bundled `2UUY` example below.
 The fetch step now writes pair-ready accession aliases, so the same
 accessions can be used directly in `proteinA` and `proteinB`.
 
-### Step 2 — Prepare a pairs file for batch mode
+### Step 2 — Prepare identifiers for docking inputs
 
-Minimal example:
+For single-engine runs, you can call the docking command directly with
+two PDB stems (receptor and ligand). A pairs file is only required when
+you use `ppinsight batch`.
+
+Minimal pairs-file example (for optional batch mode):
 
 ```tsv
 proteinA	proteinB	label
@@ -118,7 +119,20 @@ The dry-run below returns to the shipped `tutorials/demo_pairs.tsv`
 example because those prepared `2UUY` structures are already bundled in
 the repo.
 
-### Step 3 — Batch docking
+### Step 3 — Start with a single engine run
+
+Before launching batch mode, validate one engine and one pair so path
+resolution and runtime dependencies are confirmed.
+
+```bash
+ppinsight lightdock 2UUY_rec 2UUY_lig \
+    --input-dir examples/ppinsight_data/input_files \
+    --steps 10 --skip-postprocess
+```
+
+When this works, move on to batch mode.
+
+### Step 3.5 — Batch docking (optional once single-run is validated)
 
 Verified here as a dry-run against the shipped example input PDBs:
 
@@ -151,7 +165,7 @@ ppinsight batch data/input/pairs/pairs.csv \
 
 `collect` works on actual engine run directories. For a single known
 pair, pass `--pair`. When you are annotating rows from a parsed pairs
-file, use `--pairs` as needed.
+file, use `--label-file` (legacy alias: `--pairs`) as needed.
 
 Verified here with the shipped LightDock example output:
 
@@ -194,7 +208,7 @@ ppinsight compare data/output/scores/scores.tsv --plot-type quality_bar
 ppinsight compare data/output/scores/scores.tsv --guide
 ```
 
-## Part 2 — Rebuild And Explore The Shipped Tutorial Scores
+## Part 2 — Explore The Prebuilt Tutorial Scores
 
 The rest of this walkthrough uses the shipped example outputs and the
 prebuilt `tutorials/all_scores.tsv` file. This is the fastest way to
@@ -431,13 +445,16 @@ ppinsight fetch P69905 P68871 --pdb-dir data/input
 ppinsight parse data/input/pairs/my_table.tsv \
     -o data/input/pairs/pairs.csv --stats
 
-# 3. Batch dock or run engines one at a time
+# 3. Run one engine for one pair (recommended first)
+ppinsight lightdock PAIR_A PAIR_B --input-dir data/input/
+
+# 3b. Optional: run many pairs/engines with batch mode
 ppinsight batch data/input/pairs/pairs.csv \
     --engines lightdock haddock rosetta \
     --pdb-dir data/input/ \
     -o data/output/scores/batch_results.csv
 
-# 4. Collect from the pair-level run directories that were created
+# 4. Collect from pair-level run directories (single-engine or batch)
 ppinsight collect data/output/lightdock_runs/PAIR_A_vs_PAIR_B/ \
     --pair PAIR_A:PAIR_B \
     -o data/output/scores/scores.tsv
@@ -448,8 +465,11 @@ ppinsight compare data/output/scores/scores.tsv --capri-quality
 ppinsight compare data/output/scores/scores.tsv --metric dockq --rank
 
 # 6. (Optional) Evaluate against a native structure
-ppinsight quality docked_model.pdb native.pdb
-ppinsight quality docked_models_dir/ native.pdb --engine lightdock -o quality.tsv
+ppinsight quality data/output/scores/scores.tsv native.pdb \
+    -o data/output/scores/scores_quality.tsv
+ppinsight quality data/output/lightdock_runs/PAIR_A_vs_PAIR_B/ native.pdb \
+    --engine lightdock \
+    -o quality.tsv
 ```
 
 > See `data/README.md` for details on the `data/` directory layout.
@@ -478,39 +498,35 @@ step requires the optional `prodigy-prot` package:
 pip install "ppinsight[prodigy]"
 ```
 
-### A — Score a single PDB
+### A — Score all available poses from a scores table
 
-```python
-from ppinsight.prodigy import score_pdb
-
-result = score_pdb("examples/ppinsight_data/input_files/2UUY_rec.pdb",
-                   chains=["A", "B"])
-print(result["prodigy_ddg"])   # predicted ΔG (kcal/mol)
-print(result["prodigy_kd"])    # predicted Kd (M)
+```bash
+ppinsight prodigy tutorials/all_scores.tsv \
+    --output tutorials/all_scores_prodigy.tsv \
+    --summary
 ```
 
 ### B — Score top poses and append to your scores file
 
 ```bash
 ppinsight prodigy tutorials/all_scores.tsv \
-    --pdb-dir examples/lightdock/simulation/ \
     --engine LightDock \
     --top-n 10 \
     --output tutorials/all_scores_prodigy.tsv \
     --summary
 ```
 
-### C — Visualise ΔG distribution
+These examples work because `tutorials/all_scores.tsv` already stores each pose
+path in `output_path`.  Use `--pdb-dir` only with manually assembled or
+external scores tables that have bare `pdb` filenames instead.
 
-```python
-import pandas as pd
-from ppinsight.visualizer import cdf_plot
+### C — Visualise ΔG distribution with compare
 
-scores = pd.read_csv("tutorials/all_scores_prodigy.tsv", sep="\t")
-# Filter to prodigy_ddg rows
-ddg_df = scores[scores["score_type"] == "prodigy_ddg"]
-fig = cdf_plot(ddg_df, metric="prodigy_ddg",
-               output="tutorials/sample_output/prodigy_ddg_cdf.png")
+```bash
+ppinsight compare tutorials/all_scores_prodigy.tsv \
+    --metric prodigy_ddg \
+    --plot-type cdf \
+    -o tutorials/sample_output/prodigy_ddg_cdf.png
 ```
 
 ### D — Run the full tutorial script
@@ -532,3 +548,5 @@ Both metrics have `higher_is_better=False` in `METRIC_METADATA`, so they
 work correctly with `--normalize`, `ranking_table`, and `ppinsight compare`.
 
 > **Tip:** For the `no_contacts` error (NaN result), see `docs/FAQ.md`.
+
+````

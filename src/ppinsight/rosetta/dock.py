@@ -51,7 +51,7 @@ except ImportError:
 _INIT_DONE = False
 
 
-def ensure_init(extra_flags: str = ""):
+def ensure_init(extra_flags: str = "", *, mute: bool = True):
     """Initialise PyRosetta with best-practice flags (idempotent).
 
     Always includes ``-ex1 -ex2aro`` for extra rotamer sampling at the
@@ -60,7 +60,15 @@ def ensure_init(extra_flags: str = ""):
     global _INIT_DONE
     if _INIT_DONE:
         return
-    init_flags = "-ex1 -ex2aro -mute all"
+
+    is_initialized = getattr(pyrosetta, "is_initialized", None)
+    if callable(is_initialized) and is_initialized():
+        _INIT_DONE = True
+        return
+
+    init_flags = "-ex1 -ex2aro"
+    if mute:
+        init_flags += " -mute all"
     if extra_flags:
         init_flags += " " + extra_flags
     pyrosetta.init(init_flags)
@@ -327,6 +335,8 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
     if global_docking and n_runs < _MIN_GLOBAL:
         warnings.warn(
             f"Global docking requested with only {n_runs} decoys. "
+            "PPInsight's default n_runs=10 is intended as a smoke-test "
+            "setting only. "
             f"The RosettaDock protocol recommends 10,000–100,000 decoys "
             f"for global docking to adequately sample the conformational "
             f"space.  Results with fewer than {_MIN_GLOBAL} decoys should "
@@ -376,6 +386,7 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
         # Store results
         result = {
             'run': i + 1,
+            'description': f"decoy_{i + 1}",
             'score': total_score,
             'total_score': total_score,
             'i_sc': i_sc,

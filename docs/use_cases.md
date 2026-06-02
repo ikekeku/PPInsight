@@ -73,10 +73,11 @@ success criteria.
      (use `--dry-run` first to verify resolution and `--limit N` for testing)
   3. Collect scores from the engine run directories into a unified scores file.
      Use `--pair ProteinA:ProteinB` for a single known pair.
-     Use `--pairs pairs.csv` when you want labels annotated from the parsed pairs file.
+      Use `--label-file pairs.csv` (legacy alias: `--pairs`) when you want
+      labels annotated from the parsed pairs file.
      Examples:
      `ppinsight collect output_dir... --pair ProteinA:ProteinB -o scores.tsv`
-     `ppinsight collect output_dir... --pairs pairs.csv -o scores.tsv --summary`
+      `ppinsight collect output_dir... --label-file pairs.csv -o scores.tsv`
   4. Compare engines with classification metrics and ROC curves:
      `ppinsight compare scores.tsv -m luciferin_score --classify`
      `ppinsight compare scores.tsv -m score --plot-type roc`

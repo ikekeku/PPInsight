@@ -206,10 +206,19 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
-        "--input-dir", default=None,
+        "--debug-pyrosetta",
+        action="store_true",
+        help=(
+            "Enable verbose PyRosetta tracer output.  By default PPInsight "
+            "keeps PyRosetta chatter muted and prints only PPInsight-level "
+            "progress summaries."
+        ),
+    )
+    parser.add_argument(
+        "--input-dir", default="data/input",
         help=(
             "Directory to search when receptor/ligand are basenames instead "
-            "of full paths (default: repo root).  Useful when PDB files "
+            "of full paths (default: data/input).  Useful when PDB files "
             "live in a shared directory outside the project tree."
         ),
     )
@@ -298,6 +307,7 @@ def main(argv=None):
         relax=not args.no_relax,
         verbose=verbose,
         auto_filter=not args.no_auto_filter,
+        pyrosetta_debug=args.debug_pyrosetta,
     )
     result = pipeline.run()
 
@@ -310,6 +320,7 @@ def main(argv=None):
     # not sufficient on its own for structural clustering.
     csv_path = os.path.join(output_dir, "docking_scores.csv")
     pipeline.save_scores(csv_path)
+    pipeline.save_all_decoys(output_dir)
 
     # ── optional clustering ──────────────────────────────────────
     # After docking, cluster decoys by Cα-RMSD to identify distinct
@@ -345,7 +356,7 @@ def main(argv=None):
     if verbose:
         pipeline.print_summary()
 
-    print(f"\nFinal docking score: {result['final_score']:.2f}")
+    print(f"\nFinal docking I_sc: {result['final_score']:.2f}")
     return result
 
 
