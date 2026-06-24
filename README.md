@@ -91,9 +91,8 @@ gene/name forms such as `VEGFA` or `"VEGFA human"`.
 
 The downloaded structures are saved with the same accession stems you
 typed, for example `P69905.pdb`.  That means you can reuse those same
-identifiers in later PPInsight steps without manual renaming. You can 
-reuse those same identifiers later, including in the `proteinA` and 
-`proteinB` columns of a batch pairs file.
+identifiers in later PPInsight steps without manual renaming, including
+in the `proteinA` and `proteinB` columns of a batch pairs file.
 
 ```bash
 # Give one or more UniProt identifiers.
