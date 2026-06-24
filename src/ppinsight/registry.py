@@ -205,9 +205,9 @@ def _register_rosetta() -> None:
     from ppinsight.collect_scores import _parse_rosetta
 
     def _detect(directory: str) -> bool:
-        """Detect Rosetta by clustered_scores.csv, .sc files, or legacy CSV."""
+        """Detect Rosetta by clustered_scores.csv, .sc files, or PPInsight CSV."""
         # Detect clustered_scores.csv, native .sc score files,
-        # OR legacy PPInsight docking_scores.csv
+        # or PPInsight docking_scores.csv
         if os.path.isfile(os.path.join(directory, "clustered_scores.csv")):
             return True
         if os.path.isfile(os.path.join(directory, "docking_scores.csv")):

@@ -28,6 +28,7 @@ CLI::
 
     ppinsight quality model.pdb native.pdb
     ppinsight quality docking_output/ native.pdb --engine lightdock
+    ppinsight quality scores.tsv native.pdb -o scores_quality.tsv
 """
 
 import argparse
@@ -37,6 +38,8 @@ import sys
 from typing import Any
 
 import pandas as pd
+
+from ppinsight.utils import find_column, resolve_traceability_path
 
 # ---------------------------------------------------------------------------
 # DockQ import (optional – installed via ``pip install ppinsight[quality]``)
@@ -347,6 +350,141 @@ def _find_model_files(
         )
 
 
+def _guess_sep(path: str) -> str:
+    """Infer CSV vs TSV separator from a file extension."""
+    return "\t" if str(path).lower().endswith(".tsv") else ","
+
+
+def _looks_like_scores_file(path: str) -> bool:
+    """Return True when *path* looks like a unified scores table."""
+    return os.path.splitext(path)[1].lower() in {".csv", ".tsv"}
+
+
+def _print_quality_summary(df: pd.DataFrame, *, stream=sys.stdout) -> None:
+    """Print the standard CAPRI summary for *df*."""
+    counts = capri_summary(df)
+    rate = capri_success_rate(df)
+    print(f"\n── CAPRI Quality Summary ({len(df)} models) ──", file=stream)
+    for cat in CAPRI_ORDER + (["error"] if "error" in counts else []):
+        n = counts.get(cat, 0)
+        pct = 100 * n / len(df) if len(df) > 0 else 0
+        print(f"  {cat:12s}: {n:4d}  ({pct:5.1f}%)", file=stream)
+    print(f"  Success rate: {rate:.1%}", file=stream)
+
+    valid = df.dropna(subset=["DockQ"]).sort_values("DockQ", ascending=False)
+    if len(valid) > 0:
+        print("\n── Top-5 models by DockQ ──", file=stream)
+        for _, row in valid.head(5).iterrows():
+            path = str(row.get("model_path", ""))
+            print(
+                f"  {os.path.basename(path):30s}  "
+                f"DockQ={row['DockQ']:.4f}  "
+                f"({row['capri_class']})",
+                file=stream,
+            )
+
+
+def evaluate_scores_dataframe(
+    scores_df: pd.DataFrame,
+    native_path: str,
+    *,
+    scores_source: str | None = None,
+    engine: str | None = None,
+    chain_map: dict[str, str] | None = None,
+    capri_peptide: bool = False,
+    _load_fn=None,
+    _run_fn=None,
+) -> pd.DataFrame:
+    """Evaluate one DockQ result per unique output_path in *scores_df*."""
+    output_col = find_column(scores_df.columns, "output_path")
+    if output_col is None:
+        raise ValueError(
+            "Unified scores file has no 'output_path' column. Re-run "
+            "ppinsight collect from run directories so pose paths are "
+            "recorded, or use single-model/directory mode instead."
+        )
+
+    model_col = find_column(scores_df.columns, "model")
+    protein_a_col = find_column(scores_df.columns, "proteinA", "proteina")
+    protein_b_col = find_column(scores_df.columns, "proteinB", "proteinb")
+    run_id_col = find_column(scores_df.columns, "run_id")
+    pose_id_col = find_column(scores_df.columns, "pose_id")
+    base_dir = (
+        os.path.dirname(os.path.abspath(scores_source))
+        if scores_source else None
+    )
+
+    pose_table = scores_df.copy()
+    if engine is not None and model_col is not None:
+        pose_table = pose_table[
+            pose_table[model_col].fillna("").astype(str).str.lower()
+            == engine.lower()
+        ]
+
+    pose_table = pose_table.copy()
+    pose_table["_resolved_output_path"] = pose_table[output_col].apply(
+        lambda value: resolve_traceability_path(value, base_dir=base_dir)
+    )
+    pose_table = pose_table[
+        pose_table["_resolved_output_path"].astype(str).str.strip().ne("")
+    ]
+
+    if pose_table.empty:
+        raise ValueError(
+            "Unified scores file has no usable output_path values. Re-run "
+            "ppinsight collect from run directories so each pose keeps a "
+            "resolvable model path."
+        )
+
+    pose_table = pose_table.drop_duplicates("_resolved_output_path")
+
+    rows: list[dict[str, Any]] = []
+    for _, pose_row in pose_table.iterrows():
+        resolved_path = str(pose_row["_resolved_output_path"])
+        metadata: dict[str, Any] = {"output_path": resolved_path}
+        for logical_name, column_name in (
+            ("model", model_col),
+            ("proteinA", protein_a_col),
+            ("proteinB", protein_b_col),
+            ("run_id", run_id_col),
+            ("pose_id", pose_id_col),
+        ):
+            if not column_name:
+                continue
+            value = pose_row.get(column_name)
+            if pd.isna(value):
+                continue
+            text = str(value).strip()
+            if not text or text.lower() in {"nan", "none"}:
+                continue
+            metadata[logical_name] = value
+
+        if "pose_id" not in metadata:
+            metadata["pose_id"] = os.path.splitext(os.path.basename(resolved_path))[0]
+
+        try:
+            result = evaluate_complex(
+                resolved_path,
+                native_path,
+                chain_map=chain_map,
+                capri_peptide=capri_peptide,
+                _load_fn=_load_fn,
+                _run_fn=_run_fn,
+            )
+            row = {k: v for k, v in result.items() if k != "interfaces"}
+        except Exception as exc:
+            row = {
+                "model_path": resolved_path,
+                "native_path": native_path,
+                "DockQ": float("nan"),
+                "capri_class": "error",
+                "error": str(exc),
+            }
+        rows.append({**metadata, **row})
+
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Convenience: CAPRI summary statistics
 # ---------------------------------------------------------------------------
@@ -432,49 +570,101 @@ def add_quality_to_scores(
     }
     rows: list[dict] = []
 
-    def _single_nonempty(series: pd.Series) -> str:
-        vals = [str(v) for v in series.dropna().unique() if str(v).strip()]
+    score_columns = {
+        "model": find_column(scores_df.columns, "model") or "model",
+        "score_type": find_column(scores_df.columns, "score_type") or "score_type",
+        "score_value": find_column(scores_df.columns, "score_value") or "score_value",
+        "proteinA": (
+            find_column(scores_df.columns, "proteinA", "proteina")
+            or "proteinA"
+        ),
+        "proteinB": (
+            find_column(scores_df.columns, "proteinB", "proteinb")
+            or "proteinB"
+        ),
+        "run_id": find_column(scores_df.columns, "run_id") or "run_id",
+        "pose_id": find_column(scores_df.columns, "pose_id") or "pose_id",
+        "output_path": find_column(scores_df.columns, "output_path") or "output_path",
+    }
+    quality_columns = {
+        "model": find_column(quality_df.columns, "model"),
+        "proteinA": find_column(quality_df.columns, "proteinA", "proteina"),
+        "proteinB": find_column(quality_df.columns, "proteinB", "proteinb"),
+        "run_id": find_column(quality_df.columns, "run_id"),
+        "pose_id": find_column(quality_df.columns, "pose_id"),
+        "output_path": find_column(quality_df.columns, "output_path"),
+        "model_path": find_column(quality_df.columns, "model_path"),
+    }
+
+    def _single_nonempty(column_name: str | None) -> str:
+        if not column_name or column_name not in scores_df.columns:
+            return ""
+        series = scores_df[column_name]
+        vals = [
+            str(v)
+            for v in series.dropna().unique()
+            if str(v).strip() and str(v).strip().lower() not in {"nan", "none"}
+        ]
         return vals[0] if len(vals) == 1 else ""
 
-    inferred_model = model_label or _single_nonempty(
-        scores_df.get("model", pd.Series(dtype=object))
-    )
-    inferred_protein_a = _single_nonempty(
-        scores_df.get("proteinA", pd.Series(dtype=object))
-    )
-    inferred_protein_b = _single_nonempty(
-        scores_df.get("proteinB", pd.Series(dtype=object))
-    )
-    inferred_run_id = _single_nonempty(scores_df.get("run_id", pd.Series(dtype=object)))
+    def _quality_value(qrow: pd.Series, key: str) -> str:
+        column_name = quality_columns[key]
+        if not column_name:
+            return ""
+        value = qrow.get(column_name)
+        if pd.isna(value):
+            return ""
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none"}:
+            return ""
+        return text
+
+    inferred_model = model_label or _single_nonempty(score_columns["model"])
+    inferred_protein_a = _single_nonempty(score_columns["proteinA"])
+    inferred_protein_b = _single_nonempty(score_columns["proteinB"])
+    inferred_run_id = _single_nonempty(score_columns["run_id"])
 
     for _, qrow in quality_df.iterrows():
-        model_path = str(qrow.get("model_path", "")).strip()
-        pose_id = (
-            os.path.splitext(os.path.basename(model_path))[0]
-            if model_path else ""
-        )
+        model_path = _quality_value(qrow, "model_path")
+        output_path = _quality_value(qrow, "output_path") or model_path
+        pose_id = _quality_value(qrow, "pose_id")
+        if not pose_id and output_path:
+            pose_id = os.path.splitext(os.path.basename(output_path))[0]
+        model_value = _quality_value(qrow, "model") or inferred_model or "quality"
+        protein_a_value = _quality_value(qrow, "proteinA") or inferred_protein_a
+        protein_b_value = _quality_value(qrow, "proteinB") or inferred_protein_b
+        run_id_value = _quality_value(qrow, "run_id") or inferred_run_id
         for metric, metric_name in quality_metrics.items():
             val = qrow.get(metric)
             if pd.notna(val):
                 row = {
-                    "model": inferred_model or "quality",
-                    "score_type": metric_name,
-                    "score_value": float(val),
-                    "proteinA": inferred_protein_a,
-                    "proteinB": inferred_protein_b,
+                    score_columns["model"]: model_value,
+                    score_columns["score_type"]: metric_name,
+                    score_columns["score_value"]: float(val),
+                    score_columns["proteinA"]: protein_a_value,
+                    score_columns["proteinB"]: protein_b_value,
                 }
-                if inferred_run_id:
-                    row["run_id"] = inferred_run_id
+                if run_id_value:
+                    row[score_columns["run_id"]] = run_id_value
                 if pose_id:
-                    row["pose_id"] = pose_id
-                    row["output_path"] = model_path
+                    row[score_columns["pose_id"]] = pose_id
+                if output_path:
+                    row[score_columns["output_path"]] = output_path
                 rows.append(row)
 
     if not rows:
         return scores_df
 
+    base_scores = scores_df
+    score_type_col = score_columns["score_type"]
+    if score_type_col in base_scores.columns:
+        existing_metric_names = {name.lower() for name in quality_metrics.values()}
+        base_scores = base_scores[
+            ~base_scores[score_type_col].astype(str).str.lower().isin(existing_metric_names)
+        ].copy()
+
     quality_long = pd.DataFrame(rows)
-    return pd.concat([scores_df, quality_long], ignore_index=True)
+    return pd.concat([base_scores, quality_long], ignore_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -486,15 +676,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate docking quality by comparing predicted complexes "
-            "against a native structure using DockQ."
+            "against a native structure using DockQ. The input can be a "
+            "single model PDB, a docking run directory, or a unified "
+            "scores TSV/CSV with an output_path column."
         ),
     )
     parser.add_argument(
         "model",
         help=(
-            "Path to a docked model PDB, or a docking output directory.  "
+            "Path to a docked model PDB, a docking output directory, or a "
+            "unified scores TSV/CSV with a non-empty output_path column.  "
             "In directory mode, the engine determines how model PDB files "
-            "are found (auto-detected, or set with --engine)."
+            "are found (auto-detected, or set with --engine). In scores-file "
+            "mode, DockQ/CAPRI evaluation rows are appended back into the "
+            "unified scores output."
         ),
     )
     parser.add_argument(
@@ -513,7 +708,9 @@ def main(argv=None):
             "Docking engine (for directory mode — determines the glob "
             "pattern used to find model PDB files).  Auto-detected from "
             "directory contents if not given.  Set explicitly when "
-            "auto-detection fails (e.g. non-standard directory layout)."
+            "auto-detection fails (e.g. non-standard directory layout).  "
+            "In scores-file mode, only rows whose model matches this engine "
+            "are evaluated."
         ),
     )
     parser.add_argument(
@@ -551,9 +748,10 @@ def main(argv=None):
         "-o", "--output",
         default=None,
         help=(
-            "Write per-model quality results to a CSV/TSV file (format "
-            "inferred from extension).  Useful for downstream analysis or "
-            "merging with docking scores."
+            "Write results to a CSV/TSV file (format inferred from "
+            "extension). In scores-file mode this writes an augmented "
+            "unified scores file with DockQ/CAPRI evaluation rows appended. "
+            "Otherwise it writes the per-model quality table."
         ),
     )
     parser.add_argument(
@@ -578,8 +776,9 @@ def main(argv=None):
             file=sys.stderr,
         )
         print(
-            "Hint: install the quality extra with:\n"
-            "  pip install ppinsight[quality]",
+            "Hint: install the quality extra with one of:\n"
+            "  pip install 'ppinsight[quality]'\n"
+            "  pip install -e '.[quality]'  # from a local checkout",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -599,8 +798,41 @@ def main(argv=None):
                 sys.exit(2)
             chain_map[parts[0].strip()] = parts[1].strip()
 
-    # Single file or directory?
-    if os.path.isfile(args.model):
+    # Single scores file, single structure file, or directory?
+    if os.path.isfile(args.model) and _looks_like_scores_file(args.model):
+        try:
+            scores_df = pd.read_csv(args.model, sep=_guess_sep(args.model))
+        except FileNotFoundError:
+            print(f"ERROR: scores file not found: {args.model}", file=sys.stderr)
+            sys.exit(1)
+
+        quality_df = evaluate_scores_dataframe(
+            scores_df,
+            args.native,
+            scores_source=args.model,
+            engine=args.engine,
+            chain_map=chain_map,
+            capri_peptide=args.capri_peptide,
+        )
+        merged_scores = add_quality_to_scores(scores_df, quality_df)
+
+        if args.output:
+            os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+            merged_scores.to_csv(args.output, sep=_guess_sep(args.output), index=False)
+            print(
+                (
+                    f"Appended DockQ/CAPRI rows for {len(quality_df)} poses "
+                    f"to {args.output}"
+                ),
+                file=sys.stderr,
+            )
+        else:
+            merged_scores.to_csv(sys.stdout, sep="\t", index=False)
+
+        if args.summary or not args.output:
+            _print_quality_summary(quality_df, stream=sys.stderr)
+
+    elif os.path.isfile(args.model):
         result = evaluate_complex(
             args.model, args.native,
             chain_map=chain_map,
@@ -632,25 +864,7 @@ def main(argv=None):
             print(f"Wrote {len(df)} quality evaluations to {args.output}")
 
         if args.summary or not args.output:
-            counts = capri_summary(df)
-            rate = capri_success_rate(df)
-            print(f"\n── CAPRI Quality Summary ({len(df)} models) ──")
-            for cat in CAPRI_ORDER + (["error"] if "error" in counts else []):
-                n = counts.get(cat, 0)
-                pct = 100 * n / len(df) if len(df) > 0 else 0
-                print(f"  {cat:12s}: {n:4d}  ({pct:5.1f}%)")
-            print(f"  Success rate: {rate:.1%}")
-
-            # Top-5 models
-            valid = df.dropna(subset=["DockQ"]).sort_values("DockQ", ascending=False)
-            if len(valid) > 0:
-                print("\n── Top-5 models by DockQ ──")
-                for _, row in valid.head(5).iterrows():
-                    print(
-                        f"  {os.path.basename(row['model_path']):30s}  "
-                        f"DockQ={row['DockQ']:.4f}  "
-                        f"({row['capri_class']})"
-                    )
+            _print_quality_summary(df)
 
     else:
         print(f"ERROR: {args.model} is not a file or directory", file=sys.stderr)

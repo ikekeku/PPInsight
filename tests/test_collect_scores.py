@@ -48,7 +48,12 @@ def rosetta_dir(tmp_path):
     root = tmp_path / "rosetta_run"
     root.mkdir()
     csv_path = root / "docking_scores.csv"
-    csv_path.write_text("run,score\n1,-9.8\n2,-11.2\n3,-7.5\n")
+    csv_path.write_text(
+        "run,total_score,i_sc\n"
+        "1,-109.8,-9.8\n"
+        "2,-111.2,-11.2\n"
+        "3,-107.5,-7.5\n"
+    )
     return str(root)
 
 
@@ -158,8 +163,19 @@ class TestParseLightdock:
 class TestParseRosetta:
     def test_basic(self, rosetta_dir):
         df = collect_scores._parse_rosetta(rosetta_dir)
-        assert len(df) == 3
-        assert (df["score_type"] == "interface_score").all()
+        assert len(df) == 6
+        assert set(df["score_type"].unique()) == {"i_sc", "total_score"}
+        assert df["pose_id"].nunique() == 3
+
+    def test_legacy_csv_maps_to_total_score(self, tmp_path):
+        root = tmp_path / "rosetta_legacy_csv"
+        root.mkdir()
+        (root / "docking_scores.csv").write_text("run,score\n1,-9.8\n2,-11.2\n")
+
+        df = collect_scores._parse_rosetta(str(root))
+
+        assert len(df) == 2
+        assert set(df["score_type"].unique()) == {"total_score"}
 
     def test_missing_csv(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="docking_scores.csv"):
@@ -320,7 +336,8 @@ class TestCLI:
         out = str(tmp_path / "out.csv")
         collect_scores.main([rosetta_dir, "-o", out])
         df = pd.read_csv(out)
-        assert len(df) == 3
+        assert len(df) == 6
+        assert set(df["score_type"].unique()) == {"i_sc", "total_score"}
 
     def test_pair_flag(self, lightdock_dir, tmp_path):
         out = str(tmp_path / "out.tsv")
@@ -356,7 +373,7 @@ class TestCLI:
         assert exc.value.code == 2
 
         captured = capsys.readouterr()
-        assert "--pairs requires populated proteinA/proteinB" in captured.err
+        assert "--label-file/--pairs requires populated" in captured.err
         assert "pass --pair" in captured.err
 
     def test_pairs_annotation_with_pair_flag(self, lightdock_dir, tmp_path):
@@ -373,6 +390,69 @@ class TestCLI:
         ])
         df = pd.read_csv(out, sep="\t")
         assert (df["label"] == "interaction").all()
+
+    def test_label_file_preferred_flag(self, lightdock_dir, tmp_path):
+        """--label-file should behave the same as the legacy --pairs alias."""
+        pairs = tmp_path / "pairs.tsv"
+        pairs.write_text("proteinA\tproteinB\tlabel\nrecA\tligB\tinteraction\n")
+        out = str(tmp_path / "out.tsv")
+
+        collect_scores.main([
+            lightdock_dir,
+            "-o", out,
+            "--pair", "recA:ligB",
+            "--label-file", str(pairs),
+        ])
+        df = pd.read_csv(out, sep="\t")
+        assert (df["label"] == "interaction").all()
+
+    def test_pair_map_supports_multi_pair_collection(
+        self,
+        lightdock_dir,
+        rosetta_dir,
+        tmp_path,
+    ):
+        """Different directories can carry different pair annotations."""
+        pair_map = tmp_path / "pair_map.tsv"
+        pair_map.write_text(
+            "directory\tproteinA\tproteinB\n"
+            f"{lightdock_dir}\trecA\tligB\n"
+            f"{rosetta_dir}\trecC\tligD\n"
+        )
+        out = str(tmp_path / "out.tsv")
+
+        collect_scores.main([
+            lightdock_dir,
+            rosetta_dir,
+            "-o", out,
+            "--pair-map", str(pair_map),
+        ])
+
+        df = pd.read_csv(out, sep="\t")
+        ld_rows = df[df["model"] == "lightdock"]
+        ros_rows = df[df["model"] == "rosetta"]
+        assert not ld_rows.empty
+        assert not ros_rows.empty
+        assert (ld_rows["proteinA"] == "recA").all()
+        assert (ld_rows["proteinB"] == "ligB").all()
+        assert (ros_rows["proteinA"] == "recC").all()
+        assert (ros_rows["proteinB"] == "ligD").all()
+
+    def test_collect_infers_pair_from_directory_name(self, tmp_path):
+        """Directory names like A_vs_B should auto-populate pair columns."""
+        run_dir = tmp_path / "A_vs_B"
+        swarm = run_dir / "swarm_0"
+        swarm.mkdir(parents=True)
+        (swarm / "gso_100.out").write_text(
+            "#Coordinates  RecID  LigID  Luciferin  Neighbor  Vision  Scoring\n"
+            "(0.0, 0.0, 0.0)  0  0  27.83  6  0.32  18.66\n"
+        )
+        out = str(tmp_path / "out.tsv")
+
+        collect_scores.main([str(run_dir), "-o", out])
+        df = pd.read_csv(out, sep="\t")
+        assert (df["proteinA"] == "A").all()
+        assert (df["proteinB"] == "B").all()
 
 
 # ---------------------------------------------------------------------------

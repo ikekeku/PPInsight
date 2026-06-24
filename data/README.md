@@ -55,7 +55,8 @@ data/
 ## Pairs file format
 
 The pairs file is the input to `ppinsight batch` (and optionally
-`ppinsight collect --pairs`).  You can create one in two ways:
+`ppinsight collect --label-file`, legacy alias: `--pairs`).  You can
+create one in two ways:
 
 1. **Automatically** — run `ppinsight parse` on a protein interaction table.
 2. **By hand** — create a CSV or TSV with the columns below.

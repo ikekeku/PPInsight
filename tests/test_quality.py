@@ -15,6 +15,7 @@ from ppinsight.quality import (
     classify_capri,
     evaluate_complex,
     evaluate_directory,
+    evaluate_scores_dataframe,
 )
 
 # ---------------------------------------------------------------------------
@@ -276,6 +277,63 @@ class TestEvaluateDirectory:
         assert len(df) == 2
 
 
+class TestEvaluateScoresDataFrame:
+    def test_uses_unique_output_paths_from_long_format_scores(self, tmp_path):
+        model_a = tmp_path / "model_a.pdb"
+        model_b = tmp_path / "model_b.pdb"
+        native = tmp_path / "native.pdb"
+        for path in (model_a, model_b, native):
+            path.write_text("ATOM", encoding="utf-8")
+
+        scores = pd.DataFrame({
+            "model": ["haddock", "haddock", "lightdock"],
+            "score_type": ["score", "dockq", "luciferin_score"],
+            "score_value": [-120.0, 0.40, 15.0],
+            "proteinA": ["A", "A", "A"],
+            "proteinB": ["B", "B", "B"],
+            "run_id": ["run1", "run1", "run2"],
+            "pose_id": ["pose_a", "pose_a", "pose_b"],
+            "output_path": [str(model_a), str(model_a), str(model_b)],
+        })
+
+        result = evaluate_scores_dataframe(
+            scores,
+            str(native),
+            _load_fn=_fake_load_pdb,
+            _run_fn=_make_fake_runner(dockq=0.55),
+        )
+
+        assert len(result) == 2
+        assert set(result["pose_id"]) == {"pose_a", "pose_b"}
+        assert set(result["model"]) == {"haddock", "lightdock"}
+        assert set(result["output_path"]) == {str(model_a), str(model_b)}
+
+    def test_resolves_relative_output_paths_against_scores_file(self, tmp_path):
+        native = tmp_path / "native.pdb"
+        model_dir = tmp_path / "poses"
+        model_dir.mkdir()
+        model = model_dir / "pose_1.pdb"
+        native.write_text("ATOM", encoding="utf-8")
+        model.write_text("ATOM", encoding="utf-8")
+
+        scores = pd.DataFrame({
+            "model": ["lightdock"],
+            "score_type": ["luciferin_score"],
+            "score_value": [9.5],
+            "output_path": ["poses/pose_1.pdb"],
+        })
+
+        result = evaluate_scores_dataframe(
+            scores,
+            str(native),
+            scores_source=str(tmp_path / "scores.tsv"),
+            _load_fn=_fake_load_pdb,
+            _run_fn=_make_fake_runner(dockq=0.42),
+        )
+
+        assert result.loc[0, "output_path"] == str(model)
+
+
 # ---------------------------------------------------------------------------
 # _find_model_files
 # ---------------------------------------------------------------------------
@@ -405,6 +463,38 @@ class TestAddQualityToScores:
         result = add_quality_to_scores(existing, quality)
         assert len(result) == 1  # no quality rows added
 
+    def test_uses_per_row_metadata_and_replaces_old_quality_rows(self):
+        existing = pd.DataFrame({
+            "model": ["haddock", "haddock"],
+            "score_type": ["score", "quality_dockq"],
+            "score_value": [-95.0, 0.10],
+            "proteinA": ["A", "A"],
+            "proteinB": ["B", "B"],
+            "run_id": ["run1", "run1"],
+            "pose_id": ["pose_a", "pose_a"],
+            "output_path": ["/tmp/pose_a.pdb", "/tmp/pose_a.pdb"],
+        })
+        quality = pd.DataFrame({
+            "model": ["haddock", "lightdock"],
+            "proteinA": ["A", "A"],
+            "proteinB": ["B", "B"],
+            "run_id": ["run1", "run2"],
+            "pose_id": ["pose_a", "pose_b"],
+            "output_path": ["/tmp/pose_a.pdb", "/tmp/pose_b.pdb"],
+            "DockQ": [0.65, 0.72],
+            "fnat": [0.70, 0.74],
+            "iRMSD": [1.8, 1.5],
+            "LRMSD": [3.5, 3.1],
+        })
+
+        result = add_quality_to_scores(existing, quality)
+
+        quality_rows = result[result["score_type"].str.startswith("quality_")]
+        assert len(quality_rows) == 8
+        assert set(quality_rows["model"]) == {"haddock", "lightdock"}
+        assert set(quality_rows["run_id"]) == {"run1", "run2"}
+        assert set(quality_rows["pose_id"]) == {"pose_a", "pose_b"}
+
 
 # ---------------------------------------------------------------------------
 # METRIC_METADATA integration
@@ -484,6 +574,54 @@ class TestCLI:
         assert output.exists()
         df = pd.read_csv(str(output))
         assert len(df) == 3
+
+    def test_scores_file_mode_appends_quality_rows(self, tmp_path, monkeypatch):
+        scores_path = tmp_path / "scores.tsv"
+        native = tmp_path / "native.pdb"
+        output = tmp_path / "scores_quality.tsv"
+        native.write_text("ATOM", encoding="utf-8")
+        pd.DataFrame({
+            "model": ["lightdock"],
+            "score_type": ["luciferin_score"],
+            "score_value": [14.0],
+            "proteinA": ["A"],
+            "proteinB": ["B"],
+            "pose_id": ["pose_1"],
+            "output_path": ["/tmp/pose_1.pdb"],
+        }).to_csv(scores_path, sep="\t", index=False)
+
+        import ppinsight.quality as qmod
+
+        monkeypatch.setattr(qmod, "_DOCKQ_AVAILABLE", True)
+
+        def fake_evaluate_scores_dataframe(scores_df, native_path, **kwargs):
+            assert str(scores_path) == kwargs["scores_source"]
+            return pd.DataFrame({
+                "model": ["lightdock"],
+                "proteinA": ["A"],
+                "proteinB": ["B"],
+                "pose_id": ["pose_1"],
+                "output_path": ["/tmp/pose_1.pdb"],
+                "model_path": ["/tmp/pose_1.pdb"],
+                "DockQ": [0.61],
+                "fnat": [0.67],
+                "iRMSD": [2.1],
+                "LRMSD": [4.0],
+                "capri_class": ["medium"],
+            })
+
+        monkeypatch.setattr(
+            qmod,
+            "evaluate_scores_dataframe",
+            fake_evaluate_scores_dataframe,
+        )
+
+        from ppinsight.quality import main
+
+        main([str(scores_path), str(native), "-o", str(output)])
+
+        result = pd.read_csv(output, sep="\t")
+        assert "quality_dockq" in set(result["score_type"])
 
 
 # ---------------------------------------------------------------------------

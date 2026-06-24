@@ -8,6 +8,7 @@ or LightDock for unrelated sub-commands).
 Usage::
 
     ppinsight fetch P69905 P68871
+    ppinsight fetch-native P35968 P15692 -o native_candidates.tsv
     ppinsight lightdock 2UUY_rec 2UUY_lig --steps 100
     ppinsight haddock   2UUY_rec 2UUY_lig --run
     ppinsight rosetta   2UUY_rec 2UUY_lig --n-runs 5
@@ -16,13 +17,15 @@ Usage::
     ppinsight parse     table.tsv -o pairs.csv
     ppinsight batch     pairs.csv --engines lightdock haddock
     ppinsight quality   model.pdb native.pdb
-    ppinsight prodigy   scores.tsv --pdb-dir pdbs/ --output scores_prodigy.tsv
+    ppinsight quality   scores.tsv native.pdb -o scores_quality.tsv
+    ppinsight prodigy   scores.tsv --output scores_prodigy.tsv
 """
 
 import sys
 
 _SUBCOMMANDS = {
     "fetch":     "ppinsight.protein_fetch",
+    "fetch-native": "ppinsight.fetch_native",
     "lightdock": "ppinsight.pdb_to_lightdock",
     "haddock":   "ppinsight.pdb_to_haddock",
     "rosetta":   "ppinsight.pdb_to_rosetta",
@@ -67,6 +70,7 @@ def _print_help():
     pad = max(len(k) for k in _SUBCOMMANDS) + 2
     descriptions = {
         "fetch":     "Fetch protein data from UniProt / PDB",
+        "fetch-native": "Find native experimental complexes in RCSB",
         "lightdock": "Run LightDock docking pipeline",
         "haddock":   "Stage / run a HADDOCK3 docking pipeline",
         "rosetta":   "Run PyRosetta docking pipeline",

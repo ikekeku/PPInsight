@@ -32,12 +32,22 @@ fi
 # Resolve the environment's Python
 PYBIN="$(conda run -n "${ENV_NAME}" which python)"
 PIPBIN="$(dirname "${PYBIN}")/pip"
+ENV_BIN_DIR="$(dirname "${PYBIN}")"
 echo "  Python: ${PYBIN}"
+
+run_in_env_context() {
+    env \
+        -u PYTHONPATH \
+        -u PIP_USER \
+        PATH="${ENV_BIN_DIR}:${PATH}" \
+        PYTHONNOUSERSITE=1 \
+        "$@"
+}
 
 # ── 2. PyRosetta (optional, ~1.5 GB download) ──────────────────────
 if $INSTALL_ROSETTA; then
     echo "▸ Installing PyRosetta via pyrosetta-installer …"
-    "${PYBIN}" -c "
+    run_in_env_context "${PYBIN}" -c "
 import pyrosetta_installer
 pyrosetta_installer.install_pyrosetta(skip_if_installed=True)
 "
@@ -48,7 +58,7 @@ fi
 
 # ── 3. Install the PPInsight package in editable mode ───────────────
 echo "▸ Installing ppinsight in editable mode …"
-"${PIPBIN}" install -e "${SCRIPT_DIR}" --quiet
+run_in_env_context "${PIPBIN}" install -e "${SCRIPT_DIR}" --quiet
 echo "  ✓ ppinsight installed"
 
 # ── 4. DockQ quality module (optional, needs git for fork install) ──
@@ -57,7 +67,7 @@ echo "  ✓ ppinsight installed"
 # If it fails, everything except the ``ppinsight_quality`` command and
 # the ``ppinsight.quality`` module will still work normally.
 echo "▸ Installing DockQ (for quality assessment) …"
-if "${PIPBIN}" install -e "${SCRIPT_DIR}[quality]" --quiet 2>/dev/null; then
+if run_in_env_context "${PIPBIN}" install -e "${SCRIPT_DIR}[quality]" --quiet 2>/dev/null; then
     echo "  ✓ DockQ installed (ppinsight_quality CLI available)"
 else
     echo "  ⚠ Could not install DockQ — the ppinsight_quality command"

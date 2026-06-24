@@ -6,13 +6,14 @@ Kd (dissociation constant, M) to a unified scores DataFrame.
 
 Install the optional dependency with::
 
-    pip install ppinsight[prodigy]
+    pip install 'ppinsight[prodigy]'
 
 CLI usage::
 
-    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --output scores_prodigy.tsv
-    ppinsight prodigy scores.tsv --pdb-dir pdbs/ --top-n 10 \
+    ppinsight prodigy scores.tsv --output scores_prodigy.tsv
+    ppinsight prodigy scores.tsv --top-n 10 \
         --metric score --engine HADDOCK
+    ppinsight prodigy older_scores.tsv --pdb-dir pdbs/ --output scored.tsv
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from typing import Any
 
 import pandas as pd
 
+from ppinsight.utils import find_column, resolve_traceability_path
 from ppinsight.visualizer import get_metric_direction
 
 
@@ -50,7 +52,8 @@ def _require_prodigy() -> Any:
             raise ImportError(
                 "prodigy-prot is required for binding-affinity scoring but is "
                 "not installed.  Install it with:\n\n"
-                "    pip install ppinsight[prodigy]\n\n"
+                "    pip install 'ppinsight[prodigy]'\n"
+                "    pip install -e '.[prodigy]'  # from a local checkout\n\n"
                 "or directly:\n\n"
                 "    pip install prodigy-prot\n"
             ) from exc
@@ -288,9 +291,47 @@ def score_directory(
     return df[cols].reset_index(drop=True)
 
 
+def _guess_sep(path: str | Path) -> str:
+    """Infer CSV vs TSV separator from a file extension."""
+    return "\t" if str(path).lower().endswith(".tsv") else ","
+
+
+def _resolve_pose_paths(
+    scores_df: pd.DataFrame,
+    *,
+    scores_source: str | Path | None = None,
+    pdb_dir: str | Path | None = None,
+) -> pd.Series:
+    """Resolve one model path per row using output_path or pdb_dir+pdb."""
+    output_col = find_column(scores_df.columns, "output_path")
+    pdb_col = find_column(scores_df.columns, "pdb")
+    base_dir = Path(scores_source).resolve().parent if scores_source else None
+    pdb_root = Path(pdb_dir).resolve() if pdb_dir is not None else None
+
+    resolved_paths: list[str] = []
+    for _, row in scores_df.iterrows():
+        resolved = ""
+        if output_col is not None:
+            resolved = resolve_traceability_path(
+                row.get(output_col),
+                base_dir=base_dir,
+            )
+
+        if not resolved and pdb_col is not None and pdb_root is not None:
+            pdb_name = row.get(pdb_col)
+            if pd.notna(pdb_name):
+                text = str(pdb_name).strip()
+                if text and text.lower() not in {"-", "nan", "none"}:
+                    resolved = str((pdb_root / text).resolve())
+
+        resolved_paths.append(resolved)
+
+    return pd.Series(resolved_paths, index=scores_df.index, dtype="object")
+
+
 def add_prodigy_to_scores(
     scores_df: pd.DataFrame,
-    pdb_dir: str | Path,
+    pdb_dir: str | Path | None = None,
     model_col: str = "model",
     top_n: int | None = None,
     metric: str | None = None,
@@ -298,15 +339,18 @@ def add_prodigy_to_scores(
     chains: list[str] | None = None,
     temperature: float = 25.0,
     verbose: bool = False,
+    scores_source: str | Path | None = None,
 ) -> pd.DataFrame:
     """Append PRODIGY ΔG and Kd columns to a unified scores DataFrame.
 
     Parameters
     ----------
     scores_df : DataFrame
-        Unified scores (long format).  Must have a ``pdb`` column.
-    pdb_dir : str or Path
-        Directory where PDB files live.
+        Unified scores (long format).  Prefer a non-empty ``output_path``
+        column from ``ppinsight collect``.
+    pdb_dir : str or Path or None
+        Fallback directory for scores tables that only store a ``pdb``
+        filename column instead of full ``output_path`` values.
     model_col : str
         Column that identifies the docking engine.
     top_n : int or None
@@ -329,14 +373,22 @@ def add_prodigy_to_scores(
         Temperature in °C for Kd prediction.
     verbose : bool
         Print progress to stderr.
+    scores_source : str or Path or None
+        Path to the scores file. Used to resolve relative ``output_path``
+        values when present.
 
     Returns
     -------
     DataFrame
         Copy of *scores_df* with ``prodigy_ddg`` and ``prodigy_kd`` added.
     """
-    pdb_dir = Path(pdb_dir)
     df = scores_df.copy()
+    model_column = (
+        find_column(df.columns, model_col)
+        or find_column(df.columns, "model")
+    )
+    score_type_col = find_column(df.columns, "score_type")
+    score_value_col = find_column(df.columns, "score_value")
 
     if "prodigy_ddg" not in df.columns:
         df["prodigy_ddg"] = float("nan")
@@ -344,15 +396,20 @@ def add_prodigy_to_scores(
         df["prodigy_kd"] = float("nan")
 
     mask = pd.Series([True] * len(df), index=df.index)
-    if engine is not None:
-        mask &= df[model_col].str.lower() == engine.lower()
+    if engine is not None and model_column is not None:
+        mask &= df[model_column].fillna("").astype(str).str.lower() == engine.lower()
 
-    subset = df[mask]
-    if "pdb" not in subset.columns:
+    subset = df[mask].copy()
+    subset["_resolved_model_path"] = _resolve_pose_paths(
+        subset,
+        scores_source=scores_source,
+        pdb_dir=pdb_dir,
+    )
+    if subset["_resolved_model_path"].astype(str).str.strip().eq("").all():
         warnings.warn(
-            "scores_df has no 'pdb' column — cannot locate PDB files.  "
-            "Add a 'pdb' column with filenames (without directory) to "
-            "enable PRODIGY scoring.",
+            "scores_df has no usable model paths. Prefer a non-empty "
+            "'output_path' column from ppinsight collect, or provide "
+            "--pdb-dir together with a 'pdb' column for external scores files.",
             stacklevel=2,
         )
         return df
@@ -367,50 +424,66 @@ def add_prodigy_to_scores(
             )
         # Filter to rows for the chosen metric only, so that mixed long-format
         # files (multiple score_type rows per pose) do not distort ranking.
-        if "score_type" in subset.columns:
-            ranking_rows = subset[subset["score_type"] == metric]
+        if score_type_col is not None:
+            ranking_rows = subset[subset[score_type_col] == metric]
         else:
             ranking_rows = subset
         higher_is_better = get_metric_direction(metric)
-        group_cols = [model_col]
-        for col in ("proteina", "proteinb", "proteinA", "proteinB"):
-            if col in ranking_rows.columns:
-                group_cols.append(col)
+        if score_value_col is None:
+            raise ValueError(
+                "scores_df has no score_value column, so top_n ranking cannot "
+                "determine the best poses."
+            )
+        group_cols = [
+            col
+            for col in (
+                model_column,
+                find_column(ranking_rows.columns, "proteinA", "proteina"),
+                find_column(ranking_rows.columns, "proteinB", "proteinb"),
+            )
+            if col is not None
+        ]
+        if not group_cols:
+            raise ValueError(
+                "scores_df must contain a model column to use top_n pose ranking."
+            )
         grouped = ranking_rows.groupby(group_cols, group_keys=False)
         try:
             if higher_is_better:
                 top_rows = grouped.apply(
-                    lambda g: g.nlargest(top_n, "score_value"),
+                    lambda g: g.nlargest(top_n, score_value_col),
                     include_groups=False,
                 )
             else:
                 top_rows = grouped.apply(
-                    lambda g: g.nsmallest(top_n, "score_value"),
+                    lambda g: g.nsmallest(top_n, score_value_col),
                     include_groups=False,
                 )
         except TypeError:
             # Pandas < 2.2 does not support include_groups.
             if higher_is_better:
-                top_rows = grouped.apply(lambda g: g.nlargest(top_n, "score_value"))
+                top_rows = grouped.apply(lambda g: g.nlargest(top_n, score_value_col))
             else:
-                top_rows = grouped.apply(lambda g: g.nsmallest(top_n, "score_value"))
+                top_rows = grouped.apply(lambda g: g.nsmallest(top_n, score_value_col))
         # Restrict scoring to only the PDB files that appear in the top poses.
-        top_pdbs = set(top_rows["pdb"].dropna().unique())
-        subset = subset[subset["pdb"].isin(top_pdbs)]
+        top_paths = set(top_rows["_resolved_model_path"].dropna().unique())
+        subset = subset[subset["_resolved_model_path"].isin(top_paths)]
 
     scored: dict[str, dict[str, float]] = {}
-    for pdb_name in subset["pdb"].dropna().unique():
-        pdb_path = pdb_dir / pdb_name
+    for model_path in subset["_resolved_model_path"].dropna().unique():
+        path_text = str(model_path).strip()
+        if not path_text:
+            continue
         if verbose:
-            print(f"  Scoring {pdb_name} …", file=sys.stderr)
-        scored[pdb_name] = score_pdb(
-            pdb_path, chains=chains, temperature=temperature
+            print(f"  Scoring {os.path.basename(path_text)} …", file=sys.stderr)
+        scored[path_text] = score_pdb(
+            path_text, chains=chains, temperature=temperature
         )
 
     for idx in subset.index:
-        pdb_name = df.at[idx, "pdb"]
-        if pdb_name in scored:
-            r = scored[pdb_name]
+        model_path = subset.at[idx, "_resolved_model_path"]
+        if model_path in scored:
+            r = scored[model_path]
             df.at[idx, "prodigy_ddg"] = r.get("prodigy_ddg", float("nan"))
             df.at[idx, "prodigy_kd"] = r.get("prodigy_kd", float("nan"))
 
@@ -431,22 +504,25 @@ def _build_parser():
             "Score docked PDB structures with PRODIGY and append predicted\n"
             "binding free energy (\u0394G) and dissociation constant (Kd) to a\n"
             "unified scores TSV/CSV file.\n\n"
-            "Requires: pip install ppinsight[prodigy]"
+            "Requires: pip install 'ppinsight[prodigy]'"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "scores",
         help=(
-            "Path to unified scores TSV/CSV (columns: model, score_type, "
-            "score_value, [proteinA, proteinB, pdb, …])."
+            "Path to unified scores TSV/CSV. Prefer files from ppinsight "
+            "collect with a non-empty output_path column. Files that only "
+            "store bare pdb filenames still work with --pdb-dir."
         ),
     )
     parser.add_argument(
         "--pdb-dir",
-        required=True,
         metavar="DIR",
-        help="Directory containing docked PDB files.",
+        help=(
+            "Fallback directory containing docked PDB files. Use this only "
+            "for scores tables that have a pdb column but no output_path."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -511,7 +587,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.top_n is not None and args.metric is None:
         parser.error("--metric is required when --top-n is used")
 
-    sep = "\t" if args.scores.lower().endswith(".tsv") else ","
+    sep = _guess_sep(args.scores)
     try:
         scores_df = pd.read_csv(args.scores, sep=sep)
     except FileNotFoundError:
@@ -528,6 +604,7 @@ def main(argv: list[str] | None = None) -> None:
         engine=args.engine,
         temperature=args.temperature,
         verbose=args.verbose,
+        scores_source=args.scores,
     )
 
     if args.summary:

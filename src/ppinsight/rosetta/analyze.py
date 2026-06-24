@@ -18,6 +18,23 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+PRIMARY_SCORE_COLUMN = 'i_sc'
+SECONDARY_SCORE_COLUMN = 'total_score'
+
+
+def _get_primary_score(result):
+    """Return the primary Rosetta ranking score for a decoy result."""
+    if PRIMARY_SCORE_COLUMN in result:
+        return float(result[PRIMARY_SCORE_COLUMN])
+    return float(result['score'])
+
+
+def _get_total_score(result):
+    """Return the Rosetta total energy for a decoy result."""
+    if SECONDARY_SCORE_COLUMN in result:
+        return float(result[SECONDARY_SCORE_COLUMN])
+    return float(result['score'])
+
 
 def get_top_scores(results, top_n=20):
     """
@@ -28,10 +45,10 @@ def get_top_scores(results, top_n=20):
         top_n: Number of top scores to return (default: 20)
 
     Returns:
-        List of top N results, sorted by score (best first)
+        List of top N results, sorted by I_sc when available
     """
-    # Sort by score (lower is better)
-    sorted_results = sorted(results, key=lambda x: x['score'])
+    # Sort by the primary Rosetta metric (lower is better).
+    sorted_results = sorted(results, key=_get_primary_score)
 
     # Return top N
     return sorted_results[:min(top_n, len(sorted_results))]
@@ -75,7 +92,7 @@ def analyze_scores(results, top_n=20, verbose=False):
     Analyze docking results and calculate final score.
 
     This function:
-    1. Sorts results by score
+    1. Sorts results by I_sc when available
     2. Extracts top N scores
     3. Calculates average of top N
     4. Provides statistics
@@ -102,13 +119,20 @@ def analyze_scores(results, top_n=20, verbose=False):
     if not results:
         raise ValueError("No results to analyze")
 
+    primary_metric = (
+        PRIMARY_SCORE_COLUMN
+        if any(PRIMARY_SCORE_COLUMN in result for result in results)
+        else 'score'
+    )
+    primary_label = 'I_sc' if primary_metric == PRIMARY_SCORE_COLUMN else 'Score'
+
     # Get top N results
     top_results = get_top_scores(results, top_n)
     actual_top_n = len(top_results)
 
     # Extract scores
-    all_scores = [r['score'] for r in results]
-    top_scores = [r['score'] for r in top_results]
+    all_scores = [_get_primary_score(result) for result in results]
+    top_scores = [_get_primary_score(result) for result in top_results]
 
     # Calculate final score (average of top N)
     final_score = sum(top_scores) / actual_top_n
@@ -120,6 +144,7 @@ def analyze_scores(results, top_n=20, verbose=False):
     # Prepare analysis results
     analysis = {
         'final_score': final_score,
+        'primary_metric': primary_metric,
         'top_n': actual_top_n,
         'total_runs': len(results),
         'best_score': top_scores[0],
@@ -137,14 +162,17 @@ def analyze_scores(results, top_n=20, verbose=False):
         print(f"\nTotal structures analyzed: {len(results)}")
         print(f"Top {actual_top_n} structures used for averaging")
         print()
-        print(f"Best score:               {analysis['best_score']:8.2f}")
+        print(f"Best {primary_label}:                {analysis['best_score']:8.2f}")
         print(
-            f"Worst score in top {actual_top_n}:"
+            f"Worst {primary_label} in top {actual_top_n}:"
             f"     {analysis['worst_top_score']:8.2f}"
         )
-        print(f"Average of top {actual_top_n}:        {analysis['final_score']:8.2f}")
+        print(
+            f"Average {primary_label} of top {actual_top_n}:"
+            f"  {analysis['final_score']:8.2f}"
+        )
         print()
-        print("Statistics (all scores):")
+        print(f"Statistics (all {primary_label} values):")
         print(f"  Mean:       {all_stats['mean']:8.2f}")
         print(f"  Median:     {all_stats['median']:8.2f}")
         print(f"  Std Dev:    {all_stats['stdev']:8.2f}")
@@ -166,23 +194,40 @@ def print_top_scores(results, top_n=10):
         top_n: Number of top scores to print (default: 10)
     """
     top_results = get_top_scores(results, top_n)
+    primary_metric = (
+        PRIMARY_SCORE_COLUMN
+        if any(PRIMARY_SCORE_COLUMN in result for result in top_results)
+        else 'score'
+    )
+    primary_label = 'I_sc' if primary_metric == PRIMARY_SCORE_COLUMN else 'Score'
+    show_total_score = any(
+        SECONDARY_SCORE_COLUMN in result for result in top_results
+    )
 
     print(f"\nTop {len(top_results)} Docking Scores:")
-    print("-" * 40)
-    print(f"{'Rank':<6} {'Run':<6} {'Score':>12}")
-    print("-" * 40)
+    print("-" * 56 if show_total_score else "-" * 40)
+    if show_total_score:
+        print(f"{'Rank':<6} {'Run':<6} {primary_label:>12} {'Total Score':>14}")
+        print("-" * 56)
+    else:
+        print(f"{'Rank':<6} {'Run':<6} {primary_label:>12}")
+        print("-" * 40)
 
     for i, result in enumerate(top_results, 1):
         run_num = result['run']
-        score = result['score']
-        print(f"{i:<6} {run_num:<6} {score:>12.2f}")
+        score = _get_primary_score(result)
+        if show_total_score:
+            total_score = _get_total_score(result)
+            print(f"{i:<6} {run_num:<6} {score:>12.2f} {total_score:>14.2f}")
+        else:
+            print(f"{i:<6} {run_num:<6} {score:>12.2f}")
 
-    print("-" * 40)
+    print("-" * 56 if show_total_score else "-" * 40)
 
 
 def export_scores_to_csv(results, output_path):
     """
-    Export all scores to a CSV file.
+    Export all Rosetta per-decoy scores to a CSV file.
 
     Args:
         results: List of docking results
@@ -193,11 +238,20 @@ def export_scores_to_csv(results, output_path):
         writer = csv.writer(f)
 
         # Header
-        writer.writerow(['run', 'score'])
+        writer.writerow(['run', 'description', 'total_score', 'i_sc'])
 
         # Data
         for result in results:
-            writer.writerow([result['run'], result['score']])
+            run_num = result.get('run', '')
+            description = str(result.get('description', '')).strip()
+            if not description:
+                description = f"decoy_{run_num}"
+            writer.writerow([
+                run_num,
+                description,
+                _get_total_score(result),
+                _get_primary_score(result),
+            ])
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +262,7 @@ def cluster_and_rank(
     scores_csv: str | Path,
     pdb_dir: str | Path,
     *,
-    score_col: str = "total_score",
+    score_col: str = "i_sc",
     top_n: int = 200,
     rmsd_cutoff: float = 4.0,
     output_csv: str | Path | None = None,
@@ -230,8 +284,8 @@ def cluster_and_rank(
     Parameters
     ----------
     scores_csv : path-like
-        Score file (CSV produced by the pipeline, or a ``.sc`` file
-        previously converted to CSV).
+        Score file (CSV produced by the pipeline with explicit Rosetta
+        metrics, or a ``.sc`` file previously converted to CSV).
     pdb_dir : path-like
         Directory containing the decoy PDB files.
     score_col, top_n, rmsd_cutoff

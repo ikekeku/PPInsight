@@ -18,7 +18,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ppinsight.utils import _project_root, resolve_input_path  # noqa: F401
+from ppinsight.utils import (  # noqa: F401
+    _project_root,
+    dbref_chains_for_accession,
+    resolve_input_path,
+)
 
 
 def info(msg: str):
@@ -59,6 +63,259 @@ def run_command(cmd, cwd=None):
 BASE_ROOT = Path(_project_root()) / "data" / "output"
 METHOD = "haddock_runs"
 CONTAINER_IMAGE = "ghcr.io/haddocking/haddock3:latest"
+_PDB_COORD_RECORDS = {"ATOM", "HETATM", "ANISOU"}
+
+
+def _component_label(component_id: str) -> str:
+    """Render a human-readable component identifier for logs/errors."""
+    return component_id if component_id != "(blank)" else "<blank>"
+
+
+def _pdb_component_ids(
+    pdb_path: str | Path,
+    allowed_chains: set[str] | None = None,
+) -> list[str]:
+    """Return ordered chain/segid component IDs present in a PDB file.
+
+    HADDOCK expects each docking partner to be a single component with a
+    unique chain/segid relative to the other partner. We treat a non-empty
+    segid as the authoritative identifier and fall back to the chain ID.
+    """
+    components = []
+    seen = set()
+    with open(pdb_path, encoding="utf-8") as handle:
+        for line in handle:
+            if line[:6].strip() not in _PDB_COORD_RECORDS:
+                continue
+            segid = line[72:76].strip()
+            chain = line[21].strip()
+            if allowed_chains is not None and chain not in allowed_chains:
+                continue
+            component = segid or chain or "(blank)"
+            if component in seen:
+                continue
+            seen.add(component)
+            components.append(component)
+    return components
+
+
+def _rewrite_pdb_as_single_chain(
+    input_pdb: str | Path,
+    output_pdb: str | Path,
+    target_chain: str,
+    allowed_chains: set[str] | None = None,
+) -> dict[str, object]:
+    """Rewrite a PDB so all components become one renumbered HADDOCK partner.
+
+    This mirrors the preprocessing recommended by HADDOCK's own tutorials for
+    multi-chain partners: merge chains into one logical partner, assign one
+    chain/segid, and renumber residues sequentially.
+    """
+    seen_components = []
+    seen_set = set()
+    model_id = 1
+    residue_counter = 0
+    last_residue_key = None
+    previous_coord_was_written = False
+
+    with open(input_pdb, encoding="utf-8") as src, open(
+        output_pdb, "w", encoding="utf-8"
+    ) as dst:
+        for line in src:
+            record = line[:6].strip()
+            if record == "MODEL":
+                model_text = line[10:14].strip()
+                model_id = int(model_text) if model_text.isdigit() else model_id + 1
+                residue_counter = 0
+                last_residue_key = None
+                dst.write(line)
+                continue
+
+            if record in _PDB_COORD_RECORDS:
+                segid = line[72:76].strip()
+                chain = line[21].strip()
+                if allowed_chains is not None and chain not in allowed_chains:
+                    previous_coord_was_written = False
+                    continue
+                component = segid or chain or "(blank)"
+                if component not in seen_set:
+                    seen_set.add(component)
+                    seen_components.append(component)
+
+                residue_key = (
+                    model_id,
+                    component,
+                    line[17:20],
+                    line[22:26],
+                    line[26],
+                )
+                if residue_key != last_residue_key:
+                    residue_counter += 1
+                    if residue_counter > 9999:
+                        raise RuntimeError(
+                            "Cannot normalize HADDOCK input with more than 9999 "
+                            f"residues in one model: {input_pdb}"
+                        )
+                    last_residue_key = residue_key
+
+                padded = line.rstrip("\n").ljust(80)
+                chars = list(padded)
+                chars[21] = target_chain
+                chars[22:26] = list(f"{residue_counter:>4}")
+                chars[26] = " "
+                chars[72:76] = list(f"{target_chain:<4}")
+                dst.write("".join(chars).rstrip() + "\n")
+                previous_coord_was_written = True
+                continue
+
+            if record == "TER":
+                if not previous_coord_was_written:
+                    continue
+                padded = line.rstrip("\n").ljust(80)
+                chars = list(padded)
+                chars[21] = target_chain
+                chars[22:26] = list(f"{max(residue_counter, 1):>4}")
+                chars[26] = " "
+                chars[72:76] = list(f"{target_chain:<4}")
+                dst.write("".join(chars).rstrip() + "\n")
+                previous_coord_was_written = False
+                continue
+
+            dst.write(line)
+
+    return {
+        "components": seen_components,
+        "residues": residue_counter,
+        "output_path": str(output_pdb),
+        "target_chain": target_chain,
+    }
+
+
+def _maybe_normalize_haddock_partners(
+    rec_path: Path,
+    lig_path: Path,
+    data_dir: Path,
+    ambig: str | None,
+    auto_filter: bool = True,
+) -> tuple[Path, Path]:
+    """Stage HADDOCK inputs, normalizing invalid chain layouts when safe.
+
+    HADDOCK's own guidance is that each docking partner should be a single
+    chain with unique chain/segid identifiers across partners. For ab-initio
+    runs without user-supplied restraints we can normalize staged copies to
+    satisfy that requirement. When a restraints file is provided, renaming
+    chains would invalidate the user's CNS selections, so we fail early with
+    a precise error instead.
+    """
+    rec_allowed_chains = None
+    lig_allowed_chains = None
+    if auto_filter:
+        rec_accession = rec_path.stem.upper()
+        lig_accession = lig_path.stem.upper()
+        rec_allowed_chains = (
+            set(dbref_chains_for_accession(rec_path, rec_accession)) or None
+        )
+        lig_allowed_chains = (
+            set(dbref_chains_for_accession(lig_path, lig_accession)) or None
+        )
+
+        if rec_allowed_chains is not None:
+            info(
+                "Selected HADDOCK receptor chains from DBREF for "
+                f"{rec_accession}: "
+                + ", ".join(sorted(rec_allowed_chains))
+            )
+        if lig_allowed_chains is not None:
+            info(
+                "Selected HADDOCK ligand chains from DBREF for "
+                f"{lig_accession}: "
+                + ", ".join(sorted(lig_allowed_chains))
+            )
+
+    rec_components = _pdb_component_ids(rec_path, allowed_chains=rec_allowed_chains)
+    lig_components = _pdb_component_ids(lig_path, allowed_chains=lig_allowed_chains)
+    shared_components = set(rec_components) & set(lig_components)
+
+    needs_normalization = (
+        len(rec_components) != 1
+        or len(lig_components) != 1
+        or bool(shared_components)
+        or "(blank)" in rec_components
+        or "(blank)" in lig_components
+    )
+
+    rec_dst = data_dir / rec_path.name
+    lig_dst = data_dir / lig_path.name
+
+    if not needs_normalization:
+        shutil.copy(str(rec_path), str(rec_dst))
+        shutil.copy(str(lig_path), str(lig_dst))
+        return rec_dst, lig_dst
+
+    if ambig:
+        rec_desc = ", ".join(_component_label(c) for c in rec_components)
+        lig_desc = ", ".join(_component_label(c) for c in lig_components)
+        shared_desc = ", ".join(sorted(_component_label(c) for c in shared_components))
+        detail_lines = [
+            "HADDOCK input preprocessing is required before using --ambig.",
+            f"Receptor components: {rec_desc}",
+            f"Ligand components: {lig_desc}",
+        ]
+        if shared_components:
+            detail_lines.append(f"Shared chain/seg IDs across partners: {shared_desc}")
+        detail_lines.append(
+            "HADDOCK expects each docking partner to be a single chain with "
+            "unique chain/seg IDs. PPInsight will not rewrite user-provided "
+            "restraints automatically because that would invalidate their "
+            "chain references. Preprocess the PDBs first, then rerun."
+        )
+        raise RuntimeError("\n".join(detail_lines))
+
+    rec_report = _rewrite_pdb_as_single_chain(
+        rec_path,
+        rec_dst,
+        "A",
+        allowed_chains=rec_allowed_chains,
+    )
+    lig_report = _rewrite_pdb_as_single_chain(
+        lig_path,
+        lig_dst,
+        "B",
+        allowed_chains=lig_allowed_chains,
+    )
+
+    info(
+        "Normalized HADDOCK receptor to single chain A from components: "
+        + ", ".join(_component_label(c) for c in rec_report["components"])
+    )
+    info(
+        "Normalized HADDOCK ligand to single chain B from components: "
+        + ", ".join(_component_label(c) for c in lig_report["components"])
+    )
+    return rec_dst, lig_dst
+
+
+def _docker_runtime_usable(docker_executable: str | None = None) -> bool:
+    """Return True when Docker is installed and the daemon is reachable."""
+    docker_executable = docker_executable or shutil.which("docker")
+    if not docker_executable:
+        return False
+
+    try:
+        subprocess.run(
+            [docker_executable, "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=5,
+        )
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ):
+        return False
+    return True
 
 
 def _detect_container_runtime():
@@ -66,7 +323,8 @@ def _detect_container_runtime():
 
     Returns 'docker', 'apptainer' (or 'singularity'), or None.
     """
-    if shutil.which("docker"):
+    docker_path = shutil.which("docker")
+    if docker_path and _docker_runtime_usable(docker_path):
         return "docker"
     # Apptainer may be installed under 'apptainer' or legacy 'singularity'
     if shutil.which("apptainer"):
@@ -88,49 +346,43 @@ def _run_in_container(
     This uses `run_command` so tests that monkeypatch it will intercept the call.
     """
     host_workspace = os.path.abspath(host_workspace)
-    # Compute run_dir relative to the workspace root so we can
-    # `cd` correctly inside the container
+    # Compute run_dir relative to the workspace root so the staged run directory
+    # can become the container working directory.
     rel_run = os.path.relpath(str(run_dir_path), host_workspace)
-    # Ensure paths are safe for commands
     rel_run_posix = rel_run.replace(os.path.sep, "/")
+    container_run_dir = (
+        f"/workspace/{rel_run_posix}" if rel_run_posix != "." else "/workspace"
+    )
+    cfg_base = os.path.basename(cfg_name)
+
     if runtime == "docker":
-        # Mount the workspace into /workspace in the container
-        workdir = (
-            f"/workspace/{os.path.dirname(rel_run_posix)}"
-            if os.path.dirname(rel_run_posix)
-            else "/workspace"
-        )
-        cfg_base = os.path.basename(cfg_name)
+        # The HADDOCK image uses ENTRYPOINT ["haddock3"]. Override explicitly so
+        # custom images with a different entrypoint still run the workflow file.
         cmd = [
             "docker", "run", "--rm",
             "-v", f"{host_workspace}:/workspace",
-            "-w", workdir,
+            "-w", container_run_dir,
+            "--entrypoint", "haddock3",
             image,
-            "bash", "-lc", f"haddock3 {shlex.quote(cfg_base)}"
+            cfg_base,
         ]
     else:
-        # Apptainer can execute docker images directly via the docker:// prefix
+        # Apptainer can execute docker images directly via the docker:// prefix.
+        # Use the run directory as the working directory and execute haddock3
+        # directly rather than relying on a shell wrapper.
         image_spec = image
         if not image_spec.startswith("docker://") and not image_spec.startswith("shub://"):
             image_spec = f"docker://{image_spec}"
-        # apptainer exec --bind host:/workspace --pwd /workspace docker://image \
-        # bash -lc 'cd ... && haddock3 cfg'
         cmd = [
             "apptainer",
             "exec",
             "--bind",
             f"{host_workspace}:/workspace",
             "--pwd",
-            "/workspace",
+            container_run_dir,
             image_spec,
-            "bash",
-            "-lc",
-            (
-                "cd /workspace/"
-                + rel_run_posix
-                + " && haddock3 "
-                + shlex.quote(os.path.basename(cfg_name))
-            ),
+            "haddock3",
+            cfg_base,
         ]
     run_command(cmd)
 
@@ -162,7 +414,7 @@ def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
     return run_dir, data_dir
 
 
-def copy_inputs(data_dir, rec, lig, ambig=None):
+def copy_inputs(data_dir, rec, lig, ambig=None, auto_filter=True):
     """Copy receptor, ligand (and optionally ambig) into the run data dir.
 
     Accepts either full paths or short basenames; callers should resolve
@@ -176,10 +428,13 @@ def copy_inputs(data_dir, rec, lig, ambig=None):
     if not lig_path.exists():
         raise FileNotFoundError(f"Ligand file not found: {lig}")
 
-    rec_dst = data_dir / rec_path.name
-    lig_dst = data_dir / lig_path.name
-    shutil.copy(str(rec_path), str(rec_dst))
-    shutil.copy(str(lig_path), str(lig_dst))
+    rec_dst, lig_dst = _maybe_normalize_haddock_partners(
+        rec_path,
+        lig_path,
+        data_dir,
+        ambig,
+        auto_filter=auto_filter,
+    )
 
     ambig_dst = None
     if ambig:
@@ -212,11 +467,16 @@ def write_cfg(
 
     If no ambiguous restraints file is provided (empty *ambig_rel*),
     ``cmrest = true`` is injected into the rigid-body stage to enable
-    centre-of-mass restraint-based ab-initio docking.
+    centre-of-mass restraint-based ab-initio docking. The same no-AIR path
+    keeps ``cmrest`` in ``flexref`` so HADDOCK does not abort when there are
+    no AIR restraints.
     """
-    # If no ambiguous restraints are provided, enable ab-initio sampling
-    # for the rigid-body stage using `cmrest = true`.
-    abinitio_block = "" if ambig_rel else "cmrest = true\n"
+    # If no ambiguous restraints are provided, keep the ab-initio workflow
+    # restrained by center-of-mass terms through rigid-body docking and
+    # semi-flexible refinement. HADDOCK's flexref stage aborts when there are
+    # no AIR restraints and cmrest is disabled.
+    rigidbody_abinitio_block = "" if ambig_rel else "cmrest = true\n"
+    flexref_abinitio_block = "" if ambig_rel else "cmrest = true\n"
 
     text = f"""# ====================================================================
     # Protein-protein docking example (auto-generated by PPInsight)
@@ -257,7 +517,7 @@ def write_cfg(
     ambig_fname = "{ambig_rel}"
     sampling = 20
 
-    {abinitio_block}
+    {rigidbody_abinitio_block}
     # Score evaluation against reference (leave blank for no reference)
     [caprieval]
     reference_fname = ""
@@ -270,6 +530,7 @@ def write_cfg(
     [flexref]
     tolerance = 20
     ambig_fname = "{ambig_rel}"
+    {flexref_abinitio_block}
 
     # Final energy minimization in explicit solvent (itw)
     [emref]
@@ -403,6 +664,7 @@ def _stage_run(
     ambig: str | None,
     mode: str,
     ncores: int,
+    auto_filter: bool,
 ):
     """Create run dir, copy inputs, and write the HADDOCK cfg file.
 
@@ -416,7 +678,13 @@ def _stage_run(
     )
 
     # Copy input files (they are already resolved)
-    rec_dst, lig_dst, ambig_dst = copy_inputs(data_dir, rec, lig, ambig)
+    rec_dst, lig_dst, ambig_dst = copy_inputs(
+        data_dir,
+        rec,
+        lig,
+        ambig,
+        auto_filter=auto_filter,
+    )
 
     # data-relative paths inside .cfg
     rec_rel = f"data/{rec_dst.name}"
@@ -448,19 +716,19 @@ def _execute_haddock_run(
     if not run_haddock:
         return executed_cmd
 
-    # Try to detect obvious CNS binary mismatches first.
-    try:
-        _check_cns_compatibility()
-    except RuntimeError:
-        # Propagate helpful runtime errors (architecture mismatch)
-        raise
-
     # Decide container use
     chosen_container = None
     if container == "auto":
         chosen_container = _detect_container_runtime()
     elif container in ("docker", "apptainer", "singularity"):
         chosen_container = container if container != "singularity" else "apptainer"
+
+    if chosen_container == "docker" and not _docker_runtime_usable():
+        raise RuntimeError(
+            "Docker is installed but the Docker daemon is not running or is not "
+            "reachable. Start Docker Desktop (or dockerd), or use "
+            "--container apptainer on systems where Apptainer is available."
+        )
 
     if chosen_container:
         host_ws = workspace_root if workspace_root else _project_root()
@@ -475,6 +743,11 @@ def _execute_haddock_run(
         return executed_cmd
 
     # No container runtime found; run locally
+    try:
+        _check_cns_compatibility()
+    except RuntimeError:
+        raise
+
     cmd = shlex.split(haddock_cmd) + [cfg_path.name]
     run_command(cmd, cwd=run_dir)
     executed_cmd = " ".join(map(str, cmd))
@@ -519,6 +792,7 @@ def haddock_pipeline(
     container = opts.get("container", "auto")
     container_image = opts.get("container_image", CONTAINER_IMAGE)
     workspace_root = opts.get("workspace_root")
+    auto_filter = opts.get("auto_filter", True)
 
     # Resolve inputs so short basenames like "2UUY_rec" work (searches the repo)
     rec = resolve_input_path(rec)
@@ -549,6 +823,7 @@ def haddock_pipeline(
         ambig=ambig,
         mode=mode,
         ncores=ncores,
+        auto_filter=auto_filter,
     )
 
     # Execute haddock if requested (local or container).
@@ -640,11 +915,22 @@ def main(argv=None):
     )
     parser.add_argument(
         "--input-dir",
-        default=None,
+        default="data/input",
         help=(
             "Directory to search when receptor/ligand are basenames instead "
-            "of full paths (default: repo root).  Useful when PDB files "
+            "of full paths (default: data/input).  Useful when PDB files "
             "live in a shared directory outside the project tree."
+        ),
+    )
+    parser.add_argument(
+        "--no-auto-filter",
+        action="store_true",
+        help=(
+            "Disable PPInsight's accession-based DBREF chain filtering.  "
+            "By default, accession-named mixed-complex PDBs are reduced to "
+            "the chains mapped to that accession before HADDOCK staging.  "
+            "Use this only when you intentionally want the full deposited "
+            "complex or a non-accession partner definition."
         ),
     )
 
@@ -693,6 +979,7 @@ def main(argv=None):
             container=container_runtime,
             container_image=container_image,
             workspace_root=_project_root(),
+            auto_filter=not args.no_auto_filter,
         )
     except FileExistsError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -700,6 +987,16 @@ def main(argv=None):
               "or omit --runname to auto-increment.", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        cmd = " ".join(map(str, e.cmd))
+        print(
+            f"ERROR: command failed with exit code {e.returncode}: {cmd}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 

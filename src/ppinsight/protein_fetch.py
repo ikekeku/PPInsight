@@ -45,6 +45,7 @@ from Bio.PDB import PDBList
 
 _UNIPROT_BASE_URL = "https://rest.uniprot.org/uniprotkb/"
 _UNIPROT_SEARCH_URL = f"{_UNIPROT_BASE_URL}search"
+_ENTRY_NAME_HUMAN_PATTERN = re.compile(r"^[A-Z0-9-]+_HUMAN$")
 
 
 # UniProt accession formats (6-char and 10-char forms)
@@ -63,29 +64,134 @@ def _looks_like_uniprot_accession(token: str) -> bool:
     )
 
 
-def _query_uniprot_primary_accession(query: str) -> str | None:
-    """Return the first matching primary accession for a UniProt query."""
+def _looks_like_human_entry_name(token: str) -> bool:
+    """Return True when *token* looks like an exact UniProt *_HUMAN ID."""
+    return bool(_ENTRY_NAME_HUMAN_PATTERN.match(token.strip().upper()))
+
+
+def _query_uniprot_search(
+    query: str,
+    *,
+    size: int,
+    fields: str,
+) -> list[dict]:
+    """Execute a UniProt search query and return the JSON result list."""
     try:
         response = requests.get(
             _UNIPROT_SEARCH_URL,
             params={
                 "query": query,
                 "format": "json",
-                "size": 1,
-                "fields": "accession,id,reviewed,organism_name",
+                "size": size,
+                "fields": fields,
             },
             timeout=10,
         )
         response.raise_for_status()
         payload = response.json()
     except (requests.exceptions.RequestException, ValueError):
-        return None
+        return []
 
-    for row in payload.get("results", []):
+    return list(payload.get("results", []))
+
+
+def _query_uniprot_primary_accession(query: str) -> str | None:
+    """Return the first matching primary accession for a UniProt query."""
+    rows = _query_uniprot_search(
+        query,
+        size=1,
+        fields="accession,id,reviewed,organism_name",
+    )
+    for row in rows:
         accession = row.get("primaryAccession")
         if accession:
             return str(accession).upper()
     return None
+
+
+def _extract_protein_name(result_row: dict) -> str:
+    """Return the recommended/submitted protein name from a UniProt row."""
+    desc = result_row.get("proteinDescription") or {}
+    recommended = desc.get("recommendedName") or {}
+    full_name = recommended.get("fullName") or {}
+    if isinstance(full_name, dict):
+        value = str(full_name.get("value", "")).strip()
+        if value:
+            return value
+
+    for submitted in desc.get("submissionNames", []) or []:
+        sub_full = submitted.get("fullName") or {}
+        value = str(sub_full.get("value", "")).strip()
+        if value:
+            return value
+
+    return ""
+
+
+def _extract_gene_names(result_row: dict) -> str:
+    """Return comma-separated gene symbols/synonyms from a UniProt row."""
+    genes = result_row.get("genes") or []
+    tokens: list[str] = []
+
+    for gene in genes:
+        gene_name = gene.get("geneName") or {}
+        primary = str(gene_name.get("value", "")).strip()
+        if primary:
+            tokens.append(primary)
+
+        for synonym in gene.get("synonyms", []) or []:
+            value = str(synonym.get("value", "")).strip()
+            if value:
+                tokens.append(value)
+
+    deduped: list[str] = []
+    for token in tokens:
+        if token not in deduped:
+            deduped.append(token)
+    return ", ".join(deduped)
+
+
+def _format_protein_existence(value) -> str:
+    """Normalise UniProt protein-existence labels for display."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if ":" in text:
+        return text.split(":", 1)[1].strip()
+    return text
+
+
+def search_uniprot_matches(term: str, limit: int = 5) -> list[dict[str, str]]:
+    """Return top UniProt preview matches for an ambiguous search term."""
+    limit = max(1, min(int(limit), 20))
+    query = f"{term.strip()} AND organism_id:9606 AND reviewed:true"
+    rows = _query_uniprot_search(
+        query,
+        size=limit,
+        fields=(
+            "accession,id,protein_name,gene_names,organism_name,length,"
+            "protein_existence,annotation_score,reviewed"
+        ),
+    )
+
+    matches: list[dict[str, str]] = []
+    for row in rows:
+        matches.append({
+            "accession": str(row.get("primaryAccession", "")).strip(),
+            "entry_name": str(row.get("uniProtkbId", "")).strip(),
+            "protein_name": _extract_protein_name(row),
+            "gene_names": _extract_gene_names(row),
+            "organism": str(
+                (row.get("organism") or {}).get("scientificName", "")
+            ).strip(),
+            "length": str(row.get("sequence", {}).get("length", "")).strip(),
+            "protein_existence": _format_protein_existence(
+                row.get("proteinExistence")
+            ),
+            "annotation_score": str(row.get("annotationScore", "")).strip(),
+        })
+
+    return matches
 
 
 def _candidate_name_queries(identifier: str) -> list[str]:
@@ -144,6 +250,15 @@ def _resolve_to_accession(identifier: str) -> str:
 
     if _looks_like_uniprot_accession(raw):
         return raw.upper()
+
+    # Deterministic branch for exact-looking entry names such as NRP1_HUMAN.
+    entry_name = raw.upper()
+    if _looks_like_human_entry_name(entry_name):
+        accession = _query_uniprot_primary_accession(
+            f"id:{entry_name} AND reviewed:true"
+        )
+        if accession:
+            return accession
 
     for query in _candidate_name_queries(raw):
         accession = _query_uniprot_primary_accession(query)
@@ -212,24 +327,31 @@ def _materialize_pdb_aliases(
     raw_path: str,
     alias_stems: list[str],
     pdb_dir: str,
-) -> list[str]:
+    *,
+    overwrite: bool = False,
+) -> tuple[list[str], list[str]]:
     """Copy a downloaded PDB artifact to one or more alias ``.pdb`` files.
 
-    Returns an empty list when no readable raw artifact exists (for example
-    when upstream retrieval reports an ID but does not materialize a file).
+    Returns ``(written_paths, skipped_paths)``. Both are empty when no
+    readable raw artifact exists (for example when upstream retrieval reports
+    an ID but does not materialize a file).
     """
     if not raw_path:
-        return []
+        return [], []
 
     raw_abs = os.path.abspath(raw_path)
 
     if not os.path.exists(raw_abs):
-        return []
+        return [], []
 
     alias_paths: list[str] = []
+    skipped_paths: list[str] = []
     for stem in alias_stems:
         alias_path = _alias_pdb_path(stem, pdb_dir)
         alias_abs = os.path.abspath(alias_path)
+        if os.path.exists(alias_abs) and not overwrite:
+            skipped_paths.append(alias_path)
+            continue
         if raw_abs != alias_abs:
             shutil.copyfile(raw_abs, alias_abs)
         alias_paths.append(alias_path)
@@ -241,11 +363,54 @@ def _materialize_pdb_aliases(
         except OSError:
             pass
 
-    return alias_paths
+    return alias_paths, skipped_paths
 
 
-def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
-                     pdb_dir="pdb_files", pdb_name_mode="accession"):
+def remove_local_pdb_aliases(
+    identifiers: list[str],
+    *,
+    pdb_dir: str,
+) -> tuple[list[str], list[str]]:
+    """Remove local fetched PDB aliases and return (removed, missing)."""
+    removed: list[str] = []
+    missing: list[str] = []
+
+    for token in identifiers:
+        raw = token.strip()
+        if not raw:
+            continue
+
+        candidates: list[str] = []
+        if os.path.isabs(raw) or os.path.sep in raw:
+            candidates.append(raw)
+        else:
+            stem, ext = os.path.splitext(raw)
+            if ext:
+                candidates.append(os.path.join(pdb_dir, raw))
+            else:
+                safe_stem = _sanitize_alias_stem(stem or raw)
+                candidates.append(_alias_pdb_path(safe_stem, pdb_dir))
+                candidates.append(os.path.join(pdb_dir, f"{safe_stem}.ent"))
+
+        target = next((c for c in candidates if os.path.exists(c)), None)
+        if target is None:
+            missing.append(raw)
+            continue
+
+        os.remove(target)
+        removed.append(target)
+
+    return removed, missing
+
+
+def get_uniprot_data(
+    accession_ids,
+    fasta_file=None,
+    csv_file=None,
+    pdb_dir="pdb_files",
+    pdb_name_mode="accession",
+    force=False,
+):
     """
     Fetch protein sequence and structure data from UniProt and PDB.
 
@@ -257,6 +422,8 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
         Defaults to "pdb_files".
         pdb_name_mode (str, optional): Naming mode for downloaded PDB files.
         Accepted values: "accession" (default), "uniprot", "both".
+        force (bool, optional): If True, overwrite existing local alias
+        files. By default existing aliases are preserved.
 
     Returns:
         tuple:
@@ -351,16 +518,28 @@ def get_uniprot_data(accession_ids, fasta_file=None, csv_file=None,
                     accession_to_entry_name.get(accession_id),
                     pdb_name_mode,
                 )
-                alias_paths = _materialize_pdb_aliases(
+                alias_paths, skipped_paths = _materialize_pdb_aliases(
                     raw_pdb_path,
                     alias_stems,
                     pdb_dir,
+                    overwrite=force,
                 )
                 pdb_info[accession_id] = first_pdb_id
                 if alias_paths:
                     print(
                         f"Downloaded PDB file for {accession_id}: "
                         f"{first_pdb_id} -> {', '.join(alias_paths)}"
+                    )
+                    if skipped_paths:
+                        print(
+                            "Kept existing local alias file(s) for "
+                            f"{accession_id}: {', '.join(skipped_paths)}"
+                        )
+                elif skipped_paths:
+                    print(
+                        "Skipped download overwrite for "
+                        f"{accession_id}; existing alias file(s): "
+                        f"{', '.join(skipped_paths)}"
                     )
                 else:
                     print(
@@ -398,7 +577,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "accessions",
-        nargs="+",
+        nargs="*",
         help=(
             "One or more UniProt identifiers.  Accepted forms include "
             "accessions (e.g. P69905), FASTA-style IDs "
@@ -408,6 +587,33 @@ def main(argv=None):
             "records (organism_id=9606).  "
             "The pipeline fetches sequence data and resolves PDB structures "
             "for each resolved accession."
+        ),
+    )
+    parser.add_argument(
+        "--search",
+        default=None,
+        help=(
+            "Preview top UniProt reviewed-human matches for one ambiguous "
+            "query term and exit (no downloads).  Example: --search "
+            "'Neuropilin-1 human'."
+        ),
+    )
+    parser.add_argument(
+        "--search-limit",
+        type=int,
+        default=5,
+        help=(
+            "Number of rows to show for --search (default: 5, max: 20)."
+        ),
+    )
+    parser.add_argument(
+        "--remove",
+        nargs="+",
+        default=None,
+        help=(
+            "Delete local fetched PDB aliases from --pdb-dir and exit. "
+            "Use accession/entry stems (e.g. P15692 or VEGFA_HUMAN) or "
+            "paths."
         ),
     )
     parser.add_argument(
@@ -448,8 +654,92 @@ def main(argv=None):
             "the same accession can be used directly in proteinA/proteinB."
         ),
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Overwrite existing local alias files in --pdb-dir.  By "
+            "default fetch keeps existing files and skips conflicting "
+            "writes."
+        ),
+    )
 
     args = parser.parse_args(argv)
+
+    if args.search_limit < 1 or args.search_limit > 20:
+        print("ERROR: --search-limit must be between 1 and 20", file=sys.stderr)
+        sys.exit(2)
+
+    if args.search and args.remove:
+        print("ERROR: --search and --remove cannot be used together", file=sys.stderr)
+        sys.exit(2)
+
+    if args.search and args.accessions:
+        print(
+            "ERROR: --search is preview-only; do not pass accessions with it",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if args.remove and args.accessions:
+        print(
+            "ERROR: --remove only manages local files; do not pass accessions",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if args.search:
+        matches = search_uniprot_matches(args.search, limit=args.search_limit)
+        if not matches:
+            print(
+                f"No reviewed human UniProt matches found for: {args.search}"
+            )
+            return
+
+        print(
+            f"Top {len(matches)} reviewed human UniProt match(es) for "
+            f"'{args.search}':"
+        )
+        for row in matches:
+            accession = row["accession"] or "-"
+            entry_name = row["entry_name"] or "-"
+            print(f"{accession} · {entry_name}")
+
+            protein_name = row["protein_name"] or "(name unavailable)"
+            gene_names = row["gene_names"] or "-"
+            organism = row["organism"] or "-"
+            length = row["length"] or "-"
+            existence = row["protein_existence"] or "-"
+            annotation = row["annotation_score"] or "-"
+            print(
+                f"{protein_name} · Gene: {gene_names} · {organism} · "
+                f"{length} amino acids · {existence} · "
+                f"Annotation score: {annotation}/5"
+            )
+            print()
+        return
+
+    if args.remove:
+        os.makedirs(args.pdb_dir, exist_ok=True)
+        removed, missing = remove_local_pdb_aliases(args.remove, pdb_dir=args.pdb_dir)
+        if removed:
+            print("Removed local PDB alias file(s):")
+            for path in removed:
+                print(f"  {path}")
+        if missing:
+            print("No local file found for:")
+            for token in missing:
+                print(f"  {token}")
+        if not removed and not missing:
+            print("No files matched --remove inputs.")
+        return
+
+    if not args.accessions:
+        print(
+            "ERROR: provide at least one accession or use --search/--remove",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     structured_data, pdb_info = get_uniprot_data(
         accession_ids=args.accessions,
@@ -457,6 +747,7 @@ def main(argv=None):
         csv_file=args.csv,
         pdb_dir=args.pdb_dir,
         pdb_name_mode=args.pdb_name,
+        force=args.force,
     )
 
     # Print a brief summary

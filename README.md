@@ -54,6 +54,7 @@ Each subcommand is also available as a standalone command:
 | Umbrella form               | Standalone equivalent |
 |-----------------------------|-----------------------|
 | `ppinsight fetch`           | `protein_fetch`       |
+| `ppinsight fetch-native`    | `ppinsight_fetch_native` |
 | `ppinsight lightdock`       | `pdb_to_lightdock`    |
 | `ppinsight haddock`         | `pdb_to_haddock`      |
 | `ppinsight rosetta`         | `pdb_to_rosetta`      |
@@ -89,9 +90,9 @@ FASTA-style IDs (`sp|P15692|VEGFA_HUMAN`), and common human
 gene/name forms such as `VEGFA` or `"VEGFA human"`.
 
 The downloaded structures are saved with the same accession stems you
-typed, for example `P69905.pdb`.  That means the next step can use the
-same identifiers directly in `proteinA` and `proteinB` without manual
-renaming.
+typed, for example `P69905.pdb`.  That means you can reuse those same
+identifiers in later PPInsight steps without manual renaming, including
+in the `proteinA` and `proteinB` columns of a batch pairs file.
 
 ```bash
 # Give one or more UniProt identifiers.
@@ -106,14 +107,46 @@ ppinsight fetch "VEGFR2 human" "VEGFA human"
 Optional flags: `--pdb-dir DIR` (override download location), `--fasta FILE`
 (save FASTA sequences), `--csv FILE` (save metadata columns:
 ID, Name, Description, Sequence Length, Sequence),
-`--pdb-name accession|uniprot|both` (control output filename stems).
+`--pdb-name accession|uniprot|both` (control output filename stems),
+`--search TERM` (preview top reviewed-human UniProt matches without
+downloading), `--remove ...` (delete mistaken local fetch outputs from
+`--pdb-dir`), `--force` (overwrite existing local aliases).
 Run `ppinsight fetch --help` for the full list.
+
+### 1b. Find native experimental complexes
+
+Use `ppinsight fetch-native` when you want a candidate native complex for a
+specific pair rather than separate single-protein structures. The command
+resolves both partners to UniProt accessions, searches RCSB biological
+assemblies, and writes a candidate table with method, resolution,
+stoichiometry, accession-to-chain mapping, and ready-to-download assembly
+URLs.
+
+```bash
+# Inspect candidate native assemblies for one pair
+ppinsight fetch-native P35968 P15692 \
+    -o data/output/native_candidates.tsv
+
+# Search many pairs and review candidate native assemblies
+ppinsight fetch-native --pairs tutorials/demo_pairs.tsv \
+    -o data/output/native_candidates.tsv
+
+# Download one specific assembly after reviewing the table
+ppinsight fetch-native P35968 P15692 \
+    --select 3V2A-1 \
+    --download-dir data/input/native_complexes
+```
+
+Review the candidate table first, then download the exact assembly you want
+with `--select`. The `--pairs` input uses the same flat `proteinA` /
+`proteinB` table format as `ppinsight batch`.
 
 ### 2. Run docking pipelines
 
 Each docking command takes two positional arguments: **receptor** and
 **ligand**.  These are PDB filenames (basenames or full paths).  Use
-`--input-dir` to tell the CLI where the PDB files live.
+`--input-dir` to tell the CLI where the PDB files live.  By default,
+all docking commands search `data/input/`.
 
 ```bash
 # LightDock — minimum required: receptor, ligand
@@ -126,6 +159,11 @@ ppinsight haddock 2UUY_rec 2UUY_lig --input-dir data/input/ --run
 
 # Rosetta — minimum required: receptor, ligand (needs PyRosetta installed)
 ppinsight rosetta 2UUY_rec 2UUY_lig --input-dir data/input/
+
+# PPInsight auto-filters accession-named mixed complexes to accession-mapped
+# chains for HADDOCK and Rosetta. Use --no-auto-filter only if you
+# intentionally want the full deposited complex. See docs/FAQ.md for details.
+ppinsight rosetta P35968 P15692 --input-dir data/input/ --no-auto-filter
 ```
 
 Each engine has its own tuning flags (swarm count, number of runs,
@@ -170,15 +208,17 @@ rows also retain lightweight traceability columns when available
 (`run_id`, `pose_id`, `output_path`, `source_file`) so you can tie a
 plot back to a specific run and pose.
 
-If you use `--pairs` for interaction labels, keep `--pair` set for
-single-run collection so `proteinA`/`proteinB` are populated before
-annotation.
+Use `--label-file` (legacy alias: `--pairs`) to add interaction labels.
+For mixed multi-pair collections in one command, use `--pair-map`
+(`directory,proteinA,proteinB`) or rely on run-directory names such as
+`ProteinA_vs_ProteinB`.
 
 Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 
 ### 4. Visualize & compare
 
 ```bash
+# If you omit -o, compare auto-saves to data/output/plots/
 # Violin plot (default) — always prints a tabular summary first
 ppinsight compare data/output/scores/scores.tsv --metric dockq
 
@@ -194,14 +234,14 @@ ppinsight compare data/output/scores/scores.tsv --metric dockq \
 ppinsight compare data/output/scores/scores.tsv --metric dockq \
     --pair 2UUY_rec:2UUY_lig -o data/output/plots/violin_2uuy.png
 
-# If you omit -o, compare auto-saves to data/output/plots/
-ppinsight compare data/output/scores/scores.tsv --metric dockq
-
 # Use --show to open interactively instead of auto-saving
 ppinsight compare data/output/scores/scores.tsv --metric dockq --show
 
 # Tabular summary only (no plot)
 ppinsight compare data/output/scores/scores.tsv --metric dockq --table
+
+# Metric-agnostic overview table (no metric required)
+ppinsight compare data/output/scores/scores.tsv --table
 
 # CAPRI quality classification (high/medium/acceptable/incorrect)
 ppinsight compare data/output/scores/scores.tsv --capri-quality
@@ -267,26 +307,48 @@ for the full format spec.
 # Score a docked model against a native structure
 ppinsight quality model.pdb native.pdb
 
-# Score every model in a directory
-ppinsight quality docked_models/ native.pdb -o quality.tsv
+# Append DockQ/CAPRI evaluation rows directly to a collected scores file
+ppinsight quality data/output/scores/scores.tsv native.pdb \
+    -o data/output/scores/scores_quality.tsv
+
+# Or score a docking run directory directly
+ppinsight quality data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ native.pdb \
+    --engine lightdock \
+    -o quality.tsv
 ```
 
-> Requires the optional `quality` extra: `pip install ppinsight[quality]`
+> Requires the optional `quality` extra. From this repo checkout, install it with
+> `pip install -e '.[quality]'`. If you are installing by package name in `zsh`, quote
+> the brackets: `pip install 'ppinsight[quality]'`.
+
+If your scores file came from `ppinsight collect`, `ppinsight quality` reads
+each pose from its `output_path` value and appends DockQ/CAPRI evaluation rows
+back into a new unified scores file.
 
 ### 7. Predict binding affinity (PRODIGY)
 
 ```bash
-# Score docked poses with predicted binding affinity
+# Score collected poses with predicted binding affinity
 ppinsight prodigy data/output/scores/scores.tsv \
-    --pdb-dir data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
     --output data/output/scores/scores_prodigy.tsv
+
+# Fallback for scores tables assembled outside ppinsight collect
+ppinsight prodigy external_scores.tsv \
+    --pdb-dir data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
+    --output data/output/scores/external_scores_prodigy.tsv
 ```
 
 `ppinsight prodigy` adds `prodigy_ddg` and `prodigy_kd`, which are most
 useful after you have narrowed candidates with docking scores and, when
 available, DockQ/CAPRI quality evaluation.
 
-> Requires the optional `prodigy` extra: `pip install ppinsight[prodigy]`
+> Requires the optional `prodigy` extra. From this repo checkout, install it with
+> `pip install -e '.[prodigy]'`. If you are installing by package name in `zsh`, quote
+> the brackets: `pip install 'ppinsight[prodigy]'`.
+
+These examples work best when the scores file came from `ppinsight collect`
+and already stores each pose path in `output_path`. Use `--pdb-dir` only for
+manually assembled or external scores tables that keep bare `pdb` filenames.
 
 ---
 
@@ -311,7 +373,7 @@ Common setup, plotting, CAPRI, and PRODIGY questions are covered in
 PPInsight supports three complementary comparison layers:
 
 1. Within-model: use `violin`, `ridge`, and `cdf` on engine-native scores to inspect one engine's pose distribution.
-2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, `scatter`, and `difference` to compare engines on the same native-backed task.
+2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, `scatter`, and `difference` to compare engines on the same protein pair when you have an experimental reference structure for that pair.
 3. Cross-system: use `ppinsight prodigy` with `prodigy_ddg` and `prodigy_kd` when you need a post-hoc affinity view across different complexes.
 
 ---

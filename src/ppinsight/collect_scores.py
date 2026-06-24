@@ -520,9 +520,11 @@ def _parse_rosetta(out_dir: str,
        - ``rms`` (ligand RMSD, if present)
        - ``Fnat`` (fraction of native contacts, if present)
 
-    3. **PPInsight ``docking_scores.csv``** — the legacy CSV written by
-       the PyRosetta wrapper (``ppinsight.rosetta.dock``).  Falls back to
-       this when no ``.sc`` file is found.
+        3. **PPInsight ``docking_scores.csv``** — the CSV written by the
+             PyRosetta wrapper.  Current files export explicit
+             ``run,total_score,i_sc`` columns; older ``run,score`` files are
+             still accepted as a total-score-only fallback when no ``.sc`` file
+             is found.
 
     Returns a DataFrame with unified columns.
     """
@@ -549,21 +551,43 @@ def _parse_rosetta(out_dir: str,
 
     rows: list[dict] = []
     pA, pB = pair or ("", "")
-    score_col = "score" if "score" in df.columns else df.columns[-1]
+    if "i_sc" in df.columns or "total_score" in df.columns:
+        metric_columns = [
+            (metric_name, metric_name)
+            for metric_name in ("i_sc", "total_score")
+            if metric_name in df.columns
+        ]
+    elif "score" in df.columns:
+        metric_columns = [("total_score", "score")]
+    else:
+        raise KeyError(
+            "Rosetta docking_scores.csv must contain 'total_score' and 'i_sc' "
+            "columns, or the legacy 'score' column."
+        )
+
     for row_idx, (_, row) in enumerate(df.iterrows(), start=1):
         run_ref = row.get("run", row_idx)
-        pose_id = f"run_{int(run_ref):04d}" if str(run_ref).isdigit() else str(run_ref)
-        rows.append({
-            "model": label,
-            "score_type": "interface_score",
-            "score_value": float(row[score_col]),
-            "proteinA": pA,
-            "proteinB": pB,
-            "pose_id": pose_id,
-            "output_path": "",
-            "source_file": csv_path,
-            "pose_rank": row_idx,
-        })
+        description = str(row.get("description", "")).strip()
+        pose_id = description
+        if not pose_id:
+            pose_id = (
+                f"run_{int(run_ref):04d}"
+                if str(run_ref).isdigit()
+                else str(run_ref)
+            )
+        output_path = _rosetta_output_path(out_dir, description) if description else ""
+        for score_type, column_name in metric_columns:
+            rows.append({
+                "model": label,
+                "score_type": score_type,
+                "score_value": float(row[column_name]),
+                "proteinA": pA,
+                "proteinB": pB,
+                "pose_id": pose_id,
+                "output_path": output_path,
+                "source_file": csv_path,
+                "pose_rank": row_idx,
+            })
     return pd.DataFrame(rows)
 
 
@@ -758,6 +782,7 @@ def _get_parser(engine: str):
 def collect(directories: list[str],
             labels: list[str] | None = None,
             pair: tuple[str, str] | None = None,
+            pair_map: dict[str, tuple[str, str]] | None = None,
             use_clusters: bool = False,
             no_haddock_clusters: bool = False) -> tuple[pd.DataFrame, dict]:
     """Parse multiple docking output directories into a unified DataFrame.
@@ -771,7 +796,11 @@ def collect(directories: list[str],
         detected engine name is used (``'haddock'``, ``'lightdock'``,
         ``'rosetta'``).
     pair : tuple[str, str] | None
-        ``(proteinA, proteinB)`` to fill in every row.
+        Global fallback ``(proteinA, proteinB)`` when per-directory mapping
+        is not available.
+    pair_map : dict[str, tuple[str, str]] | None
+        Optional mapping from directory key to ``(proteinA, proteinB)``.
+        When provided, each directory can carry a different pair.
     use_clusters : bool
         For LightDock directories, use ``cluster.repr`` files instead of
         raw ``gso_*.out``.  Falls back to raw if no cluster files exist.
@@ -801,21 +830,26 @@ def collect(directories: list[str],
     for i, d in enumerate(directories):
         engine = detect_engine(d)
         label = labels[i] if labels else engine
+        pair_for_dir = _pair_for_directory(
+            d,
+            global_pair=pair,
+            pair_map=pair_map,
+        )
 
         # --- parse scores as before ---
         if use_clusters and engine == "lightdock":
-            frame = _parse_lightdock_clusters(d, pair=pair, label=label)
+            frame = _parse_lightdock_clusters(d, pair=pair_for_dir, label=label)
         elif engine == "haddock":
-            frame = _parse_haddock(d, pair=pair, label=label,
+            frame = _parse_haddock(d, pair=pair_for_dir, label=label,
                                    no_clusters=no_haddock_clusters)
         else:
             parser = _get_parser(engine)
-            frame = parser(d, pair=pair, label=label)
+            frame = parser(d, pair=pair_for_dir, label=label)
 
         # --- provenance: one run_id per (directory, engine) ---
         rid = make_run_id(
             engine,
-            pair=pair,
+            pair=pair_for_dir,
             timestamp=now + datetime.timedelta(seconds=i),
         )
         provenance[rid] = extract_run_metadata(engine, d)
@@ -907,6 +941,88 @@ def _has_nonempty_pair_context(scores_df: pd.DataFrame) -> bool:
     return bool((pa.ne("") & pb.ne("")).any())
 
 
+def _normalise_dir_key(path: str) -> str:
+    """Return a stable absolute directory key for matching pair mappings."""
+    expanded = os.path.expanduser(path.strip())
+    return os.path.normcase(os.path.abspath(os.path.normpath(expanded)))
+
+
+def _infer_pair_from_directory_name(directory: str) -> tuple[str, str] | None:
+    """Infer ``(proteinA, proteinB)`` from a ``proteinA_vs_proteinB`` folder."""
+    name = os.path.basename(os.path.normpath(directory))
+    m = re.match(r"(.+)_vs_(.+?)(?:_\d+)?$", name)
+    if not m:
+        return None
+    p_a = m.group(1).strip()
+    p_b = m.group(2).strip()
+    if not p_a or not p_b:
+        return None
+    return p_a, p_b
+
+
+def _load_pair_mapping_file(path: str) -> dict[str, tuple[str, str]]:
+    """Load a directory→pair mapping file for multi-pair collection."""
+    sep = "\t" if path.lower().endswith(".tsv") else ","
+    df = pd.read_csv(path, sep=sep)
+    cols = {c.strip().lower(): c for c in df.columns}
+
+    dir_col = cols.get("directory") or cols.get("dir") or cols.get("path")
+    p_a_col = cols.get("proteina")
+    p_b_col = cols.get("proteinb")
+
+    if not dir_col or not p_a_col or not p_b_col:
+        raise ValueError(
+            "--pair-map requires columns: directory, proteinA, proteinB"
+        )
+
+    mapping: dict[str, tuple[str, str]] = {}
+    for _, row in df.iterrows():
+        raw_dir = str(row.get(dir_col, "")).strip()
+        p_a = str(row.get(p_a_col, "")).strip()
+        p_b = str(row.get(p_b_col, "")).strip()
+        if not raw_dir or not p_a or not p_b:
+            continue
+
+        abs_key = _normalise_dir_key(raw_dir)
+        base_key = f"basename::{os.path.basename(abs_key)}"
+        pair = (p_a, p_b)
+
+        for key in (abs_key, base_key):
+            if key in mapping and mapping[key] != pair:
+                raise ValueError(
+                    "--pair-map has conflicting entries for directory "
+                    f"'{raw_dir}'"
+                )
+            mapping[key] = pair
+
+    if not mapping:
+        raise ValueError("--pair-map did not contain any usable rows")
+
+    return mapping
+
+
+def _pair_for_directory(
+    directory: str,
+    *,
+    global_pair: tuple[str, str] | None,
+    pair_map: dict[str, tuple[str, str]] | None,
+) -> tuple[str, str] | None:
+    """Resolve pair context for one directory using map/inference/fallback."""
+    if pair_map:
+        abs_key = _normalise_dir_key(directory)
+        if abs_key in pair_map:
+            return pair_map[abs_key]
+        base_key = f"basename::{os.path.basename(abs_key)}"
+        if base_key in pair_map:
+            return pair_map[base_key]
+
+    inferred = _infer_pair_from_directory_name(directory)
+    if inferred:
+        return inferred
+
+    return global_pair
+
+
 def _slugify_filename_part(text: str) -> str:
     """Return a filesystem-safe token for default output filenames."""
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", text.strip())
@@ -980,10 +1096,11 @@ def main(argv=None):
         nargs="*",
         default=None,
         help=(
-            "Model display labels for each directory (default: auto-detected "
-            "engine name, e.g. 'lightdock', 'haddock').  Must match the "
-            "number of directories if given.  Use this when you have "
-            "multiple runs of the same engine and need distinct names "
+            "Override model names in the output 'model' column (one label "
+            "per directory).  This is not interaction labeling; it only "
+            "renames model identities used in legends/tables (default: "
+            "auto-detected engine names).  Use when you collect multiple "
+            "runs of the same engine and need distinct model names "
             "(e.g. 'haddock_ambig' vs 'haddock_noambig')."
         ),
     )
@@ -994,12 +1111,15 @@ def main(argv=None):
             "Protein pair as 'proteinA:proteinB'.  Fills the proteinA and "
             "proteinB columns in the output.  Required whenever collected "
             "rows do not already include protein names (common for single "
-            "run directories).  Keep this set even when using --pairs so "
-            "label annotation can match rows correctly."
+            "run directories).  Use as a global fallback when collecting "
+            "multiple directories unless --pair-map or directory-name "
+            "inference provides per-directory pairs."
         ),
     )
     parser.add_argument(
+        "--label-file",
         "--pairs",
+        dest="label_file",
         default=None,
         help=(
             "Path to a pairs CSV/TSV (from 'ppinsight parse') to annotate "
@@ -1007,7 +1127,19 @@ def main(argv=None):
             "Enables --classify and --plot-type roc in 'ppinsight compare'.  "
             "This flag does not infer proteinA/proteinB values from "
             "directories; it only labels rows that already have pair names.  "
-            "Omit when ground-truth labels are unavailable."
+            "Preferred name: --label-file.  --pairs is kept as a backwards-"
+            "compatible alias.  Omit when ground-truth labels are unavailable."
+        ),
+    )
+    parser.add_argument(
+        "--pair-map",
+        default=None,
+        help=(
+            "CSV/TSV mapping file for multi-pair collection in one command. "
+            "Required columns: directory,proteinA,proteinB.  Entries match "
+            "input directories by absolute path or basename.  When omitted, "
+            "collect tries to infer pairs from run-folder names like "
+            "ProteinA_vs_ProteinB and finally falls back to --pair."
         ),
     )
     parser.add_argument(
@@ -1052,9 +1184,10 @@ def main(argv=None):
         type=int,
         default=5,
         help=(
-            "How many top scores to average for --agg topN_mean (default: 5).  "
-            "Higher values smooth out stochastic noise but may dilute the "
-            "signal if only one or two poses are near-native."
+            "How many top scores to average when --agg topN_mean is used "
+            "(default: 5).  Ignored for other --agg modes.  Higher values "
+            "smooth stochastic noise but may dilute near-native signal "
+            "if only a few poses are strong."
         ),
     )
 
@@ -1068,9 +1201,18 @@ def main(argv=None):
             sys.exit(2)
         pair = (parts[0], parts[1])
 
+    pair_map: dict[str, tuple[str, str]] | None = None
+    if args.pair_map:
+        try:
+            pair_map = _load_pair_mapping_file(args.pair_map)
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(2)
+
     try:
         df, provenance = collect(
             args.directories, labels=args.labels, pair=pair,
+            pair_map=pair_map,
             use_clusters=args.use_clusters,
             no_haddock_clusters=args.no_haddock_clusters,
         )
@@ -1096,22 +1238,23 @@ def main(argv=None):
         sys.exit(1)
 
     # Annotate with interaction labels if a pairs file is given
-    if args.pairs:
+    if args.label_file:
         if not _has_nonempty_pair_context(df):
             print(
-                "ERROR: --pairs requires populated proteinA/proteinB columns "
+                "ERROR: --label-file/--pairs requires populated "
+                "proteinA/proteinB columns "
                 "in collected scores.",
                 file=sys.stderr,
             )
             print(
                 "Hint: for single-run collection, pass --pair "
-                "proteinA:proteinB.  --pairs adds labels to existing pair "
+                "proteinA:proteinB.  --label-file adds labels to existing pair "
                 "names; it does not infer pair names from directories.",
                 file=sys.stderr,
             )
             sys.exit(2)
-        pairs_sep = "\t" if args.pairs.endswith(".tsv") else ","
-        pairs_df = pd.read_csv(args.pairs, sep=pairs_sep)
+        pairs_sep = "\t" if args.label_file.endswith(".tsv") else ","
+        pairs_df = pd.read_csv(args.label_file, sep=pairs_sep)
         df = annotate_with_labels(df, pairs_df)
 
     # Aggregate if requested

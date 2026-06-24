@@ -8,7 +8,10 @@ This module handles:
 """
 
 import sys
+import tempfile
 from pathlib import Path
+
+from ppinsight.utils import copy_pdb_selected_chains, dbref_chains_for_accession
 
 try:
     import pyrosetta
@@ -19,30 +22,143 @@ except ImportError:
     sys.exit(1)
 
 
-def initialize_pyrosetta(verbose=False):
+_CHAIN_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def initialize_pyrosetta(pyrosetta_debug=False):
     """
     Initialize PyRosetta with appropriate options.
 
     Args:
-        verbose: If True, show PyRosetta output. Default False.
+        pyrosetta_debug: If True, keep PyRosetta tracer output enabled.
+            Default False (muted).
 
     Returns:
         True if successful
     """
+    is_initialized = getattr(pyrosetta, "is_initialized", None)
+    if callable(is_initialized) and is_initialized():
+        return True
+
     # Initialize with flags suitable for docking.
     # -detect_disulf false: prevents RuntimeError when docking perturbation
     #   separates chains that share a disulfide bond (the scoring
     #   function cannot find the partner after rigid-body moves).
-    init_flags = "-mute all -detect_disulf false -ignore_unrecognized_res true"
-
-    if verbose:
-        init_flags = "-detect_disulf false -ignore_unrecognized_res true"
+    init_flags = "-detect_disulf false -ignore_unrecognized_res true"
+    if not pyrosetta_debug:
+        init_flags = "-mute all " + init_flags
 
     pyrosetta.init(init_flags) # pylint: disable=no-member, import-error
     return True
 
 
-def load_structure(pdb_path):
+def _pose_chain_ids(pose):
+    """Return the PDB chain IDs for each conformation chain in *pose*."""
+    pdb_info = pose.pdb_info()
+    if pdb_info is None:
+        raise RuntimeError("Pose is missing PDB chain information")
+
+    return [
+        pdb_info.chain(pose.chain_begin(chain_index))
+        for chain_index in range(1, pose.num_chains() + 1)
+    ]
+
+
+def _assign_unique_chain_ids(pose):
+    """Assign unique one-character chain IDs across all chains in *pose*."""
+    if pose.num_chains() > len(_CHAIN_ID_ALPHABET):
+        raise RuntimeError(
+            "Rosetta docking supports at most "
+            f"{len(_CHAIN_ID_ALPHABET)} uniquely addressable chains in this "
+            "wrapper"
+        )
+
+    pdb_info = pose.pdb_info()
+    if pdb_info is None:
+        raise RuntimeError("Pose is missing PDB chain information")
+
+    for chain_index in range(1, pose.num_chains() + 1):
+        chain_id = _CHAIN_ID_ALPHABET[chain_index - 1]
+        for residue_index in range(
+            pose.chain_begin(chain_index),
+            pose.chain_end(chain_index) + 1,
+        ):
+            pdb_info.chain(residue_index, chain_id)
+
+    pdb_info.rebuild_pdb2pose()
+    return _pose_chain_ids(pose)
+
+
+def _load_partner_pose(
+    pdb_path,
+    verbose=False,
+    partner_label="Partner",
+    auto_filter=True,
+):
+    """Load one docking partner, filtering to accession-mapped protein chains."""
+    pdb_path = Path(pdb_path)
+    accession = pdb_path.stem.upper()
+    allowed_chains = set()
+    if auto_filter:
+        allowed_chains = set(dbref_chains_for_accession(pdb_path, accession))
+
+    filtered_path = None
+    load_path = pdb_path
+    used_auto_filter = False
+    if allowed_chains:
+        with tempfile.NamedTemporaryFile(suffix=".pdb", delete=False) as handle:
+            filtered_path = Path(handle.name)
+
+        copy_pdb_selected_chains(pdb_path, filtered_path, allowed_chains)
+        load_path = filtered_path
+        used_auto_filter = True
+
+        if verbose:
+            print(
+                f"Selected {partner_label.lower()} chains from DBREF for "
+                f"{accession}: {', '.join(sorted(allowed_chains))}"
+            )
+
+    try:
+        pose = pyrosetta.pose_from_pdb(str(load_path))
+    finally:
+        if filtered_path is not None:
+            filtered_path.unlink(missing_ok=True)
+
+    total_before_nonprotein = pose.total_residue()
+
+    # Rosetta docking expects protein-only partners unless extra params are
+    # supplied for ligands or other non-canonical residues.
+    rosetta.core.pose.remove_nonprotein_residues(pose)
+
+    removed_nonprotein = max(0, total_before_nonprotein - pose.total_residue())
+
+    if pose.total_residue() == 0:
+        raise RuntimeError(
+            f"{partner_label} contains no protein residues after Rosetta "
+            f"preprocessing: {pdb_path}"
+        )
+
+    chain_ids = _pose_chain_ids(pose)
+    if verbose:
+        print(
+            f"{partner_label}: {pose.total_residue()} protein residues across "
+            f"chains {', '.join(chain_ids)}"
+        )
+
+    prep_stats = {
+        "input_path": str(pdb_path),
+        "used_auto_filter": used_auto_filter,
+        "kept_dbref_chains": sorted(allowed_chains),
+        "removed_nonprotein_residues": removed_nonprotein,
+        "final_residues": pose.total_residue(),
+        "final_chains": list(chain_ids),
+    }
+
+    return pose, chain_ids, prep_stats
+
+
+def load_structure(pdb_path, auto_filter=True):
     """
     Load a protein structure from PDB file.
 
@@ -60,7 +176,7 @@ def load_structure(pdb_path):
     if not pdb_path.exists():
         raise FileNotFoundError(f"PDB file not found: {pdb_path}")
 
-    pose = pyrosetta.pose_from_pdb(str(pdb_path))
+    pose, _, _ = _load_partner_pose(pdb_path, auto_filter=auto_filter)
 
     # Disulfide detection is handled by the -detect_disulf init flag.
     # No additional fix_disulfides call is needed.
@@ -111,12 +227,18 @@ def fix_structure_issues(pose):
     return pose
 
 
-def combine_proteins(pose1, pose2, jump_distance=15.0):
+def combine_proteins(
+    pose1,
+    pose2,
+    jump_distance=15.0,
+    partner1_chain_ids=None,
+    partner2_chain_ids=None,
+):
     """
     Combine two protein poses with a jump for docking.
 
-    This creates a complex with two chains separated by the specified distance,
-    with a proper fold tree for docking.
+    This preserves internal chain breaks within each partner and then lets
+    Rosetta build the docking fold tree for the two partner groups.
 
     Args:
         pose1: First protein Pose (will be chain A)
@@ -129,27 +251,46 @@ def combine_proteins(pose1, pose2, jump_distance=15.0):
     fix_structure_issues(pose1)
     fix_structure_issues(pose2)
 
+    if partner1_chain_ids is None:
+        partner1_chain_ids = _pose_chain_ids(pose1)
+    if partner2_chain_ids is None:
+        partner2_chain_ids = _pose_chain_ids(pose2)
+
     combined_pose = pyrosetta.Pose()
     combined_pose.assign(pose1)
 
-    rosetta.core.pose.append_pose_to_pose(  # pylint: disable=no-member
+    # Keep the ligand's internal chain topology intact instead of forcing a
+    # polymer bond across chain termini.
+    combined_pose.append_pose_by_jump(pose2, 1)
+
+    combined_chain_ids = _assign_unique_chain_ids(combined_pose)
+    expected_chain_count = len(partner1_chain_ids) + len(partner2_chain_ids)
+    if len(combined_chain_ids) != expected_chain_count:
+        raise RuntimeError(
+            "Combined Rosetta pose has an unexpected chain count: "
+            f"expected {expected_chain_count}, found {len(combined_chain_ids)}"
+        )
+
+    partner_string = (
+        "".join(combined_chain_ids[: len(partner1_chain_ids)])
+        + "_"
+        + "".join(combined_chain_ids[len(partner1_chain_ids) :])
+    )
+
+    movable_jumps = rosetta.utility.vector1_int()  # pylint: disable=no-member
+    movable_jumps.append(1)
+    rosetta.protocols.docking.setup_foldtree(  # pylint: disable=no-member
         combined_pose,
-        pose2,
-        new_chain=True
+        partner_string,
+        movable_jumps,
+    )
+    rosetta.core.pose.add_comment(  # pylint: disable=no-member
+        combined_pose,
+        "ppinsight_partners",
+        partner_string,
     )
 
     # Disulfide detection already handled by -detect_disulf init flag.
-
-    # Setup fold tree for docking
-    chain1_end = pose1.total_residue()
-    chain2_start = chain1_end + 1
-
-    ft = rosetta.core.kinematics.FoldTree()  # pylint: disable=no-member
-    ft.clear()
-    ft.add_edge(1, chain1_end, -1)
-    ft.add_edge(1, chain2_start, 1)
-    ft.add_edge(chain2_start, combined_pose.total_residue(), -1)
-    combined_pose.fold_tree(ft)
 
     jump = combined_pose.jump(1)
     translation = rosetta.numeric.xyzVector_double_t(jump_distance, 0, 0)  # pylint: disable=no-member
@@ -162,6 +303,8 @@ def combine_proteins(pose1, pose2, jump_distance=15.0):
 def prepare_structures(
     protein1_pdb, protein2_pdb,
     relax=True, jump_distance=15.0, verbose=False,
+    auto_filter=True,
+    pyrosetta_debug=False,
 ):
     """
     Complete structure preparation pipeline.
@@ -178,15 +321,25 @@ def prepare_structures(
     """
     if verbose:
         print("Initializing PyRosetta...")
-    initialize_pyrosetta(verbose=verbose)
+    initialize_pyrosetta(pyrosetta_debug=pyrosetta_debug)
 
     if verbose:
         print(f"Loading {protein1_pdb}...")
-    pose1 = load_structure(protein1_pdb)
+    pose1, pose1_chain_ids, prep1 = _load_partner_pose(
+        protein1_pdb,
+        verbose=verbose,
+        partner_label="Receptor",
+        auto_filter=auto_filter,
+    )
 
     if verbose:
         print(f"Loading {protein2_pdb}...")
-    pose2 = load_structure(protein2_pdb)
+    pose2, pose2_chain_ids, prep2 = _load_partner_pose(
+        protein2_pdb,
+        verbose=verbose,
+        partner_label="Ligand",
+        auto_filter=auto_filter,
+    )
 
     if verbose:
         print(f"Protein 1: {pose1.total_residue()} residues")
@@ -202,8 +355,29 @@ def prepare_structures(
         relax_structure(pose2)
 
     if verbose:
+        print("\nRosetta preprocessing summary:")
+        for role, prep in (("Receptor", prep1), ("Ligand", prep2)):
+            chain_text = ",".join(prep["final_chains"]) or "-"
+            filter_text = (
+                ",".join(prep["kept_dbref_chains"])
+                if prep["used_auto_filter"]
+                else "none"
+            )
+            print(
+                f"  {role}: residues={prep['final_residues']}, "
+                f"removed_nonprotein={prep['removed_nonprotein_residues']}, "
+                f"chains={chain_text}, auto_filter_chains={filter_text}"
+            )
+
+    if verbose:
         print(f"Combining proteins (jump distance: {jump_distance} Å)...")
-    combined_pose = combine_proteins(pose1, pose2, jump_distance)
+    combined_pose = combine_proteins(
+        pose1,
+        pose2,
+        jump_distance,
+        partner1_chain_ids=pose1_chain_ids,
+        partner2_chain_ids=pose2_chain_ids,
+    )
 
     if verbose:
         print(f"Combined complex: {combined_pose.total_residue()} residues")
