@@ -549,4 +549,3 @@ work correctly with `--normalize`, `ranking_table`, and `ppinsight compare`.
 
 > **Tip:** For the `no_contacts` error (NaN result), see `docs/FAQ.md`.
 
-````
