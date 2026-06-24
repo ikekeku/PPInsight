@@ -47,6 +47,11 @@ class TestUmbrellaCLI:
         assert result.returncode == 0
         assert "UniProt" in result.stdout or "accession" in result.stdout.lower()
 
+    def test_subcommand_help_fetch_native(self):
+        result = _run_cli("fetch-native", "--help")
+        assert result.returncode == 0
+        assert "RCSB" in result.stdout or "assembly" in result.stdout.lower()
+
     def test_subcommand_help_collect(self):
         result = _run_cli("collect", "--help")
         assert result.returncode == 0

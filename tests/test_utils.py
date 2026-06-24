@@ -1,8 +1,35 @@
 from ppinsight.utils import (
     copy_pdb_selected_chains,
     dbref_chains_for_accession,
+    find_column,
+    normalize_column_name,
     resolve_input_path,
+    resolve_traceability_path,
 )
+
+
+def test_normalize_column_name_lowercases_and_replaces_spaces():
+    assert normalize_column_name(" Protein A ") == "protein_a"
+
+
+def test_find_column_matches_case_insensitively():
+    columns = ["Model", "proteinA", "Output Path"]
+
+    assert find_column(columns, "model") == "Model"
+    assert find_column(columns, "proteina") == "proteinA"
+    assert find_column(columns, "output_path") == "Output Path"
+    assert find_column(columns, "missing") is None
+
+
+def test_resolve_traceability_path_handles_relative_paths(tmp_path):
+    resolved = resolve_traceability_path("models/pose_1.pdb", base_dir=tmp_path)
+
+    assert resolved == str((tmp_path / "models" / "pose_1.pdb").resolve())
+
+
+def test_resolve_traceability_path_treats_placeholder_values_as_empty(tmp_path):
+    assert resolve_traceability_path("nan", base_dir=tmp_path) == ""
+    assert resolve_traceability_path(" - ", base_dir=tmp_path) == ""
 
 
 def test_resolve_input_path_accepts_accession_stem(tmp_path):

@@ -4,6 +4,7 @@ __all__ = [
     "pdb_to_haddock",
     "pdb_to_rosetta",
     "protein_fetch",
+    "fetch_native",
     "visualizer",
     "collect_scores",
     "utils",
@@ -29,6 +30,7 @@ __all__ = [
 from . import (
     batch_dock,
     collect_scores,
+    fetch_native,
     parse_pairs,
     pdb_to_haddock,
     pdb_to_lightdock,

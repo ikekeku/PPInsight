@@ -2,8 +2,44 @@
 
 import glob
 import os
+from collections.abc import Iterable
 
 _PDB_COORD_RECORDS = {"ATOM", "HETATM", "ANISOU"}
+
+
+def normalize_column_name(name: str) -> str:
+    """Normalize a column name for case-insensitive matching."""
+    return str(name).strip().lower().replace(" ", "_")
+
+
+def find_column(columns: Iterable[str], *candidates: str) -> str | None:
+    """Return the first column whose normalized name matches *candidates*."""
+    wanted = {normalize_column_name(name) for name in candidates}
+    for column in columns:
+        if normalize_column_name(column) in wanted:
+            return column
+    return None
+
+
+def resolve_traceability_path(
+    raw_path: str | os.PathLike[str] | None,
+    *,
+    base_dir: str | os.PathLike[str] | None = None,
+) -> str:
+    """Resolve a path stored in traceability columns such as output_path."""
+    if raw_path is None:
+        return ""
+
+    text = str(raw_path).strip()
+    if not text or text.lower() in {"-", "nan", "none"}:
+        return ""
+
+    expanded = os.path.expanduser(text)
+    if os.path.isabs(expanded):
+        return os.path.abspath(os.path.normpath(expanded))
+
+    root = os.path.abspath(base_dir) if base_dir else os.getcwd()
+    return os.path.abspath(os.path.normpath(os.path.join(root, expanded)))
 
 
 def _project_root() -> str:

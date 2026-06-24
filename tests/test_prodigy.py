@@ -234,9 +234,53 @@ class TestAddProdigyToScores:
 
     def test_no_pdb_column_warns(self, tmp_path):
         scores = self._make_scores().drop(columns=["pdb"])
-        with pytest.warns(UserWarning, match="'pdb' column"):
+        with pytest.warns(UserWarning, match="usable model paths"):
             result = add_prodigy_to_scores(scores, pdb_dir=tmp_path)
         assert result["prodigy_ddg"].isna().all()
+
+    def test_uses_output_path_without_pdb_dir(self):
+        scores = pd.DataFrame({
+            "model": ["LightDock", "LightDock"],
+            "score_type": ["luciferin_score", "clash_score"],
+            "score_value": [16.0, 2.0],
+            "proteinA": ["rec", "rec"],
+            "proteinB": ["lig", "lig"],
+            "output_path": ["/tmp/lightdock_1.pdb", "/tmp/lightdock_1.pdb"],
+        })
+
+        with patch("ppinsight.prodigy.score_pdb") as mock_score:
+            mock_score.return_value = {"prodigy_ddg": -7.5, "prodigy_kd": 3e-7}
+            result = add_prodigy_to_scores(scores)
+
+        assert not result["prodigy_ddg"].isna().any()
+        mock_score.assert_called_once_with(
+            "/tmp/lightdock_1.pdb",
+            chains=None,
+            temperature=25.0,
+        )
+
+    def test_resolves_relative_output_path_against_scores_source(self, tmp_path):
+        model_dir = tmp_path / "poses"
+        model_dir.mkdir()
+        model = model_dir / "pose_1.pdb"
+        model.write_text("ATOM\n", encoding="utf-8")
+
+        scores = pd.DataFrame({
+            "model": ["HADDOCK"],
+            "score_type": ["score"],
+            "score_value": [-100.0],
+            "output_path": ["poses/pose_1.pdb"],
+        })
+
+        with patch("ppinsight.prodigy.score_pdb") as mock_score:
+            mock_score.return_value = {"prodigy_ddg": -8.0, "prodigy_kd": 2e-7}
+            result = add_prodigy_to_scores(
+                scores,
+                scores_source=tmp_path / "scores.tsv",
+            )
+
+        assert result.loc[0, "prodigy_ddg"] == pytest.approx(-8.0)
+        mock_score.assert_called_once_with(str(model), chains=None, temperature=25.0)
 
     def test_top_n_requires_metric(self, tmp_path):
         scores = self._make_scores()
