@@ -1,6 +1,8 @@
 """Tests for parse_pairs and batch_dock modules."""
 
 
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
 
@@ -171,6 +173,40 @@ class TestBatchDock:
             dry_run=True,
         )
         assert len(results) == 1
+
+    def test_engine_kwargs_forwarded_to_runner(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock
+
+        (tmp_path / "A.pdb").write_text("END\n", encoding="utf-8")
+        (tmp_path / "B.pdb").write_text("END\n", encoding="utf-8")
+
+        pairs_df = pd.DataFrame({
+            "proteinA": ["A"],
+            "proteinB": ["B"],
+            "label": ["interaction"],
+        })
+
+        seen = {}
+
+        def fake_runner(rec_pdb, lig_pdb, output_root, pair_label, **kwargs):
+            seen["kwargs"] = kwargs
+            return str(tmp_path / "fake_run")
+
+        plugin = SimpleNamespace(runner=fake_runner)
+        monkeypatch.setattr(batch_dock.registry, "get", lambda _name: plugin)
+
+        results = batch_dock.batch_dock(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            output_root=str(tmp_path / "out"),
+            engine_kwargs={"lightdock": {"cores": 8, "steps": 25}},
+        )
+
+        assert len(results) == 1
+        assert results.iloc[0]["status"] == "ok"
+        assert seen["kwargs"]["cores"] == 8
+        assert seen["kwargs"]["steps"] == 25
 
 
 # ---------------------------------------------------------------------------

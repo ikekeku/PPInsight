@@ -288,8 +288,14 @@ ppinsight batch data/input/pairs/pairs.csv \
     --engines lightdock haddock --dry-run
 
 # Run for real, pointing at the directory with your PDB files.
+# --cores (optional) controls CPU cores passed to supported engine runners.
 ppinsight batch data/input/pairs/pairs.csv \
-    --engines lightdock --pdb-dir data/input/
+    --engines lightdock --pdb-dir data/input/ --cores 8
+
+# Batch-run Rosetta once PyRosetta is installed (can specify # of runs).
+ppinsight batch data/input/pairs/pairs.csv \
+    --engines rosetta \
+    --pdb-dir data/input/ --rosetta-n-runs 50
 
 # Limit to first N pairs for a quick test
 ppinsight batch data/input/pairs/pairs.csv --engines lightdock --limit 5
@@ -300,6 +306,25 @@ The pairs file consumed by `ppinsight batch` has two required columns
 (`interaction` / `non-interaction`).  You can create one with
 `ppinsight parse` or by hand.  See [`data/README.md`](data/README.md)
 for the full format spec.
+
+Batch-mode defaults used when you do not pass extra engine flags:
+
+| Engine | Defaults in `ppinsight batch` |
+|---|---|
+| LightDock | `steps=10`, `cores=1`, `ANM=enabled`, swarms auto, glowworms auto, scoring uses the LightDock default |
+| HADDOCK | `ncores` follows `--cores` (batch stages HADDOCK runs by default) |
+| Rosetta | Enabled by default in batch mode (requires PyRosetta); defaults are `n_runs=10`, `top_n=20`, `relax=enabled`, `cluster=enabled`, `cluster_top_n=200`, `rmsd_cutoff=4.0`, `auto_filter=enabled`. |
+
+Useful batch flags when you need tighter control:
+
+- `--cores N`: set CPU cores for supported runners.
+- `--lightdock-no-anm`: disable ANM for LightDock.
+- `--lightdock-auto-clean-pdb`: auto-clean unsupported non-protein residues and retry that pair.
+- `--rosetta-n-runs N`: increase Rosetta trajectories per pair.
+- `--rosetta-no-cluster`: skip Rosetta clustering.
+
+On known LightDock ANM setup atom-mismatch failures, PPInsight will prompt
+for confirmation before retrying that pair with ANM disabled.
 
 ### 6. Evaluate docking quality (DockQ)
 

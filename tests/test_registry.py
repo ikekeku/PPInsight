@@ -46,9 +46,9 @@ class TestBuiltinEngines:
         assert p.runner is not None
         assert p.parser is not None
 
-    def test_rosetta_is_parse_only(self):
+    def test_rosetta_has_runner_and_parser(self):
         p = get("rosetta")
-        assert p.runner is None
+        assert p.runner is not None
         assert p.parser is not None
 
     def test_unknown_engine_raises(self):
@@ -121,6 +121,17 @@ class TestDetectEngine:
         )
         register(plugin)
         assert detect_engine(str(tmp_path)) == "aaa_custom"
+
+
+class TestLightDockBatchFallback:
+    """Helpers backing LightDock batch fallback behavior."""
+
+    def test_detects_anm_atom_mismatch_message(self):
+        msg = "[ANM] ERROR: Number of atoms in Prody (663) vs LightDock (680)"
+        assert registry._is_lightdock_anm_atom_mismatch(msg) is True
+
+    def test_ignores_unrelated_messages(self):
+        assert registry._is_lightdock_anm_atom_mismatch("some other error") is False
 
 
 class TestCollectScoresUsesRegistry:
