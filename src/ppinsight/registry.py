@@ -33,6 +33,9 @@ from __future__ import annotations
 
 import glob
 import os
+import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -105,6 +108,100 @@ class EnginePlugin:
 
 _registry: dict[str, EnginePlugin] = {}
 _defaults_loaded: bool = False
+_LIGHTDOCK_ANM_MISMATCH_RE = re.compile(
+    r"\[ANM\]\s*ERROR:.*Number of atoms in Prody.*LightDock",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_lightdock_anm_atom_mismatch(output: str | None) -> bool:
+    """Return True for known LightDock ANM setup atom-count mismatch errors."""
+    if not output:
+        return False
+    return bool(_LIGHTDOCK_ANM_MISMATCH_RE.search(output))
+
+
+def _is_interactive_session() -> bool:
+    """Return True when stdin/stdout are attached to an interactive terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _confirm_lightdock_retry_without_anm(rec_pdb: str, lig_pdb: str) -> bool:
+    """Prompt before retrying LightDock with ANM disabled."""
+    print(
+        "  [lightdock] Detected ANM setup atom mismatch for pair "
+        f"{os.path.basename(rec_pdb)} vs {os.path.basename(lig_pdb)}."
+    )
+    print(
+        "  [lightdock] Retry this pair with ANM disabled (rigid-body fallback)?"
+    )
+    try:
+        reply = input("  [lightdock] Retry without ANM? [y/N]: ")
+    except EOFError:
+        return False
+    return reply.strip().lower() in {"y", "yes"}
+
+
+def _run_rosetta_batch(rec_pdb, lig_pdb, output_root, pair_label, **kw):
+    """Default Rosetta runner used by batch mode."""
+    import sys
+
+    from ppinsight.pdb_to_rosetta import (
+        _make_output_dir,
+        _rosetta_outputs_support_clustering,
+    )
+    from ppinsight.rosetta.pipeline import DockingPipeline
+
+    try:
+        output_dir = kw.get("output_dir") or _make_output_dir(
+            rec_pdb,
+            lig_pdb,
+            base_root=output_root,
+            method="rosetta_runs",
+        )
+        os.makedirs(output_dir, exist_ok=True)
+        verbose = bool(kw.get("verbose", False))
+
+        pipeline = DockingPipeline(
+            rec_pdb,
+            lig_pdb,
+            n_runs=int(kw.get("n_runs", 10)),
+            top_n=int(kw.get("top_n", 20)),
+            relax=bool(kw.get("relax", True)),
+            verbose=verbose,
+            auto_filter=bool(kw.get("auto_filter", True)),
+            pyrosetta_debug=bool(kw.get("pyrosetta_debug", False)),
+        )
+        pipeline.run()
+
+        save_top = int(kw.get("save_top", 0))
+        if save_top > 0:
+            pipeline.save_top_structures(output_dir, top_n=save_top)
+
+        csv_path = os.path.join(output_dir, "docking_scores.csv")
+        pipeline.save_scores(csv_path)
+        pipeline.save_all_decoys(output_dir)
+
+        if kw.get("cluster", True):
+            cluster_ready, _ = _rosetta_outputs_support_clustering(
+                csv_path,
+                output_dir,
+            )
+            if cluster_ready:
+                from ppinsight.rosetta.analyze import cluster_and_rank
+
+                cluster_and_rank(
+                    csv_path,
+                    output_dir,
+                    score_col="i_sc",
+                    top_n=int(kw.get("cluster_top_n", 200)),
+                    rmsd_cutoff=float(kw.get("rmsd_cutoff", 4.0)),
+                )
+
+        return str(output_dir)
+    except Exception as exc:
+        print(f"  [rosetta] FAILED: {exc}", file=sys.stderr)
+        return None
 
 
 def _ensure_defaults() -> None:
@@ -135,19 +232,98 @@ def _register_lightdock() -> None:
     def _run(rec_pdb, lig_pdb, output_root, pair_label, **kw):
         import sys
 
-        from ppinsight.pdb_to_lightdock import lightdock_pipeline, make_output_dir
+        from ppinsight.pdb_to_lightdock import (
+            LightDockSimulationError,
+            _cleanup_previous_outputs,
+            _stage_cleaned_lightdock_inputs,
+            lightdock_pipeline,
+            make_output_dir,
+        )
         try:
             workdir = make_output_dir(rec_pdb, lig_pdb, method="lightdock_runs",
                                       base_root=output_root)
-            lightdock_pipeline(
-                receptor_pdb=rec_pdb,
-                ligand_pdb=lig_pdb,
-                working_dir=workdir,
-                steps=kw.get("steps", 10),
-                swarms=kw.get("swarms"),
-                anm=kw.get("anm", True),
-                scoring=kw.get("scoring"),
-            )
+            run_opts = {
+                "steps": kw.get("steps", 10),
+                "swarms": kw.get("swarms"),
+                "glowworms": kw.get("glowworms"),
+                "cores": kw.get("cores", 1),
+                "anm": kw.get("anm", True),
+                "scoring": kw.get("scoring"),
+                "skip_postprocess": kw.get("skip_postprocess", False),
+            }
+            auto_clean = kw.get("auto_clean_pdb", False)
+
+            try:
+                lightdock_pipeline(
+                    receptor_pdb=rec_pdb,
+                    ligand_pdb=lig_pdb,
+                    working_dir=workdir,
+                    **run_opts,
+                )
+            except subprocess.CalledProcessError as exc:
+                if (
+                    run_opts.get("anm", True)
+                    and _is_lightdock_anm_atom_mismatch(exc.output)
+                ):
+                    if not _is_interactive_session():
+                        raise RuntimeError(
+                            "LightDock ANM setup atom mismatch detected. "
+                            "Interactive confirmation is required before "
+                            "retrying without ANM. Rerun in an interactive "
+                            "terminal, or use --lightdock-no-anm."
+                        ) from exc
+
+                    should_retry = _confirm_lightdock_retry_without_anm(
+                        rec_pdb,
+                        lig_pdb,
+                    )
+                    if should_retry:
+                        print(
+                            "  [lightdock] Retrying this pair with ANM disabled."
+                        )
+                        _cleanup_previous_outputs(workdir)
+                        retry_opts = dict(run_opts)
+                        retry_opts["anm"] = False
+                        lightdock_pipeline(
+                            receptor_pdb=rec_pdb,
+                            ligand_pdb=lig_pdb,
+                            working_dir=workdir,
+                            **retry_opts,
+                        )
+                    else:
+                        raise RuntimeError(
+                            "LightDock ANM setup atom mismatch detected and retry "
+                            "without ANM was not confirmed."
+                        ) from exc
+                elif _is_lightdock_anm_atom_mismatch(exc.output):
+                    raise RuntimeError(
+                        "LightDock ANM setup atom mismatch detected. "
+                        "Hint: rerun in an interactive terminal to confirm "
+                        "a retry without ANM, or use --lightdock-no-anm."
+                    ) from exc
+                else:
+                    raise
+            except LightDockSimulationError as exc:
+                if exc.cleanable and auto_clean:
+                    print(
+                        "  [lightdock] Unsupported residue detected; "
+                        "retrying this pair with cleaned protein-only inputs."
+                    )
+                    clean_rec, clean_lig, _ = _stage_cleaned_lightdock_inputs(
+                        rec_pdb,
+                        lig_pdb,
+                        workdir,
+                    )
+                    _cleanup_previous_outputs(workdir)
+                    lightdock_pipeline(
+                        receptor_pdb=clean_rec,
+                        ligand_pdb=clean_lig,
+                        working_dir=workdir,
+                        **run_opts,
+                    )
+                else:
+                    raise
+
             return workdir
         except Exception as exc:
             print(f"  [lightdock] FAILED: {exc}", file=sys.stderr)
@@ -216,14 +392,12 @@ def _register_rosetta() -> None:
             return True
         return False
 
-    # No default runner — PyRosetta is heavy and invocation is complex.
-    # Users wanting Rosetta in batch mode can register their own runner.
     _registry["rosetta"] = EnginePlugin(
         name="rosetta",
-        runner=None,
+        runner=_run_rosetta_batch,
         parser=_parse_rosetta,
         detector=_detect,
-        description="Rosetta protein-protein docking (parse-only by default)",
+        description="Rosetta protein-protein docking (requires PyRosetta)",
     )
 
 

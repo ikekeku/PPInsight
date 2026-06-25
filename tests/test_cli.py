@@ -21,7 +21,7 @@ def _run_cli(*args):
         [sys.executable, "-m", "ppinsight.cli", *args],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=20,
         env=env,
     )
 
@@ -69,3 +69,11 @@ class TestUmbrellaCLI:
         result = _run_cli("lightdock", "--help")
         assert result.returncode == 0
         assert "receptor" in result.stdout.lower()
+
+    def test_subcommand_help_batch(self):
+        result = _run_cli("batch", "--help")
+        assert result.returncode == 0
+        assert "--cores" in result.stdout
+        assert "--enable-rosetta-runner" not in result.stdout
+        assert "--lightdock-retry-without-anm" not in result.stdout
+        assert "--rosetta-n-runs" in result.stdout

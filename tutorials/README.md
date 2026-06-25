@@ -161,6 +161,23 @@ ppinsight batch data/input/pairs/pairs.csv \
     -o data/output/scores/batch_results.csv
 ```
 
+Batch-mode defaults used when you do not pass extra engine flags:
+
+| Engine | Defaults in `ppinsight batch` |
+|---|---|
+| LightDock | `steps=10`, `cores=1`, `ANM=enabled`, swarms auto, glowworms auto, scoring uses the LightDock default |
+| HADDOCK | `ncores` follows `--cores` (batch stages HADDOCK runs by default) |
+| Rosetta | Enabled by default in batch mode (requires PyRosetta); defaults are `n_runs=10`, `top_n=20`, `relax=enabled`, `cluster=enabled`, `cluster_top_n=200`, `rmsd_cutoff=4.0`, `auto_filter=enabled`. |
+
+Useful batch controls:
+
+- `--cores N` sets CPU cores for supported runners.
+- `--lightdock-no-anm` runs LightDock rigid-body from the start.
+- `--lightdock-auto-clean-pdb` retries unsupported-residue failures with protein-only cleaned copies.
+
+On known LightDock ANM setup atom-mismatch failures, PPInsight prompts for
+confirmation before retrying that pair with ANM disabled.
+
 ### Step 4 — Collect scores from run directories
 
 `collect` works on actual engine run directories. For a single known

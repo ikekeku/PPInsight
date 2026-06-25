@@ -35,6 +35,13 @@ import pandas as pd
 
 from ppinsight import registry
 
+_DEFAULT_BATCH_CORES = 1
+_DEFAULT_BATCH_LIGHTDOCK_STEPS = 10
+_DEFAULT_BATCH_ROSETTA_N_RUNS = 10
+_DEFAULT_BATCH_ROSETTA_TOP_N = 20
+_DEFAULT_BATCH_ROSETTA_CLUSTER_TOP_N = 200
+_DEFAULT_BATCH_ROSETTA_RMSD_CUTOFF = 4.0
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -79,6 +86,7 @@ def batch_dock(
     output_root: str | None = None,
     limit: int | None = None,
     dry_run: bool = False,
+    engine_kwargs: dict[str, dict] | None = None,
 ) -> pd.DataFrame:
     """Run docking for every pair in *pairs_df*.
 
@@ -97,6 +105,9 @@ def batch_dock(
         Only process the first *limit* pairs (useful for testing).
     dry_run : bool
         If True, don't actually run docking — just report what would happen.
+    engine_kwargs : dict[str, dict] | None
+        Optional per-engine keyword arguments forwarded to each engine's
+        registered runner.
 
     Returns
     -------
@@ -126,6 +137,7 @@ def batch_dock(
 
     results: list[dict] = []
     total = len(df)
+    engine_kwargs = engine_kwargs or {}
 
     for i, row in df.iterrows():
         pA = str(row["proteinA"]).strip()
@@ -195,7 +207,8 @@ def batch_dock(
 
             print(f"  Running {eng}...")
             t0 = time.time()
-            out_dir = runner(rec_pdb, lig_pdb, output_root, label)
+            run_kwargs = dict(engine_kwargs.get(eng, {}))
+            out_dir = runner(rec_pdb, lig_pdb, output_root, label, **run_kwargs)
             elapsed = time.time() - t0
 
             status = "ok" if out_dir else "failed"
@@ -209,6 +222,35 @@ def batch_dock(
     return pd.DataFrame(results)
 
 
+def _engine_kwargs_from_args(args) -> dict[str, dict]:
+    """Translate CLI flags into per-engine kwargs for registry runners."""
+    return {
+        "lightdock": {
+            "steps": args.lightdock_steps,
+            "swarms": args.lightdock_swarms,
+            "glowworms": args.lightdock_glowworms,
+            "cores": args.cores,
+            "anm": not args.lightdock_no_anm,
+            "scoring": args.lightdock_scoring,
+            "auto_clean_pdb": args.lightdock_auto_clean_pdb,
+        },
+        "haddock": {
+            "ncores": args.cores,
+        },
+        "rosetta": {
+            "n_runs": args.rosetta_n_runs,
+            "top_n": args.rosetta_top_n,
+            "relax": not args.rosetta_no_relax,
+            "cluster": not args.rosetta_no_cluster,
+            "cluster_top_n": args.rosetta_cluster_top_n,
+            "rmsd_cutoff": args.rosetta_rmsd_cutoff,
+            "auto_filter": not args.rosetta_no_auto_filter,
+            "pyrosetta_debug": args.rosetta_debug_pyrosetta,
+            "save_top": args.rosetta_save_top,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -220,6 +262,15 @@ def main(argv=None):
             "Run docking pipelines for every pair in a pairs file.  "
             "Produces a batch results table listing each run directory."
         ),
+        epilog=(
+            "Batch defaults when flags are omitted:\n"
+            "  - LightDock: steps=10, cores=1, ANM=enabled, swarms/glowworms auto, "
+            "scoring=LightDock default.\n"
+            "  - HADDOCK: ncores follows --cores (batch stages runs by default).\n"
+            "  - Rosetta: enabled by default in batch (requires PyRosetta), "
+            "with n_runs=10, top_n=20, relax=on, clustering=on."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "pairs",
@@ -240,6 +291,16 @@ def main(argv=None):
             "multiple engines to benchmark them head-to-head on the same "
             "pairs (e.g. --engines lightdock haddock rosetta).  Each engine "
             "must be registered in the plugin registry."
+        ),
+    )
+    parser.add_argument(
+        "--cores",
+        type=int,
+        default=_DEFAULT_BATCH_CORES,
+        help=(
+            "CPU cores to pass to supported engine runners (default: 1).  "
+            "This maps to LightDock simulation cores and HADDOCK ncores in "
+            "batch mode."
         ),
     )
     parser.add_argument(
@@ -304,7 +365,137 @@ def main(argv=None):
         ),
     )
 
+    lightdock_group = parser.add_argument_group("LightDock batch options")
+    lightdock_group.add_argument(
+        "--lightdock-steps",
+        type=int,
+        default=_DEFAULT_BATCH_LIGHTDOCK_STEPS,
+        help=(
+            "LightDock optimisation steps in batch mode (default: 10).  "
+            "Use 10 for quick smoke tests; increase toward 100+ for broader "
+            "sampling."
+        ),
+    )
+    lightdock_group.add_argument(
+        "--lightdock-swarms",
+        type=int,
+        default=None,
+        help=(
+            "Override LightDock swarm count (default: auto by LightDock)."
+        ),
+    )
+    lightdock_group.add_argument(
+        "--lightdock-glowworms",
+        type=int,
+        default=None,
+        help=(
+            "Override LightDock glowworms-per-swarm (default: LightDock "
+            "default, typically 200)."
+        ),
+    )
+    lightdock_group.add_argument(
+        "--lightdock-scoring",
+        default=None,
+        help=(
+            "LightDock scoring function (default: LightDock default scoring "
+            "function)."
+        ),
+    )
+    lightdock_group.add_argument(
+        "--lightdock-no-anm",
+        action="store_true",
+        help=(
+            "Disable ANM flexibility for LightDock in batch mode.  ANM is "
+            "enabled by default."
+        ),
+    )
+    lightdock_group.add_argument(
+        "--lightdock-auto-clean-pdb",
+        action="store_true",
+        help=(
+            "If LightDock scoring rejects unsupported non-protein residues, "
+            "auto-generate protein-only copies under the run directory and "
+            "retry that pair."
+        ),
+    )
+
+    rosetta_group = parser.add_argument_group("Rosetta batch options")
+    rosetta_group.add_argument(
+        "--rosetta-n-runs",
+        type=int,
+        default=_DEFAULT_BATCH_ROSETTA_N_RUNS,
+        help=(
+            "Number of Rosetta docking trajectories per pair (default: 10)."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-top-n",
+        type=int,
+        default=_DEFAULT_BATCH_ROSETTA_TOP_N,
+        help=(
+            "Rosetta top-N decoys used for final I_sc averaging "
+            f"(default: {_DEFAULT_BATCH_ROSETTA_TOP_N})."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-no-relax",
+        action="store_true",
+        help=(
+            "Skip Rosetta FastRelax preprocessing in batch mode."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-no-cluster",
+        action="store_true",
+        help=(
+            "Skip Rosetta decoy clustering in batch mode.  Clustering is "
+            "enabled by default."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-cluster-top-n",
+        type=int,
+        default=_DEFAULT_BATCH_ROSETTA_CLUSTER_TOP_N,
+        help=(
+            "Top Rosetta decoys to include in clustering (default: 200)."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-rmsd-cutoff",
+        type=float,
+        default=_DEFAULT_BATCH_ROSETTA_RMSD_CUTOFF,
+        help=(
+            "Rosetta clustering Cα-RMSD cutoff in Å (default: 4.0)."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-no-auto-filter",
+        action="store_true",
+        help=(
+            "Disable Rosetta DBREF accession-chain auto-filtering in batch "
+            "mode."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-debug-pyrosetta",
+        action="store_true",
+        help=(
+            "Enable verbose PyRosetta tracer output during Rosetta batch runs."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-save-top",
+        type=int,
+        default=0,
+        help=(
+            "Save top N Rosetta decoy structures per pair (default: 0)."
+        ),
+    )
+
     args = parser.parse_args(argv)
+
+    if args.cores < 1:
+        parser.error("--cores must be at least 1")
 
     # --list-engines: show registered engines and exit
     if args.list_engines:
@@ -332,6 +523,7 @@ def main(argv=None):
         output_root=args.output_root,
         limit=args.limit,
         dry_run=args.dry_run,
+        engine_kwargs=_engine_kwargs_from_args(args),
     )
 
     # Write results
