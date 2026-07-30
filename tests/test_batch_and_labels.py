@@ -208,6 +208,73 @@ class TestBatchDock:
         assert seen["kwargs"]["cores"] == 8
         assert seen["kwargs"]["steps"] == 25
 
+    def test_haddock_kwargs_include_refine_controls(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            lightdock_steps=100,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            cores=4,
+            lightdock_no_anm=False,
+            lightdock_scoring=None,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=200,
+            haddock_select_top=50,
+            haddock_tolerance=25,
+            haddock_skip_refinement=True,
+            haddock_skip_flexref=False,
+            haddock_skip_emref=False,
+            rosetta_n_runs=5,
+            rosetta_top_n=20,
+            rosetta_no_relax=False,
+            rosetta_no_cluster=False,
+            rosetta_cluster_top_n=200,
+            rosetta_rmsd_cutoff=4.0,
+            rosetta_no_auto_filter=False,
+            rosetta_debug_pyrosetta=False,
+            rosetta_save_top=0,
+        )
+
+        kw = batch_dock._engine_kwargs_from_args(args)["haddock"]
+        assert kw["sampling"] == 200
+        assert kw["select_top"] == 50
+        assert kw["tolerance"] == 25
+        assert kw["skip_flexref"] is True
+        assert kw["skip_emref"] is True
+
+    def test_haddock_skip_flexref_implies_skip_emref(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            lightdock_steps=100,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            cores=4,
+            lightdock_no_anm=False,
+            lightdock_scoring=None,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=200,
+            haddock_select_top=50,
+            haddock_tolerance=5,
+            haddock_skip_refinement=False,
+            haddock_skip_flexref=True,
+            haddock_skip_emref=False,
+            rosetta_n_runs=5,
+            rosetta_top_n=20,
+            rosetta_no_relax=False,
+            rosetta_no_cluster=False,
+            rosetta_cluster_top_n=200,
+            rosetta_rmsd_cutoff=4.0,
+            rosetta_no_auto_filter=False,
+            rosetta_debug_pyrosetta=False,
+            rosetta_save_top=0,
+        )
+
+        kw = batch_dock._engine_kwargs_from_args(args)["haddock"]
+        assert kw["skip_flexref"] is True
+        assert kw["skip_emref"] is True
+
 
 # ---------------------------------------------------------------------------
 # Visualizer label-aware features

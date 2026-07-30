@@ -357,11 +357,16 @@ def _register_haddock() -> None:
         from ppinsight.pdb_to_haddock import haddock_pipeline
         from ppinsight.utils import _project_root
         try:
+            run_opts = dict(kw)
+            sampling = int(run_opts.pop("sampling", 10000))
+            select_top = int(run_opts.pop("select_top", 400))
             run_dir, cfg_path, _ = haddock_pipeline(
                 rec_pdb, lig_pdb,
                 workspace_root=_project_root(),
-                run_haddock=False,
-                **kw,
+                run_haddock=True,
+                sampling=sampling,
+                select_top=select_top,
+                **run_opts,
             )
             return str(run_dir)
         except Exception as exc:

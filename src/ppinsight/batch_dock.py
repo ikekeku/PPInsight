@@ -36,8 +36,13 @@ import pandas as pd
 from ppinsight import registry
 
 _DEFAULT_BATCH_CORES = 1
-_DEFAULT_BATCH_LIGHTDOCK_STEPS = 10
-_DEFAULT_BATCH_ROSETTA_N_RUNS = 10
+_DEFAULT_BATCH_LIGHTDOCK_STEPS = 100
+_DEFAULT_BATCH_LIGHTDOCK_SWARMS = 400
+_DEFAULT_BATCH_LIGHTDOCK_GLOWWORMS = 200
+_DEFAULT_BATCH_HADDOCK_SAMPLING = 10000
+_DEFAULT_BATCH_HADDOCK_SELECT_TOP = 400
+_DEFAULT_BATCH_HADDOCK_TOLERANCE = 5
+_DEFAULT_BATCH_ROSETTA_N_RUNS = 5000
 _DEFAULT_BATCH_ROSETTA_TOP_N = 20
 _DEFAULT_BATCH_ROSETTA_CLUSTER_TOP_N = 200
 _DEFAULT_BATCH_ROSETTA_RMSD_CUTOFF = 4.0
@@ -224,6 +229,15 @@ def batch_dock(
 
 def _engine_kwargs_from_args(args) -> dict[str, dict]:
     """Translate CLI flags into per-engine kwargs for registry runners."""
+    haddock_skip_refinement = bool(args.haddock_skip_refinement)
+    haddock_skip_flexref = bool(args.haddock_skip_flexref or haddock_skip_refinement)
+    # emref depends on flexref outputs; skipping flexref implies skipping emref.
+    haddock_skip_emref = bool(
+        args.haddock_skip_emref
+        or haddock_skip_flexref
+        or haddock_skip_refinement
+    )
+
     return {
         "lightdock": {
             "steps": args.lightdock_steps,
@@ -236,6 +250,11 @@ def _engine_kwargs_from_args(args) -> dict[str, dict]:
         },
         "haddock": {
             "ncores": args.cores,
+            "sampling": args.haddock_sampling,
+            "select_top": args.haddock_select_top,
+            "tolerance": args.haddock_tolerance,
+            "skip_flexref": haddock_skip_flexref,
+            "skip_emref": haddock_skip_emref,
         },
         "rosetta": {
             "n_runs": args.rosetta_n_runs,
@@ -264,11 +283,13 @@ def main(argv=None):
         ),
         epilog=(
             "Batch defaults when flags are omitted:\n"
-            "  - LightDock: steps=10, cores=1, ANM=enabled, swarms/glowworms auto, "
-            "scoring=LightDock default.\n"
-            "  - HADDOCK: ncores follows --cores (batch stages runs by default).\n"
+            "  - LightDock: steps=100, swarms=400, glowworms=200, cores=1, "
+            "ANM=enabled, scoring=LightDock default.\n"
+            "  - HADDOCK: runs by default in batch with rigidbody sampling=10000, "
+            "seletop select=400, tolerance=5, full refinement enabled, and "
+            "ncores follows --cores.\n"
             "  - Rosetta: enabled by default in batch (requires PyRosetta), "
-            "with n_runs=10, top_n=20, relax=on, clustering=on."
+            "with n_runs=5000, top_n=20, relax=on, clustering=on."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -371,7 +392,7 @@ def main(argv=None):
         type=int,
         default=_DEFAULT_BATCH_LIGHTDOCK_STEPS,
         help=(
-            "LightDock optimisation steps in batch mode (default: 10).  "
+            "LightDock optimisation steps in batch mode (default: 100).  "
             "Use 10 for quick smoke tests; increase toward 100+ for broader "
             "sampling."
         ),
@@ -379,18 +400,17 @@ def main(argv=None):
     lightdock_group.add_argument(
         "--lightdock-swarms",
         type=int,
-        default=None,
+        default=_DEFAULT_BATCH_LIGHTDOCK_SWARMS,
         help=(
-            "Override LightDock swarm count (default: auto by LightDock)."
+            "Override LightDock swarm count (default: 400)."
         ),
     )
     lightdock_group.add_argument(
         "--lightdock-glowworms",
         type=int,
-        default=None,
+        default=_DEFAULT_BATCH_LIGHTDOCK_GLOWWORMS,
         help=(
-            "Override LightDock glowworms-per-swarm (default: LightDock "
-            "default, typically 200)."
+            "Override LightDock glowworms-per-swarm (default: 200)."
         ),
     )
     lightdock_group.add_argument(
@@ -419,13 +439,64 @@ def main(argv=None):
         ),
     )
 
+    haddock_group = parser.add_argument_group("HADDOCK batch options")
+    haddock_group.add_argument(
+        "--haddock-sampling",
+        type=int,
+        default=_DEFAULT_BATCH_HADDOCK_SAMPLING,
+        help=(
+            "HADDOCK rigidbody sampling count in generated configs "
+            "(default: 10000)."
+        ),
+    )
+    haddock_group.add_argument(
+        "--haddock-select-top",
+        type=int,
+        default=_DEFAULT_BATCH_HADDOCK_SELECT_TOP,
+        help=(
+            "HADDOCK seletop count in generated configs (default: 400)."
+        ),
+    )
+    haddock_group.add_argument(
+        "--haddock-tolerance",
+        type=int,
+        default=_DEFAULT_BATCH_HADDOCK_TOLERANCE,
+        help=(
+            "HADDOCK module output-fault tolerance percentage for rigidbody, "
+            "flexref, and emref (default: 5)."
+        ),
+    )
+    haddock_group.add_argument(
+        "--haddock-skip-refinement",
+        action="store_true",
+        help=(
+            "Skip HADDOCK refinement stages (flexref + emref) and continue "
+            "from rigid-body outputs. Useful for brittle pairs and smoke tests."
+        ),
+    )
+    haddock_group.add_argument(
+        "--haddock-skip-flexref",
+        action="store_true",
+        help=(
+            "Skip HADDOCK flexref stage. This also disables emref because "
+            "emref depends on flexref outputs."
+        ),
+    )
+    haddock_group.add_argument(
+        "--haddock-skip-emref",
+        action="store_true",
+        help=(
+            "Skip HADDOCK emref (water refinement) stage."
+        ),
+    )
+
     rosetta_group = parser.add_argument_group("Rosetta batch options")
     rosetta_group.add_argument(
         "--rosetta-n-runs",
         type=int,
         default=_DEFAULT_BATCH_ROSETTA_N_RUNS,
         help=(
-            "Number of Rosetta docking trajectories per pair (default: 10)."
+            "Number of Rosetta docking trajectories per pair (default: 5000)."
         ),
     )
     rosetta_group.add_argument(

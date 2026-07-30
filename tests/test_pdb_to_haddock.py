@@ -308,6 +308,62 @@ def test_cfg_carries_cmrest_into_flexref_for_ab_initio_runs(tmp_path, monkeypatc
     assert text.count("cmrest = true") == 2
 
 
+def test_cfg_can_skip_refinement_modules(tmp_path, monkeypatch):
+    inp = tmp_path / "input"
+    inp.mkdir()
+    rec = inp / "rec.pdb"
+    lig = inp / "lig.pdb"
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
+
+    work_root = tmp_path / "output"
+    work_root.mkdir()
+
+    monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
+
+    _, cfg_path, _ = pdb_to_haddock.haddock_pipeline(
+        str(rec),
+        str(lig),
+        runname="skip_refine",
+        run_haddock=False,
+        base_root=str(work_root),
+        method="haddock_runs",
+        skip_flexref=True,
+    )
+
+    text = cfg_path.read_text()
+    assert "[flexref]" not in text
+    assert "[emref]" not in text
+    assert "[clustfcc]" in text
+
+
+def test_cfg_honors_custom_tolerance(tmp_path, monkeypatch):
+    inp = tmp_path / "input"
+    inp.mkdir()
+    rec = inp / "rec.pdb"
+    lig = inp / "lig.pdb"
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
+
+    work_root = tmp_path / "output"
+    work_root.mkdir()
+
+    monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
+
+    _, cfg_path, _ = pdb_to_haddock.haddock_pipeline(
+        str(rec),
+        str(lig),
+        runname="tol20",
+        run_haddock=False,
+        base_root=str(work_root),
+        method="haddock_runs",
+        tolerance=20,
+    )
+
+    text = cfg_path.read_text()
+    assert text.count("tolerance = 20") == 3
+
+
 def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
     """
     author: ikekeku

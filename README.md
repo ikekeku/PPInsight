@@ -175,6 +175,30 @@ ppinsight haddock --help
 ppinsight rosetta --help
 ```
 
+### 2b. Comfortable Ab-initio Settings (Cited, All Docking)
+
+For ab-initio docking (little or no prior interface information), practical
+"comfortable" ranges are:
+
+| Engine | Quick Validation | Analysis-grade Default | Heavy/Production |
+|---|---:|---:|---:|
+| LightDock | `steps=20-50`, `swarms=40-120`, `glowworms=60-120` | `steps=100`, `swarms=400`, `glowworms=200` | `steps>=100`, with larger swarm coverage when resources allow |
+| HADDOCK3 rigidbody | `sampling=100-1000` (1000 is minimum defensible analysis-level global sampling), `seletop=50-200` | `sampling=10000`, `seletop=400` | `sampling>=10000`, often with intermediate clustering/selection |
+| RosettaDock (global) | `n_runs=100-1000` | `n_runs=5000` | `n_runs=10000-100000` |
+
+These ranges reflect published engine guidance and PPInsight defaults designed
+for more meaningful ab-initio analysis while staying runnable on workstation
+hardware [1-6].
+
+References:
+
+1. LightDock simple tutorial (setup/simulation defaults, including 100 steps and default glowworms in `setup.json`): https://lightdock.org/tutorials/0.9.3/simple_docking.html
+2. LightDock methods paper: Jimenez-Garcia B. et al., Bioinformatics (2018), https://doi.org/10.1093/bioinformatics/btx555
+3. HADDOCK3 sampling module docs (`rigidbody` default `sampling=1000`, recommendation to increase sampling for ab-initio): https://www.bonvinlab.org/haddock3-user-manual/modules/sampling.html and https://www.bonvinlab.org/haddock3-user-manual/abinitio_docking.html
+4. HADDOCK3 full vs test workflow examples (`sampling=1000/select=200` in full, lower values in test): https://github.com/haddocking/haddock3/tree/main/examples
+5. RosettaDock protocol docs (perturbation runs at least 1000 decoys; global runs 10000-100000): https://docs.rosettacommons.org/docs/latest/application_documentation/docking/docking-protocol
+6. RosettaDock methodology papers: Gray J.J. et al., J Mol Biol (2003), https://doi.org/10.1016/S0022-2836(03)00670-3; Marze N.A. et al., Bioinformatics (2018), https://doi.org/10.1093/bioinformatics/bty355
+
 ### 3. Collect scores
 
 After docking finishes, collect the raw outputs into a single unified
@@ -311,15 +335,23 @@ Batch-mode defaults used when you do not pass extra engine flags:
 
 | Engine | Defaults in `ppinsight batch` |
 |---|---|
-| LightDock | `steps=10`, `cores=1`, `ANM=enabled`, swarms auto, glowworms auto, scoring uses the LightDock default |
-| HADDOCK | `ncores` follows `--cores` (batch stages HADDOCK runs by default) |
-| Rosetta | Enabled by default in batch mode (requires PyRosetta); defaults are `n_runs=10`, `top_n=20`, `relax=enabled`, `cluster=enabled`, `cluster_top_n=200`, `rmsd_cutoff=4.0`, `auto_filter=enabled`. |
+| LightDock | `steps=100`, `swarms=400`, `glowworms=200`, `cores=1`, `ANM=enabled`, scoring uses the LightDock default |
+| HADDOCK | Executes by default in batch mode; `ncores` follows `--cores`, generated configs use `rigidbody sampling=10000`, `seletop select=400` |
+| Rosetta | Enabled by default in batch mode (requires PyRosetta); defaults are `n_runs=5000`, `top_n=20`, `relax=enabled`, `cluster=enabled`, `cluster_top_n=200`, `rmsd_cutoff=4.0`, `auto_filter=enabled`. |
+
+All engine-specific batch flags remain available, so you can still tune LightDock/HADDOCK/Rosetta behavior per run with `ppinsight batch --help`.
 
 Useful batch flags when you need tighter control:
 
 - `--cores N`: set CPU cores for supported runners.
 - `--lightdock-no-anm`: disable ANM for LightDock.
 - `--lightdock-auto-clean-pdb`: auto-clean unsupported non-protein residues and retry that pair.
+- `--haddock-sampling N`: set HADDOCK rigidbody sampling in generated configs.
+- `--haddock-select-top N`: set HADDOCK `seletop` count in generated configs.
+- `--haddock-tolerance N`: set HADDOCK module output-fault tolerance (`rigidbody`, `flexref`, `emref`).
+- `--haddock-skip-refinement`: skip HADDOCK `flexref` + `emref` for brittle/smoke-test runs.
+- `--haddock-skip-flexref`: skip HADDOCK `flexref` (this also disables `emref`).
+- `--haddock-skip-emref`: skip HADDOCK water refinement only (`emref`).
 - `--rosetta-n-runs N`: increase Rosetta trajectories per pair.
 - `--rosetta-no-cluster`: skip Rosetta clustering.
 
