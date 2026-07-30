@@ -189,6 +189,7 @@ class TestBatchDock:
         seen = {}
 
         def fake_runner(rec_pdb, lig_pdb, output_root, pair_label, **kwargs):
+            seen["output_root"] = output_root
             seen["kwargs"] = kwargs
             return str(tmp_path / "fake_run")
 
@@ -207,6 +208,51 @@ class TestBatchDock:
         assert results.iloc[0]["status"] == "ok"
         assert seen["kwargs"]["cores"] == 8
         assert seen["kwargs"]["steps"] == 25
+        assert seen["output_root"] == str((tmp_path / "out").resolve())
+
+    def test_resume_skips_successful_engine(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock
+
+        (tmp_path / "A.pdb").write_text("END\n", encoding="utf-8")
+        (tmp_path / "B.pdb").write_text("END\n", encoding="utf-8")
+        pairs_df = pd.DataFrame({
+            "proteinA": ["A"],
+            "proteinB": ["B"],
+            "label": ["interaction"],
+        })
+
+        def fail_if_called(*_args, **_kwargs):
+            raise AssertionError("resumed engine must not run")
+
+        plugin = SimpleNamespace(runner=fail_if_called)
+        monkeypatch.setattr(batch_dock.registry, "get", lambda _name: plugin)
+
+        results = batch_dock.batch_dock(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            completed_runs={("A", "B", "lightdock")},
+        )
+
+        assert results.empty
+
+    def test_cli_defaults_results_to_output_root(self, tmp_path):
+        from ppinsight import batch_dock
+
+        pairs_path = tmp_path / "pairs.csv"
+        pairs_path.write_text(
+            "proteinA,proteinB\nA,B\n", encoding="utf-8"
+        )
+        output_root = tmp_path / "custom_output"
+
+        batch_dock.main([
+            str(pairs_path),
+            "--dry-run",
+            "--output-root",
+            str(output_root),
+        ])
+
+        assert (output_root / "scores" / "batch_results.csv").is_file()
 
     def test_haddock_kwargs_include_refine_controls(self):
         from ppinsight import batch_dock
@@ -216,7 +262,7 @@ class TestBatchDock:
             lightdock_swarms=400,
             lightdock_glowworms=200,
             cores=4,
-            lightdock_no_anm=False,
+            lightdock_anm=False,
             lightdock_scoring=None,
             lightdock_auto_clean_pdb=False,
             haddock_sampling=200,
@@ -227,7 +273,7 @@ class TestBatchDock:
             haddock_skip_emref=False,
             rosetta_n_runs=5,
             rosetta_top_n=20,
-            rosetta_no_relax=False,
+            rosetta_relax=False,
             rosetta_no_cluster=False,
             rosetta_cluster_top_n=200,
             rosetta_rmsd_cutoff=4.0,
@@ -243,6 +289,83 @@ class TestBatchDock:
         assert kw["skip_flexref"] is True
         assert kw["skip_emref"] is True
 
+    def test_screening_preset_uses_reduced_end_to_end_values(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            screening=True,
+            lightdock_steps=100,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            lightdock_anm=True,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=10000,
+            haddock_select_top=400,
+            haddock_skip_refinement=False,
+            haddock_skip_flexref=False,
+            haddock_skip_emref=False,
+            rosetta_n_runs=5000,
+            rosetta_top_n=20,
+            rosetta_cluster_top_n=200,
+            rosetta_relax=True,
+        )
+
+        batch_dock._apply_screening_preset(args, ["--screening"])
+
+        assert args.lightdock_steps == 50
+        assert args.lightdock_swarms == 50
+        assert args.lightdock_glowworms == 50
+        assert args.lightdock_anm is False
+        assert args.lightdock_auto_clean_pdb is True
+        assert args.haddock_sampling == 1000
+        assert args.haddock_select_top == 100
+        assert args.haddock_skip_refinement is True
+        assert args.rosetta_n_runs == 100
+        assert args.rosetta_top_n == 20
+        assert args.rosetta_cluster_top_n == 100
+        assert args.rosetta_relax is False
+
+    def test_screening_preset_preserves_explicit_overrides(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            screening=True,
+            lightdock_steps=300,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            lightdock_anm=True,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=3000,
+            haddock_select_top=400,
+            haddock_skip_refinement=False,
+            haddock_skip_flexref=False,
+            haddock_skip_emref=False,
+            rosetta_n_runs=500,
+            rosetta_top_n=20,
+            rosetta_cluster_top_n=200,
+            rosetta_relax=True,
+        )
+
+        batch_dock._apply_screening_preset(
+            args,
+            [
+                "--screening",
+                "--lightdock-steps",
+                "300",
+                "--haddock-sampling=3000",
+                "--rosetta-n-runs",
+                "500",
+                "--lightdock-anm",
+                "--rosetta-relax",
+            ],
+        )
+
+        assert args.lightdock_steps == 300
+        assert args.haddock_sampling == 3000
+        assert args.rosetta_n_runs == 500
+        assert args.lightdock_anm is True
+        assert args.rosetta_relax is True
+
     def test_haddock_skip_flexref_implies_skip_emref(self):
         from ppinsight import batch_dock
 
@@ -251,7 +374,7 @@ class TestBatchDock:
             lightdock_swarms=400,
             lightdock_glowworms=200,
             cores=4,
-            lightdock_no_anm=False,
+            lightdock_anm=False,
             lightdock_scoring=None,
             lightdock_auto_clean_pdb=False,
             haddock_sampling=200,
@@ -262,7 +385,7 @@ class TestBatchDock:
             haddock_skip_emref=False,
             rosetta_n_runs=5,
             rosetta_top_n=20,
-            rosetta_no_relax=False,
+            rosetta_relax=False,
             rosetta_no_cluster=False,
             rosetta_cluster_top_n=200,
             rosetta_rmsd_cutoff=4.0,

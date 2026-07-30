@@ -12,7 +12,6 @@ __all__ = [
     "parse_pairs",
     "batch_dock",
     "quality",  # lazy-imported; depends on optional DockQ package
-    "prodigy",  # lazy-imported; depends on optional prodigy-prot package
 ]
 
 # Import modules that have no heavy external dependencies.
@@ -22,8 +21,6 @@ __all__ = [
 #   - quality: depends on DockQ, an optional dependency installed via
 #     ``pip install ppinsight[quality]``.  The module guards its own import
 #     and raises a helpful error if DockQ is missing.
-#   - prodigy: depends on prodigy-prot, installed via
-#     ``pip install ppinsight[prodigy]``.
 #
 # Users who only need HADDOCK, LightDock, or the visualizer can
 # ``import ppinsight`` without PyRosetta or DockQ installed.

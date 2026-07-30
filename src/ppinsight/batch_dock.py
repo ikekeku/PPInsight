@@ -29,7 +29,9 @@ Usage::
 
 import argparse
 import os
+import sys
 import time
+from collections.abc import Callable
 
 import pandas as pd
 
@@ -46,6 +48,15 @@ _DEFAULT_BATCH_ROSETTA_N_RUNS = 5000
 _DEFAULT_BATCH_ROSETTA_TOP_N = 20
 _DEFAULT_BATCH_ROSETTA_CLUSTER_TOP_N = 200
 _DEFAULT_BATCH_ROSETTA_RMSD_CUTOFF = 4.0
+
+_SCREENING_LIGHTDOCK_STEPS = 50
+_SCREENING_LIGHTDOCK_SWARMS = 50
+_SCREENING_LIGHTDOCK_GLOWWORMS = 50
+_SCREENING_HADDOCK_SAMPLING = 1000
+_SCREENING_HADDOCK_SELECT_TOP = 100
+_SCREENING_ROSETTA_N_RUNS = 100
+_SCREENING_ROSETTA_TOP_N = 20
+_SCREENING_ROSETTA_CLUSTER_TOP_N = 100
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,6 +90,55 @@ def _fetch_pdb_for_uniprot(gene_name: str, pdb_dir: str) -> str | None:
     return None
 
 
+def _option_was_supplied(argv: list[str], *options: str) -> bool:
+    """Return whether any option was explicitly supplied on the command line."""
+    return any(
+        argument == option or argument.startswith(f"{option}=")
+        for argument in argv
+        for option in options
+    )
+
+
+def _apply_screening_preset(args, argv: list[str]) -> None:
+    """Apply low-cost screening values unless a specific flag overrides them."""
+    if not args.screening:
+        return
+
+    if not _option_was_supplied(argv, "--lightdock-steps"):
+        args.lightdock_steps = _SCREENING_LIGHTDOCK_STEPS
+    if not _option_was_supplied(argv, "--lightdock-swarms"):
+        args.lightdock_swarms = _SCREENING_LIGHTDOCK_SWARMS
+    if not _option_was_supplied(argv, "--lightdock-glowworms"):
+        args.lightdock_glowworms = _SCREENING_LIGHTDOCK_GLOWWORMS
+    if not _option_was_supplied(
+        argv, "--lightdock-anm", "--lightdock-no-anm"
+    ):
+        args.lightdock_anm = False
+    if not _option_was_supplied(argv, "--lightdock-auto-clean-pdb"):
+        args.lightdock_auto_clean_pdb = True
+
+    if not _option_was_supplied(argv, "--haddock-sampling"):
+        args.haddock_sampling = _SCREENING_HADDOCK_SAMPLING
+    if not _option_was_supplied(argv, "--haddock-select-top"):
+        args.haddock_select_top = _SCREENING_HADDOCK_SELECT_TOP
+    if not _option_was_supplied(
+        argv,
+        "--haddock-skip-refinement",
+        "--haddock-skip-flexref",
+        "--haddock-skip-emref",
+    ):
+        args.haddock_skip_refinement = True
+
+    if not _option_was_supplied(argv, "--rosetta-n-runs"):
+        args.rosetta_n_runs = _SCREENING_ROSETTA_N_RUNS
+    if not _option_was_supplied(argv, "--rosetta-top-n"):
+        args.rosetta_top_n = _SCREENING_ROSETTA_TOP_N
+    if not _option_was_supplied(argv, "--rosetta-cluster-top-n"):
+        args.rosetta_cluster_top_n = _SCREENING_ROSETTA_CLUSTER_TOP_N
+    if not _option_was_supplied(argv, "--rosetta-relax", "--rosetta-no-relax"):
+        args.rosetta_relax = False
+
+
 
 # ---------------------------------------------------------------------------
 # Core batch function
@@ -92,6 +152,8 @@ def batch_dock(
     limit: int | None = None,
     dry_run: bool = False,
     engine_kwargs: dict[str, dict] | None = None,
+    completed_runs: set[tuple[str, str, str]] | None = None,
+    on_result: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     """Run docking for every pair in *pairs_df*.
 
@@ -113,6 +175,11 @@ def batch_dock(
     engine_kwargs : dict[str, dict] | None
         Optional per-engine keyword arguments forwarded to each engine's
         registered runner.
+    completed_runs : set[tuple[str, str, str]] | None
+        Successful ``(proteinA, proteinB, engine)`` keys to skip. Intended for
+        resumable batch execution.
+    on_result : callable | None
+        Optional callback invoked for every newly recorded result row.
 
     Returns
     -------
@@ -123,6 +190,7 @@ def batch_dock(
     if output_root is None:
         from ppinsight.utils import _project_root
         output_root = os.path.join(_project_root(), "data", "output")
+    output_root = os.path.abspath(os.path.expanduser(output_root))
 
     # Normalize column names for matching — handles whitespace and casing
     # differences from different spreadsheet exports.
@@ -143,6 +211,13 @@ def batch_dock(
     results: list[dict] = []
     total = len(df)
     engine_kwargs = engine_kwargs or {}
+    completed_runs = completed_runs or set()
+
+    def record(result: dict) -> None:
+        """Store one result and persist it through the optional callback."""
+        results.append(result)
+        if on_result is not None:
+            on_result(result)
 
     for i, row in df.iterrows():
         pA = str(row["proteinA"]).strip()
@@ -155,7 +230,7 @@ def batch_dock(
         if dry_run:
             for eng in engines:
                 print(f"  [dry-run] Would run {eng}")
-                results.append({
+                record({
                     "proteinA": pA, "proteinB": pB, "label": label,
                     "family": family, "engine": eng,
                     "output_dir": "(dry-run)", "status": "dry_run",
@@ -169,7 +244,7 @@ def batch_dock(
         if not rec_pdb:
             print(f"  WARNING: No PDB found for {pA} — skipping")
             for eng in engines:
-                results.append({
+                record({
                     "proteinA": pA, "proteinB": pB, "label": label,
                     "family": family, "engine": eng,
                     "output_dir": "", "status": "pdb_missing_A",
@@ -178,7 +253,7 @@ def batch_dock(
         if not lig_pdb:
             print(f"  WARNING: No PDB found for {pB} — skipping")
             for eng in engines:
-                results.append({
+                record({
                     "proteinA": pA, "proteinB": pB, "label": label,
                     "family": family, "engine": eng,
                     "output_dir": "", "status": "pdb_missing_B",
@@ -189,11 +264,15 @@ def batch_dock(
         print(f"  Ligand:   {lig_pdb}")
 
         for eng in engines:
+            if (pA, pB, eng) in completed_runs:
+                print(f"  [{eng}] already completed; skipping (--resume)")
+                continue
+
             try:
                 plugin = registry.get(eng)
             except KeyError:
                 print(f"  WARNING: Unknown engine '{eng}' — skipping")
-                results.append({
+                record({
                     "proteinA": pA, "proteinB": pB, "label": label,
                     "family": family, "engine": eng,
                     "output_dir": "", "status": "unknown_engine",
@@ -203,7 +282,7 @@ def batch_dock(
             runner = plugin.runner
             if runner is None:
                 print(f"  WARNING: Engine '{eng}' has no runner — skipping")
-                results.append({
+                record({
                     "proteinA": pA, "proteinB": pB, "label": label,
                     "family": family, "engine": eng,
                     "output_dir": "", "status": "no_runner",
@@ -218,7 +297,7 @@ def batch_dock(
 
             status = "ok" if out_dir else "failed"
             print(f"  [{eng}] {status} ({elapsed:.1f}s)")
-            results.append({
+            record({
                 "proteinA": pA, "proteinB": pB, "label": label,
                 "family": family, "engine": eng,
                 "output_dir": out_dir or "", "status": status,
@@ -244,7 +323,7 @@ def _engine_kwargs_from_args(args) -> dict[str, dict]:
             "swarms": args.lightdock_swarms,
             "glowworms": args.lightdock_glowworms,
             "cores": args.cores,
-            "anm": not args.lightdock_no_anm,
+            "anm": args.lightdock_anm,
             "scoring": args.lightdock_scoring,
             "auto_clean_pdb": args.lightdock_auto_clean_pdb,
         },
@@ -259,7 +338,7 @@ def _engine_kwargs_from_args(args) -> dict[str, dict]:
         "rosetta": {
             "n_runs": args.rosetta_n_runs,
             "top_n": args.rosetta_top_n,
-            "relax": not args.rosetta_no_relax,
+            "relax": args.rosetta_relax,
             "cluster": not args.rosetta_no_cluster,
             "cluster_top_n": args.rosetta_cluster_top_n,
             "rmsd_cutoff": args.rosetta_rmsd_cutoff,
@@ -288,8 +367,9 @@ def main(argv=None):
             "  - HADDOCK: runs by default in batch with rigidbody sampling=10000, "
             "seletop select=400, tolerance=5, full refinement enabled, and "
             "ncores follows --cores.\n"
-            "  - Rosetta: enabled by default in batch (requires PyRosetta), "
-            "with n_runs=5000, top_n=20, relax=on, clustering=on."
+            "  - Rosetta: available through --engines rosetta (requires PyRosetta), "
+            "with n_runs=5000, top_n=20, relax=on, clustering=on.\n"
+            "Use --screening for a reduced, explicitly low-cost preset."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -320,8 +400,8 @@ def main(argv=None):
         default=_DEFAULT_BATCH_CORES,
         help=(
             "CPU cores to pass to supported engine runners (default: 1).  "
-            "This maps to LightDock simulation cores and HADDOCK ncores in "
-            "batch mode."
+            "This maps to LightDock simulation cores and HADDOCK ncores. "
+            "Rosetta trajectories run serially in the current pipeline."
         ),
     )
     parser.add_argument(
@@ -348,19 +428,20 @@ def main(argv=None):
         "--output-root",
         default=None,
         help=(
-            "Root directory for engine run directories (default: data/output).  "
+            "Root directory for engine run directories and the default results "
+            "table (default: data/output).  "
             "Batch creates engine-specific folders under this root (for "
             "example lightdock_runs/, haddock_runs/, rosetta_runs/), with one "
-            "subdirectory per pair × engine run.  This does not control the "
-            "batch results table path (use -o for that)."
+            "subdirectory per pair × engine run. Use -o to place the results "
+            "table elsewhere."
         ),
     )
     parser.add_argument(
         "-o", "--output",
-        default=os.path.join("data", "output", "scores", "batch_results.csv"),
+        default=None,
         help=(
             "Output results table "
-            "(default: data/output/scores/batch_results.csv).  Contains "
+            "(default: <output-root>/scores/batch_results.csv).  Contains "
             "one row per (pair, engine) with status (success/error) and "
             "paths to output directories.  Parent directories are created "
             "automatically."
@@ -383,6 +464,25 @@ def main(argv=None):
             "Don't actually run docking — just print what would happen.  "
             "Use this to verify pair resolution, PDB availability, and "
             "engine configuration before launching expensive compute."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Reuse successful rows from the output results table and append "
+            "new results incrementally. Failed or missing-input rows retry."
+        ),
+    )
+    parser.add_argument(
+        "--screening",
+        action="store_true",
+        help=(
+            "Use a reduced end-to-end preset for checking that pairs run: "
+            "LightDock 50 steps/50 swarms/50 glowworms without ANM; HADDOCK "
+            "1000 rigidbody models, select 100, no refinement; Rosetta 100 "
+            "trajectories without FastRelax. Explicit engine flags override "
+            "the corresponding preset value."
         ),
     )
 
@@ -422,11 +522,19 @@ def main(argv=None):
         ),
     )
     lightdock_group.add_argument(
-        "--lightdock-no-anm",
+        "--lightdock-anm",
         action="store_true",
+        default=True,
         help=(
-            "Disable ANM flexibility for LightDock in batch mode.  ANM is "
-            "enabled by default."
+            "Enable ANM flexibility for LightDock (the production default)."
+        ),
+    )
+    lightdock_group.add_argument(
+        "--lightdock-no-anm",
+        action="store_false",
+        dest="lightdock_anm",
+        help=(
+            "Disable ANM flexibility for LightDock to reduce memory use."
         ),
     )
     lightdock_group.add_argument(
@@ -509,10 +617,19 @@ def main(argv=None):
         ),
     )
     rosetta_group.add_argument(
-        "--rosetta-no-relax",
+        "--rosetta-relax",
         action="store_true",
+        default=True,
         help=(
-            "Skip Rosetta FastRelax preprocessing in batch mode."
+            "Enable Rosetta FastRelax preprocessing (the production default)."
+        ),
+    )
+    rosetta_group.add_argument(
+        "--rosetta-no-relax",
+        action="store_false",
+        dest="rosetta_relax",
+        help=(
+            "Skip Rosetta FastRelax preprocessing to shorten a screening run."
         ),
     )
     rosetta_group.add_argument(
@@ -563,7 +680,9 @@ def main(argv=None):
         ),
     )
 
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+    _apply_screening_preset(args, argv)
 
     if args.cores < 1:
         parser.error("--cores must be at least 1")
@@ -587,21 +706,67 @@ def main(argv=None):
     sep = "\t" if args.pairs.endswith(".tsv") else ","
     pairs_df = pd.read_csv(args.pairs, sep=sep)
 
+    from ppinsight.utils import _project_root
+
+    output_root = args.output_root or os.path.join(_project_root(), "data", "output")
+    output_root = os.path.abspath(os.path.expanduser(output_root))
+    output_path = args.output or os.path.join(
+        output_root, "scores", "batch_results.csv"
+    )
+    output_path = os.path.abspath(os.path.expanduser(output_path))
+    out_sep = "\t" if output_path.endswith(".tsv") else ","
+    existing_results = pd.DataFrame()
+    completed_runs: set[tuple[str, str, str]] = set()
+
+    if args.resume and os.path.isfile(output_path):
+        existing_results = pd.read_csv(output_path, sep=out_sep)
+        required_columns = {"proteinA", "proteinB", "engine", "status"}
+        if not required_columns.issubset(existing_results.columns):
+            parser.error(
+                "--resume requires an existing PPInsight results table with "
+                f"columns: {sorted(required_columns)}"
+            )
+        completed_rows = existing_results[existing_results["status"] == "ok"]
+        completed_runs = {
+            (str(row.proteinA), str(row.proteinB), str(row.engine))
+            for row in completed_rows.itertuples(index=False)
+        }
+        print(
+            "Resuming "
+            f"{len(completed_runs)} successful engine run(s) from {output_path}"
+        )
+
+    new_results: list[dict] = []
+
+    def persist_result(result: dict) -> None:
+        """Atomically persist progress after each newly completed engine run."""
+        new_results.append(result)
+        combined = pd.concat(
+            [existing_results, pd.DataFrame(new_results)], ignore_index=True
+        )
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        temporary_path = f"{output_path}.tmp"
+        combined.to_csv(temporary_path, sep=out_sep, index=False)
+        os.replace(temporary_path, output_path)
+
     results_df = batch_dock(
         pairs_df,
         engines=args.engines,
         pdb_dir=args.pdb_dir,
-        output_root=args.output_root,
+        output_root=output_root,
         limit=args.limit,
         dry_run=args.dry_run,
         engine_kwargs=_engine_kwargs_from_args(args),
+        completed_runs=completed_runs,
+        on_result=persist_result,
     )
 
-    # Write results
-    out_sep = "\t" if args.output.endswith(".tsv") else ","
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-    results_df.to_csv(args.output, sep=out_sep, index=False)
-    print(f"\nWrote {len(results_df)} results to {args.output}")
+    combined_results = pd.concat(
+        [existing_results, results_df], ignore_index=True
+    )
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    combined_results.to_csv(output_path, sep=out_sep, index=False)
+    print(f"\nWrote {len(combined_results)} results to {output_path}")
 
     # Summary
     if len(results_df) > 0:

@@ -363,6 +363,7 @@ def _register_haddock() -> None:
             run_dir, cfg_path, _ = haddock_pipeline(
                 rec_pdb, lig_pdb,
                 workspace_root=_project_root(),
+                base_root=output_root,
                 run_haddock=True,
                 sampling=sampling,
                 select_top=select_top,

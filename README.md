@@ -13,6 +13,7 @@ produces comparative visualisations.
 - [CLI reference](#cli-reference)
 - [Tutorial](#tutorial)
 - [FAQ](#faq)
+- [Documentation](docs/README.md)
 - [Project structure](#project-structure)
 - [Team members](#team-members)
 - [License](#license)
@@ -63,7 +64,6 @@ Each subcommand is also available as a standalone command:
 | `ppinsight parse`           | `parse_pairs`         |
 | `ppinsight batch`           | `batch_dock`          |
 | `ppinsight quality`         | `ppinsight_quality`   |
-| `ppinsight prodigy`         | `ppinsight_prodigy`   |
 
 The examples below use the umbrella form.  Replace
 `ppinsight <subcommand>` with the standalone name if you prefer.
@@ -189,6 +189,16 @@ For ab-initio docking (little or no prior interface information), practical
 These ranges reflect published engine guidance and PPInsight defaults designed
 for more meaningful ab-initio analysis while staying runnable on workstation
 hardware [1-6].
+
+The vendor examples do not prescribe one universal setting for every protein
+pair. HADDOCK's guided protein-protein `*-full.cfg` example uses `sampling=1000`
+and `seletop=200`, while its ab-initio guide explicitly recommends increasing
+rigid-body sampling when interface information is unavailable. PPInsight's
+`sampling=10000` and `seletop=400` batch defaults are that intentionally more
+extensive ab-initio choice. Conversely, Rosetta recommends 10,000–100,000
+decoys for a fully global production search; PPInsight's default 5,000 is a
+workstation-oriented compromise, not a substitute for a larger published
+production campaign.
 
 References:
 
@@ -336,14 +346,18 @@ Batch-mode defaults used when you do not pass extra engine flags:
 | Engine | Defaults in `ppinsight batch` |
 |---|---|
 | LightDock | `steps=100`, `swarms=400`, `glowworms=200`, `cores=1`, `ANM=enabled`, scoring uses the LightDock default |
-| HADDOCK | Executes by default in batch mode; `ncores` follows `--cores`, generated configs use `rigidbody sampling=10000`, `seletop select=400` |
-| Rosetta | Enabled by default in batch mode (requires PyRosetta); defaults are `n_runs=5000`, `top_n=20`, `relax=enabled`, `cluster=enabled`, `cluster_top_n=200`, `rmsd_cutoff=4.0`, `auto_filter=enabled`. |
+| HADDOCK | Runs when selected with `--engines haddock`; `ncores` follows `--cores`, generated configs use `rigidbody sampling=10000`, `seletop select=400` |
+| Rosetta | Runs when selected with `--engines rosetta` (requires PyRosetta); defaults are `n_runs=5000`, `top_n=20`, `relax=enabled`, `cluster=enabled`, `cluster_top_n=200`, `rmsd_cutoff=4.0`, `auto_filter=enabled`. |
 
 All engine-specific batch flags remain available, so you can still tune LightDock/HADDOCK/Rosetta behavior per run with `ppinsight batch --help`.
 
 Useful batch flags when you need tighter control:
 
 - `--cores N`: set CPU cores for supported runners.
+- `--resume`: skip engine runs already marked successful and save progress after each new engine run; reuse the same `-o` results path when resuming.
+- `--screening`: apply the reduced end-to-end preset described below; explicit engine flags override individual preset values.
+- `--output-root DIR`: put engine runs and the default batch results table under one root.
+- `--lightdock-anm`: enable LightDock ANM flexibility when sufficient memory is available.
 - `--lightdock-no-anm`: disable ANM for LightDock.
 - `--lightdock-auto-clean-pdb`: auto-clean unsupported non-protein residues and retry that pair.
 - `--haddock-sampling N`: set HADDOCK rigidbody sampling in generated configs.
@@ -353,10 +367,49 @@ Useful batch flags when you need tighter control:
 - `--haddock-skip-flexref`: skip HADDOCK `flexref` (this also disables `emref`).
 - `--haddock-skip-emref`: skip HADDOCK water refinement only (`emref`).
 - `--rosetta-n-runs N`: increase Rosetta trajectories per pair.
+- `--rosetta-relax`: enable Rosetta FastRelax preprocessing for higher-fidelity runs.
 - `--rosetta-no-cluster`: skip Rosetta clustering.
 
 On known LightDock ANM setup atom-mismatch failures, PPInsight will prompt
 for confirmation before retrying that pair with ANM disabled.
+
+### Screening settings
+
+Use `--screening` when the goal is to confirm that selected pairs can complete
+all three engine integrations before committing to production-scale sampling.
+It is an explicit low-cost preset, not a replacement for the production
+defaults above:
+
+| Engine | `--screening` settings |
+|---|---|
+| LightDock | `steps=50`, `swarms=50`, `glowworms=50`, ANM disabled, automatic protein-only retry enabled |
+| HADDOCK | `rigidbody sampling=1000`, `seletop select=100`, `flexref` and `emref` skipped |
+| Rosetta | `n_runs=100`, `top_n=20`, FastRelax disabled, cluster top 100 decoys |
+
+```bash
+# Run a representative, reduced end-to-end batch.
+ppinsight batch data/input/pairs/pairs.csv \
+    --engines lightdock haddock rosetta \
+    --pdb-dir data/input \
+    --cores 2 \
+    --screening \
+    -o data/output/scores/screening_results.csv
+
+# Continue an interrupted screening batch. Reuse the same results file.
+ppinsight batch data/input/pairs/pairs.csv \
+    --engines lightdock haddock rosetta \
+    --pdb-dir data/input \
+    --cores 2 \
+    --screening \
+    --resume \
+    -o data/output/scores/screening_results.csv
+```
+
+Any explicit engine flag overrides its screening value. For example,
+`--screening --haddock-sampling 2000 --rosetta-n-runs 200` keeps the screening
+profile but raises sampling for those two engines. `--resume` skips only rows
+already marked `ok` in the specified results table and saves each newly
+completed engine result incrementally.
 
 ### 6. Evaluate docking quality (DockQ)
 
@@ -382,31 +435,6 @@ If your scores file came from `ppinsight collect`, `ppinsight quality` reads
 each pose from its `output_path` value and appends DockQ/CAPRI evaluation rows
 back into a new unified scores file.
 
-### 7. Predict binding affinity (PRODIGY)
-
-```bash
-# Score collected poses with predicted binding affinity
-ppinsight prodigy data/output/scores/scores.tsv \
-    --output data/output/scores/scores_prodigy.tsv
-
-# Fallback for scores tables assembled outside ppinsight collect
-ppinsight prodigy external_scores.tsv \
-    --pdb-dir data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ \
-    --output data/output/scores/external_scores_prodigy.tsv
-```
-
-`ppinsight prodigy` adds `prodigy_ddg` and `prodigy_kd`, which are most
-useful after you have narrowed candidates with docking scores and, when
-available, DockQ/CAPRI quality evaluation.
-
-> Requires the optional `prodigy` extra. From this repo checkout, install it with
-> `pip install -e '.[prodigy]'`. If you are installing by package name in `zsh`, quote
-> the brackets: `pip install 'ppinsight[prodigy]'`.
-
-These examples work best when the scores file came from `ppinsight collect`
-and already stores each pose path in `output_path`. Use `--pdb-dir` only for
-manually assembled or external scores tables that keep bare `pdb` filenames.
-
 ---
 
 ## Tutorial
@@ -422,16 +450,15 @@ troubleshooting questions, see [`docs/FAQ.md`](docs/FAQ.md).
 
 ## FAQ
 
-Common setup, plotting, CAPRI, and PRODIGY questions are covered in
+Common setup, plotting, and CAPRI questions are covered in
 [`docs/FAQ.md`](docs/FAQ.md).
 
 ### Three-layer evaluation
 
-PPInsight supports three complementary comparison layers:
+PPInsight supports two complementary comparison layers:
 
 1. Within-model: use `violin`, `ridge`, and `cdf` on engine-native scores to inspect one engine's pose distribution.
 2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, `scatter`, and `difference` to compare engines on the same protein pair when you have an experimental reference structure for that pair.
-3. Cross-system: use `ppinsight prodigy` with `prodigy_ddg` and `prodigy_kd` when you need a post-hoc affinity view across different complexes.
 
 ---
 
@@ -449,7 +476,6 @@ src/ppinsight/
   batch_dock.py         # Batch docking for all pairs
   parse_pairs.py        # Protein interaction table → pairs file
   quality.py            # DockQ quality evaluation
-  prodigy.py            # PRODIGY binding-affinity scoring
   provenance.py         # Run-level metadata & record I/O
   utils.py              # Shared utilities (path resolution)
   rosetta/              # PyRosetta pipeline internals
