@@ -11,6 +11,7 @@ __all__ = [
     "registry",
     "parse_pairs",
     "batch_dock",
+    "purge_runs",
     "quality",  # lazy-imported; depends on optional DockQ package
 ]
 

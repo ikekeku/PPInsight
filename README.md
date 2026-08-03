@@ -63,6 +63,7 @@ Each subcommand is also available as a standalone command:
 | `ppinsight compare`         | `compare_scores`      |
 | `ppinsight parse`           | `parse_pairs`         |
 | `ppinsight batch`           | `batch_dock`          |
+| `ppinsight purge`           | `ppinsight_purge`     |
 | `ppinsight quality`         | `ppinsight_quality`   |
 
 The examples below use the umbrella form.  Replace
@@ -354,7 +355,9 @@ All engine-specific batch flags remain available, so you can still tune LightDoc
 Useful batch flags when you need tighter control:
 
 - `--cores N`: set CPU cores for supported runners.
-- `--resume`: skip engine runs already marked successful and save progress after each new engine run; reuse the same `-o` results path when resuming.
+- `--preflight`: validate inputs and engine prerequisites without launching docking.
+- `--resume`: skip engine runs already marked successful and save progress after each new engine run; reuse the same `-o` results path when resuming. A successful retry replaces its prior failed manifest row.
+- `--clean-failed`: with `--resume`, remove a safely recorded failed directory under `--output-root` before retrying it.
 - `--screening`: apply the reduced end-to-end preset described below; explicit engine flags override individual preset values.
 - `--output-root DIR`: put engine runs and the default batch results table under one root.
 - `--lightdock-anm`: enable LightDock ANM flexibility when sufficient memory is available.
@@ -410,6 +413,49 @@ Any explicit engine flag overrides its screening value. For example,
 profile but raises sampling for those two engines. `--resume` skips only rows
 already marked `ok` in the specified results table and saves each newly
 completed engine result incrementally.
+
+### Preflight, retry, and cleanup
+
+Run a preflight before an expensive job to check that input PDBs have coordinate
+records, required engine executables are available, LightDock inputs do not have
+an unmanaged unsupported-residue risk, and HADDOCK's staged partners have unique
+chain/segment identifiers. Preflight does not launch docking jobs.
+
+```bash
+ppinsight batch data/input/pairs/pairs.csv \
+    --engines lightdock haddock rosetta \
+    --pdb-dir data/input \
+    --preflight \
+    -o data/output/scores/preflight_results.csv
+```
+
+Batch manifests now include `error_type`, `error_message`, and `log_path` for
+new failures. This preserves diagnostics while retaining the failed `output_dir`
+for deliberate cleanup. To retry only failed jobs while removing their recorded
+partial directories first, reuse the same manifest:
+
+```bash
+ppinsight batch data/input/pairs/pairs.csv \
+    --engines lightdock haddock rosetta \
+    --pdb-dir data/input \
+    --screening \
+    --resume --clean-failed \
+    -o data/output/scores/screening_results.csv
+```
+
+Use `ppinsight purge` to clean failed directories from any existing results
+manifest. It is a dry run unless `--yes` is supplied, and it removes only paths
+under the specified output root:
+
+```bash
+# Review removable failed directories.
+ppinsight purge data/output/scores/batch_results.csv \
+    --output-root data/output
+
+# Delete the reviewed directories.
+ppinsight purge data/output/scores/batch_results.csv \
+    --output-root data/output --yes
+```
 
 ### 6. Evaluate docking quality (DockQ)
 

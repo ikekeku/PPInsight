@@ -28,10 +28,14 @@ Usage::
 """
 
 import argparse
+import importlib.util
 import os
+import shutil
 import sys
+import tempfile
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import pandas as pd
 
@@ -57,6 +61,8 @@ _SCREENING_HADDOCK_SELECT_TOP = 100
 _SCREENING_ROSETTA_N_RUNS = 100
 _SCREENING_ROSETTA_TOP_N = 20
 _SCREENING_ROSETTA_CLUSTER_TOP_N = 100
+
+_RESULT_KEY_COLUMNS = ["proteinA", "proteinB", "engine"]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -139,6 +145,274 @@ def _apply_screening_preset(args, argv: list[str]) -> None:
         args.rosetta_relax = False
 
 
+def _format_elapsed_time(seconds: float) -> str:
+    """Format an elapsed duration as a compact wall-clock string."""
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}h {minutes}m {remaining_seconds}s"
+    if minutes:
+        return f"{minutes}m {remaining_seconds}s"
+    return f"{remaining_seconds}s"
+
+
+def _empty_error_fields() -> dict[str, str]:
+    """Return the standard empty diagnostic fields for a result row."""
+    return {"error_type": "", "error_message": "", "log_path": ""}
+
+
+def _result_row(
+    protein_a: str,
+    protein_b: str,
+    label: str,
+    family: str,
+    engine: str,
+    output_dir: str,
+    status: str,
+    *,
+    error_type: str = "",
+    error_message: str = "",
+    log_path: str = "",
+    preflight_warnings: str = "",
+) -> dict[str, str]:
+    """Build one stable-schema batch result row."""
+    return {
+        "proteinA": protein_a,
+        "proteinB": protein_b,
+        "label": label,
+        "family": family,
+        "engine": engine,
+        "output_dir": output_dir,
+        "status": status,
+        "error_type": error_type,
+        "error_message": error_message,
+        "log_path": log_path,
+        "preflight_warnings": preflight_warnings,
+    }
+
+
+def _log_path_for_run_dir(output_dir: str | None) -> str:
+    """Return a known engine log path when one exists for *output_dir*."""
+    if not output_dir:
+        return ""
+    run_dir = Path(output_dir)
+    candidates = [run_dir / "log", run_dir / "lightdock.log", run_dir / "rosetta.log"]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return ""
+
+
+def _upsert_results(existing: pd.DataFrame, incoming: pd.DataFrame) -> pd.DataFrame:
+    """Replace manifest rows by pair and engine, retaining one current row."""
+    if incoming.empty:
+        return existing.copy()
+    incoming = incoming.drop_duplicates(_RESULT_KEY_COLUMNS, keep="last")
+    if existing.empty:
+        return incoming.copy().reset_index(drop=True)
+
+    existing = existing.drop_duplicates(_RESULT_KEY_COLUMNS, keep="last")
+    keys = incoming[_RESULT_KEY_COLUMNS].drop_duplicates()
+    existing_index = existing.set_index(_RESULT_KEY_COLUMNS).index
+    incoming_index = pd.MultiIndex.from_frame(keys)
+    retained = existing.loc[~existing_index.isin(incoming_index)]
+    return pd.concat([retained, incoming], ignore_index=True)
+
+
+def _is_safe_output_dir(output_dir: str, output_root: str) -> bool:
+    """Return whether a candidate run path is a child of the output root."""
+    try:
+        Path(output_dir).resolve().relative_to(Path(output_root).resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _remove_failed_run_dir(output_dir: str, output_root: str) -> bool:
+    """Safely remove one failed run directory recorded under *output_root*."""
+    if not output_dir or not _is_safe_output_dir(output_dir, output_root):
+        return False
+    run_dir = Path(output_dir)
+    if not run_dir.is_dir():
+        return False
+    shutil.rmtree(run_dir)
+    return True
+
+
+def _pdb_coordinate_count(pdb_path: str) -> int:
+    """Return the number of coordinate records in a PDB file."""
+    with open(pdb_path, encoding="utf-8") as handle:
+        return sum(
+            line.startswith(("ATOM  ", "HETATM"))
+            for line in handle
+        )
+
+
+def _pdb_hetatm_count(pdb_path: str) -> int:
+    """Return the number of HETATM records in a PDB file."""
+    with open(pdb_path, encoding="utf-8") as handle:
+        return sum(line.startswith("HETATM") for line in handle)
+
+
+def _preflight_engine(
+    engine: str,
+    receptor_pdb: str,
+    ligand_pdb: str,
+    engine_options: dict,
+) -> tuple[str, str, list[str]]:
+    """Validate one engine's dependencies and staged input compatibility."""
+    warnings: list[str] = []
+
+    for pdb_path in (receptor_pdb, ligand_pdb):
+        if _pdb_coordinate_count(pdb_path) == 0:
+            return (
+                "pdb_invalid",
+                f"No ATOM or HETATM records found in {pdb_path}.",
+                warnings,
+            )
+
+    if engine == "lightdock":
+        required = ("lightdock3_setup.py", "lightdock3.py")
+        missing = [
+            executable
+            for executable in required
+            if shutil.which(executable) is None
+        ]
+        if missing:
+            return (
+                "engine_unavailable",
+                "LightDock executable(s) not found on PATH: " + ", ".join(missing),
+                warnings,
+            )
+        hetero_atoms = _pdb_hetatm_count(receptor_pdb) + _pdb_hetatm_count(ligand_pdb)
+        if hetero_atoms:
+            message = (
+                f"Found {hetero_atoms} HETATM record(s); LightDock DFIRE may "
+                "reject unsupported residues."
+            )
+            if engine_options.get("auto_clean_pdb", False):
+                warnings.append(message + " Auto-clean retry is enabled.")
+            else:
+                warnings.append(message + " Use --lightdock-auto-clean-pdb.")
+        return "", "", warnings
+
+    if engine == "haddock":
+        if shutil.which("haddock3") is None:
+            return (
+                "engine_unavailable",
+                "The haddock3 executable was not found on PATH.",
+                warnings,
+            )
+        from ppinsight.pdb_to_haddock import copy_inputs
+
+        with tempfile.TemporaryDirectory(
+            prefix="ppinsight-haddock-preflight-"
+        ) as temp_dir:
+            staged_dir = Path(temp_dir) / "data"
+            staged_dir.mkdir()
+            try:
+                staged_rec, staged_lig, _ = copy_inputs(
+                    staged_dir,
+                    receptor_pdb,
+                    ligand_pdb,
+                    auto_filter=bool(engine_options.get("auto_filter", True)),
+                )
+            except Exception as exc:
+                return type(exc).__name__, str(exc), warnings
+
+            staged_sets = []
+            for pdb_path in (staged_rec, staged_lig):
+                identifiers = set()
+                with open(pdb_path, encoding="utf-8") as handle:
+                    for line in handle:
+                        if not line.startswith(("ATOM  ", "HETATM")):
+                            continue
+                        identifiers.add(line[72:76].strip() or line[21].strip())
+                if not identifiers:
+                    return (
+                        "pdb_invalid",
+                        f"No staged coordinates in {pdb_path}.",
+                        warnings,
+                    )
+                staged_sets.append(identifiers)
+            if staged_sets[0] & staged_sets[1]:
+                return (
+                    "haddock_chain_collision",
+                    "HADDOCK staged partners share chain/seg identifiers: "
+                    + ", ".join(sorted(staged_sets[0] & staged_sets[1])),
+                    warnings,
+                )
+        return "", "", warnings
+
+    if engine == "rosetta":
+        if importlib.util.find_spec("pyrosetta") is None:
+            return (
+                "engine_unavailable",
+                "PyRosetta is not installed in the active Python environment.",
+                warnings,
+            )
+        return "", "", warnings
+
+    return "unknown_engine", f"No preflight implementation for '{engine}'.", warnings
+
+
+def preflight_batch(
+    pairs_df: pd.DataFrame,
+    engines: list[str],
+    pdb_dir: str | None = None,
+    limit: int | None = None,
+    engine_kwargs: dict[str, dict] | None = None,
+) -> pd.DataFrame:
+    """Validate pairs and engine prerequisites without running docking jobs."""
+    engine_kwargs = engine_kwargs or {}
+    df = pairs_df.copy()
+    df.columns = [column.strip() for column in df.columns]
+    if limit:
+        df = df.head(limit)
+
+    results: list[dict[str, str]] = []
+    for _, row in df.iterrows():
+        protein_a = str(row["proteinA"]).strip()
+        protein_b = str(row["proteinB"]).strip()
+        label = str(row.get("label", "")).strip()
+        family = str(row.get("family", "")).strip()
+        receptor_pdb = _resolve_pdb_for_protein(protein_a, pdb_dir)
+        ligand_pdb = _resolve_pdb_for_protein(protein_b, pdb_dir)
+
+        for engine in engines:
+            if receptor_pdb is None or ligand_pdb is None:
+                missing = protein_a if receptor_pdb is None else protein_b
+                results.append(_result_row(
+                    protein_a, protein_b, label, family, engine, "",
+                    "preflight_failed", error_type="pdb_missing",
+                    error_message=f"PDB not found for {missing}.",
+                ))
+                continue
+
+            error_type, error_message, warnings = _preflight_engine(
+                engine,
+                receptor_pdb,
+                ligand_pdb,
+                engine_kwargs.get(engine, {}),
+            )
+            status = "preflight_failed" if error_type else "preflight_ok"
+            results.append(_result_row(
+                protein_a,
+                protein_b,
+                label,
+                family,
+                engine,
+                "",
+                status,
+                error_type=error_type,
+                error_message=error_message,
+                preflight_warnings="; ".join(warnings),
+            ))
+    return pd.DataFrame(results)
+
+
 
 # ---------------------------------------------------------------------------
 # Core batch function
@@ -153,6 +427,8 @@ def batch_dock(
     dry_run: bool = False,
     engine_kwargs: dict[str, dict] | None = None,
     completed_runs: set[tuple[str, str, str]] | None = None,
+    failed_run_dirs: dict[tuple[str, str, str], str] | None = None,
+    clean_failed: bool = False,
     on_result: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     """Run docking for every pair in *pairs_df*.
@@ -178,6 +454,10 @@ def batch_dock(
     completed_runs : set[tuple[str, str, str]] | None
         Successful ``(proteinA, proteinB, engine)`` keys to skip. Intended for
         resumable batch execution.
+    failed_run_dirs : dict[tuple[str, str, str], str] | None
+        Failed-run directories from an existing results manifest.
+    clean_failed : bool
+        Remove a safely recorded failed-run directory before retrying it.
     on_result : callable | None
         Optional callback invoked for every newly recorded result row.
 
@@ -212,6 +492,7 @@ def batch_dock(
     total = len(df)
     engine_kwargs = engine_kwargs or {}
     completed_runs = completed_runs or set()
+    failed_run_dirs = failed_run_dirs or {}
 
     def record(result: dict) -> None:
         """Store one result and persist it through the optional callback."""
@@ -230,11 +511,9 @@ def batch_dock(
         if dry_run:
             for eng in engines:
                 print(f"  [dry-run] Would run {eng}")
-                record({
-                    "proteinA": pA, "proteinB": pB, "label": label,
-                    "family": family, "engine": eng,
-                    "output_dir": "(dry-run)", "status": "dry_run",
-                })
+                record(_result_row(
+                    pA, pB, label, family, eng, "(dry-run)", "dry_run"
+                ))
             continue
 
         # Resolve PDB files
@@ -244,20 +523,20 @@ def batch_dock(
         if not rec_pdb:
             print(f"  WARNING: No PDB found for {pA} — skipping")
             for eng in engines:
-                record({
-                    "proteinA": pA, "proteinB": pB, "label": label,
-                    "family": family, "engine": eng,
-                    "output_dir": "", "status": "pdb_missing_A",
-                })
+                record(_result_row(
+                    pA, pB, label, family, eng, "", "pdb_missing_A",
+                    error_type="pdb_missing",
+                    error_message=f"PDB not found for {pA}.",
+                ))
             continue
         if not lig_pdb:
             print(f"  WARNING: No PDB found for {pB} — skipping")
             for eng in engines:
-                record({
-                    "proteinA": pA, "proteinB": pB, "label": label,
-                    "family": family, "engine": eng,
-                    "output_dir": "", "status": "pdb_missing_B",
-                })
+                record(_result_row(
+                    pA, pB, label, family, eng, "", "pdb_missing_B",
+                    error_type="pdb_missing",
+                    error_message=f"PDB not found for {pB}.",
+                ))
             continue
 
         print(f"  Receptor: {rec_pdb}")
@@ -268,40 +547,93 @@ def batch_dock(
                 print(f"  [{eng}] already completed; skipping (--resume)")
                 continue
 
+            failed_run_dir = failed_run_dirs.get((pA, pB, eng), "")
+            if clean_failed and failed_run_dir:
+                if _remove_failed_run_dir(failed_run_dir, output_root):
+                    print(f"  [{eng}] removed prior failed run: {failed_run_dir}")
+                else:
+                    print(
+                        f"  [{eng}] did not remove prior failed run "
+                        f"(missing or outside output root): {failed_run_dir}"
+                    )
+
             try:
                 plugin = registry.get(eng)
             except KeyError:
                 print(f"  WARNING: Unknown engine '{eng}' — skipping")
-                record({
-                    "proteinA": pA, "proteinB": pB, "label": label,
-                    "family": family, "engine": eng,
-                    "output_dir": "", "status": "unknown_engine",
-                })
+                record(_result_row(
+                    pA, pB, label, family, eng, "", "unknown_engine",
+                    error_type="unknown_engine",
+                    error_message=f"Unknown engine '{eng}'.",
+                ))
                 continue
 
             runner = plugin.runner
             if runner is None:
                 print(f"  WARNING: Engine '{eng}' has no runner — skipping")
-                record({
-                    "proteinA": pA, "proteinB": pB, "label": label,
-                    "family": family, "engine": eng,
-                    "output_dir": "", "status": "no_runner",
-                })
+                record(_result_row(
+                    pA, pB, label, family, eng, "", "no_runner",
+                    error_type="no_runner",
+                    error_message=f"Engine '{eng}' has no runner.",
+                ))
                 continue
 
             print(f"  Running {eng}...")
             t0 = time.time()
             run_kwargs = dict(engine_kwargs.get(eng, {}))
-            out_dir = runner(rec_pdb, lig_pdb, output_root, label, **run_kwargs)
+            try:
+                out_dir = runner(rec_pdb, lig_pdb, output_root, label, **run_kwargs)
+            except registry.EngineRunError as exc:
+                elapsed = time.time() - t0
+                print(f"  [{eng}] failed ({elapsed:.1f}s)")
+                record(_result_row(
+                    pA,
+                    pB,
+                    label,
+                    family,
+                    eng,
+                    exc.output_dir or "",
+                    "failed",
+                    error_type=exc.error_type,
+                    error_message=str(exc),
+                    log_path=exc.log_path or _log_path_for_run_dir(exc.output_dir),
+                ))
+                continue
+            except Exception as exc:
+                elapsed = time.time() - t0
+                print(f"  [{eng}] failed ({elapsed:.1f}s)")
+                record(_result_row(
+                    pA,
+                    pB,
+                    label,
+                    family,
+                    eng,
+                    "",
+                    "failed",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                ))
+                continue
             elapsed = time.time() - t0
 
             status = "ok" if out_dir else "failed"
             print(f"  [{eng}] {status} ({elapsed:.1f}s)")
-            record({
-                "proteinA": pA, "proteinB": pB, "label": label,
-                "family": family, "engine": eng,
-                "output_dir": out_dir or "", "status": status,
-            })
+            if out_dir:
+                record(_result_row(
+                    pA, pB, label, family, eng, str(out_dir), "ok"
+                ))
+            else:
+                record(_result_row(
+                    pA,
+                    pB,
+                    label,
+                    family,
+                    eng,
+                    "",
+                    "failed",
+                    error_type="runner_returned_none",
+                    error_message=f"{eng} runner returned no output directory.",
+                ))
 
     return pd.DataFrame(results)
 
@@ -355,6 +687,7 @@ def _engine_kwargs_from_args(args) -> dict[str, dict]:
 
 def main(argv=None):
     """CLI: batch-run docking for all pairs in a pairs file."""
+    batch_started_at = time.perf_counter()
     parser = argparse.ArgumentParser(
         description=(
             "Run docking pipelines for every pair in a pairs file.  "
@@ -470,8 +803,25 @@ def main(argv=None):
         "--resume",
         action="store_true",
         help=(
-            "Reuse successful rows from the output results table and append "
-            "new results incrementally. Failed or missing-input rows retry."
+            "Reuse successful rows from the output results table. Failed or "
+            "missing-input rows retry; each new result replaces its prior row."
+        ),
+    )
+    parser.add_argument(
+        "--clean-failed",
+        action="store_true",
+        help=(
+            "With --resume, remove each safely recorded failed run directory "
+            "under --output-root before retrying that pair and engine."
+        ),
+    )
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help=(
+            "Validate PDB coordinates, engine availability, LightDock "
+            "unsupported-residue risk, and HADDOCK staged chain/seg IDs "
+            "without launching docking jobs."
         ),
     )
     parser.add_argument(
@@ -686,6 +1036,8 @@ def main(argv=None):
 
     if args.cores < 1:
         parser.error("--cores must be at least 1")
+    if args.clean_failed and not args.resume:
+        parser.error("--clean-failed requires --resume")
 
     # --list-engines: show registered engines and exit
     if args.list_engines:
@@ -710,13 +1062,40 @@ def main(argv=None):
 
     output_root = args.output_root or os.path.join(_project_root(), "data", "output")
     output_root = os.path.abspath(os.path.expanduser(output_root))
+    default_result_name = (
+        "preflight_results.csv" if args.preflight else "batch_results.csv"
+    )
     output_path = args.output or os.path.join(
-        output_root, "scores", "batch_results.csv"
+        output_root, "scores", default_result_name
     )
     output_path = os.path.abspath(os.path.expanduser(output_path))
     out_sep = "\t" if output_path.endswith(".tsv") else ","
+
+    if args.preflight:
+        results_df = preflight_batch(
+            pairs_df,
+            engines=args.engines,
+            pdb_dir=args.pdb_dir,
+            limit=args.limit,
+            engine_kwargs=_engine_kwargs_from_args(args),
+        )
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        results_df.to_csv(output_path, sep=out_sep, index=False)
+        print(f"\nWrote {len(results_df)} preflight results to {output_path}")
+        print("\n── Preflight summary ──")
+        if results_df.empty:
+            print("No pairs to validate.")
+        else:
+            print(results_df["status"].value_counts().to_string())
+        print(
+            "Total preflight runtime: "
+            f"{_format_elapsed_time(time.perf_counter() - batch_started_at)}"
+        )
+        return
+
     existing_results = pd.DataFrame()
     completed_runs: set[tuple[str, str, str]] = set()
+    failed_run_dirs: dict[tuple[str, str, str], str] = {}
 
     if args.resume and os.path.isfile(output_path):
         existing_results = pd.read_csv(output_path, sep=out_sep)
@@ -726,6 +1105,10 @@ def main(argv=None):
                 "--resume requires an existing PPInsight results table with "
                 f"columns: {sorted(required_columns)}"
             )
+        existing_results = _upsert_results(
+            existing_results.iloc[0:0],
+            existing_results,
+        )
         completed_rows = existing_results[existing_results["status"] == "ok"]
         completed_runs = {
             (str(row.proteinA), str(row.proteinB), str(row.engine))
@@ -735,14 +1118,22 @@ def main(argv=None):
             "Resuming "
             f"{len(completed_runs)} successful engine run(s) from {output_path}"
         )
+        failed_rows = existing_results[existing_results["status"] == "failed"]
+        failed_run_dirs = {
+            (str(row.proteinA), str(row.proteinB), str(row.engine)):
+            str(row.output_dir)
+            for row in failed_rows.itertuples(index=False)
+            if isinstance(row.output_dir, str) and row.output_dir
+        }
 
     new_results: list[dict] = []
 
     def persist_result(result: dict) -> None:
         """Atomically persist progress after each newly completed engine run."""
         new_results.append(result)
-        combined = pd.concat(
-            [existing_results, pd.DataFrame(new_results)], ignore_index=True
+        combined = _upsert_results(
+            existing_results,
+            pd.DataFrame(new_results),
         )
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         temporary_path = f"{output_path}.tmp"
@@ -758,20 +1149,29 @@ def main(argv=None):
         dry_run=args.dry_run,
         engine_kwargs=_engine_kwargs_from_args(args),
         completed_runs=completed_runs,
+        failed_run_dirs=failed_run_dirs,
+        clean_failed=args.clean_failed,
         on_result=persist_result,
     )
 
-    combined_results = pd.concat(
-        [existing_results, results_df], ignore_index=True
+    combined_results = _upsert_results(
+        existing_results,
+        results_df,
     )
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     combined_results.to_csv(output_path, sep=out_sep, index=False)
     print(f"\nWrote {len(combined_results)} results to {output_path}")
 
     # Summary
+    print("\n── Summary ──")
     if len(results_df) > 0:
-        print("\n── Summary ──")
         print(results_df["status"].value_counts().to_string())
+    else:
+        print("No new engine runs.")
+    print(
+        "Total batch runtime: "
+        f"{_format_elapsed_time(time.perf_counter() - batch_started_at)}"
+    )
 
 
 if __name__ == "__main__":

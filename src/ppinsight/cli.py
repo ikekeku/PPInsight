@@ -32,6 +32,7 @@ _SUBCOMMANDS = {
     "compare":   "ppinsight.visualizer",
     "parse":     "ppinsight.parse_pairs",
     "batch":     "ppinsight.batch_dock",
+    "purge":     "ppinsight.purge_runs",
     "quality":   "ppinsight.quality",
 }
 
@@ -76,6 +77,7 @@ def _print_help():
         "compare":   "Visualise and compare docking scores",
         "parse":     "Parse an interaction table into a flat pairs file",
         "batch":     "Batch-run docking for all pairs in a pairs file",
+        "purge":     "Preview or remove failed batch-run directories",
         "quality":   "Evaluate docking quality with DockQ (CAPRI metrics)",
     }
     for cmd in _SUBCOMMANDS:

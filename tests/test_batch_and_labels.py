@@ -236,7 +236,185 @@ class TestBatchDock:
 
         assert results.empty
 
-    def test_cli_defaults_results_to_output_root(self, tmp_path):
+    def test_runner_exception_records_structured_failure(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock, registry
+
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\n", encoding="utf-8"
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        failed_dir = tmp_path / "output" / "lightdock_runs" / "A_vs_B"
+        failed_dir.mkdir(parents=True)
+        log_path = failed_dir / "lightdock.log"
+        log_path.write_text("failure details\n", encoding="utf-8")
+        pairs_df = pd.DataFrame({"proteinA": ["A"], "proteinB": ["B"]})
+
+        def failed_runner(*_args, **_kwargs):
+            raise registry.EngineRunError(
+                "LightDock did not produce outputs.",
+                output_dir=str(failed_dir),
+                log_path=str(log_path),
+                error_type="LightDockSimulationError",
+            )
+
+        monkeypatch.setattr(
+            batch_dock.registry,
+            "get",
+            lambda _name: SimpleNamespace(runner=failed_runner),
+        )
+
+        results = batch_dock.batch_dock(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            output_root=str(tmp_path / "output"),
+        )
+
+        row = results.iloc[0]
+        assert row["status"] == "failed"
+        assert row["error_type"] == "LightDockSimulationError"
+        assert row["error_message"] == "LightDock did not produce outputs."
+        assert row["output_dir"] == str(failed_dir)
+        assert row["log_path"] == str(log_path)
+
+    def test_clean_failed_removes_recorded_directory_before_retry(
+        self, tmp_path, monkeypatch
+    ):
+        from ppinsight import batch_dock
+
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\n", encoding="utf-8"
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        output_root = tmp_path / "output"
+        failed_dir = output_root / "lightdock_runs" / "A_vs_B"
+        failed_dir.mkdir(parents=True)
+        (failed_dir / "partial.txt").write_text("partial\n", encoding="utf-8")
+        pairs_df = pd.DataFrame({"proteinA": ["A"], "proteinB": ["B"]})
+
+        def successful_runner(*_args, **_kwargs):
+            assert not failed_dir.exists()
+            return str(output_root / "lightdock_runs" / "A_vs_B_retry")
+
+        monkeypatch.setattr(
+            batch_dock.registry,
+            "get",
+            lambda _name: SimpleNamespace(runner=successful_runner),
+        )
+
+        results = batch_dock.batch_dock(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            output_root=str(output_root),
+            failed_run_dirs={("A", "B", "lightdock"): str(failed_dir)},
+            clean_failed=True,
+        )
+
+        assert results.iloc[0]["status"] == "ok"
+        assert not failed_dir.exists()
+
+    def test_upsert_results_replaces_failed_row_after_retry(self):
+        from ppinsight import batch_dock
+
+        existing = pd.DataFrame([
+            batch_dock._result_row(
+                "A", "B", "", "", "haddock", "/tmp/failed", "failed",
+                error_type="RuntimeError",
+            )
+        ])
+        retry = pd.DataFrame([
+            batch_dock._result_row(
+                "A", "B", "", "", "haddock", "/tmp/success", "ok"
+            )
+        ])
+
+        result = batch_dock._upsert_results(existing, retry)
+
+        assert len(result) == 1
+        assert result.iloc[0]["status"] == "ok"
+        assert result.iloc[0]["output_dir"] == "/tmp/success"
+
+    def test_cli_resume_upserts_successful_retry(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock, registry
+
+        pairs_path = tmp_path / "pairs.csv"
+        pairs_path.write_text("proteinA,proteinB\nA,B\n", encoding="utf-8")
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\n", encoding="utf-8"
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        output_root = tmp_path / "output"
+        manifest = output_root / "scores" / "batch_results.csv"
+        failed_dir = output_root / "lightdock_runs" / "A_vs_B"
+        failed_dir.mkdir(parents=True)
+
+        def failed_runner(*_args, **_kwargs):
+            raise registry.EngineRunError(
+                "initial failure",
+                output_dir=str(failed_dir),
+                error_type="RuntimeError",
+            )
+
+        plugin = SimpleNamespace(runner=failed_runner)
+        monkeypatch.setattr(batch_dock.registry, "get", lambda _name: plugin)
+        first_args = [
+            str(pairs_path),
+            "--engines",
+            "lightdock",
+            "--pdb-dir",
+            str(tmp_path),
+            "--output-root",
+            str(output_root),
+            "-o",
+            str(manifest),
+        ]
+        batch_dock.main(first_args)
+
+        plugin.runner = lambda *_args, **_kwargs: str(
+            output_root / "lightdock_runs" / "A_vs_B_retry"
+        )
+        batch_dock.main(first_args + ["--resume"])
+
+        results = pd.read_csv(manifest)
+        assert len(results) == 1
+        assert results.iloc[0]["status"] == "ok"
+        assert results.iloc[0]["output_dir"].endswith("A_vs_B_retry")
+
+    def test_preflight_reports_lightdock_heteroatom_warning(
+        self, tmp_path, monkeypatch
+    ):
+        from ppinsight import batch_dock
+
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\nHETATM    2  S   SO4 A   2\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(batch_dock.shutil, "which", lambda _name: "/mock/bin")
+        pairs_df = pd.DataFrame({"proteinA": ["A"], "proteinB": ["B"]})
+
+        results = batch_dock.preflight_batch(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            engine_kwargs={"lightdock": {"auto_clean_pdb": True}},
+        )
+
+        row = results.iloc[0]
+        assert row["status"] == "preflight_ok"
+        assert "HETATM" in row["preflight_warnings"]
+        assert "Auto-clean retry is enabled" in row["preflight_warnings"]
+
+    def test_cli_defaults_results_to_output_root(self, tmp_path, capsys):
         from ppinsight import batch_dock
 
         pairs_path = tmp_path / "pairs.csv"
@@ -253,6 +431,7 @@ class TestBatchDock:
         ])
 
         assert (output_root / "scores" / "batch_results.csv").is_file()
+        assert "Total batch runtime:" in capsys.readouterr().out
 
     def test_haddock_kwargs_include_refine_controls(self):
         from ppinsight import batch_dock

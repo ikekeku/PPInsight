@@ -510,6 +510,35 @@ def test_copy_inputs_prefers_dbref_chains_for_matching_accession(tmp_path):
     assert ligand_residues == ["1", "2"]
 
 
+def test_copy_inputs_filters_single_dbref_selected_chain(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    rec = tmp_path / "P39905.pdb"
+    lig = tmp_path / "P35968.pdb"
+    rec.write_text(
+        "DBREF  1ABC B    1     1  UNP    P39905   TEST_HUMAN      1      1\n"
+        + _make_atom_line(1, "CA", "GLY", "A", 1, segid="A")
+        + _make_atom_line(2, "CA", "GLY", "B", 2, segid="B")
+        + _make_atom_line(3, "CA", "GLY", "C", 3, segid="C")
+        + "END\n"
+    )
+    lig.write_text(
+        "DBREF  2ABC A    1     1  UNP    P35968   TEST_HUMAN      1      1\n"
+        + _make_atom_line(1, "CA", "SER", "A", 1, segid="A")
+        + "END\n"
+    )
+
+    rec_dst, lig_dst, _ = pdb_to_haddock.copy_inputs(
+        data_dir,
+        str(rec),
+        str(lig),
+    )
+
+    assert {line[21] for line in _atom_lines(rec_dst)} == {"B"}
+    assert {line[21] for line in _atom_lines(lig_dst)} == {"A"}
+
+
 def test_copy_inputs_can_disable_dbref_auto_filter(tmp_path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()

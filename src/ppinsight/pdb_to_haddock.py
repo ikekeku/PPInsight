@@ -191,6 +191,41 @@ def _rewrite_pdb_as_single_chain(
     }
 
 
+def _copy_pdb_selected_chains(
+    input_pdb: str | Path,
+    output_pdb: str | Path,
+    allowed_chains: set[str],
+) -> None:
+    """Copy coordinate records for DBREF-selected chains without renaming.
+
+    This preserves chain identifiers for restraint-compatible inputs while
+    ensuring that accession-based filtering is applied even when the selected
+    chain layout does not otherwise require single-chain normalization.
+    """
+    previous_coord_was_written = False
+
+    with open(input_pdb, encoding="utf-8") as src, open(
+        output_pdb, "w", encoding="utf-8"
+    ) as dst:
+        for line in src:
+            record = line[:6].strip()
+            if record in _PDB_COORD_RECORDS:
+                if line[21].strip() not in allowed_chains:
+                    previous_coord_was_written = False
+                    continue
+                dst.write(line)
+                previous_coord_was_written = True
+                continue
+
+            if record == "TER":
+                if previous_coord_was_written:
+                    dst.write(line)
+                previous_coord_was_written = False
+                continue
+
+            dst.write(line)
+
+
 def _maybe_normalize_haddock_partners(
     rec_path: Path,
     lig_path: Path,
@@ -248,8 +283,23 @@ def _maybe_normalize_haddock_partners(
     lig_dst = data_dir / lig_path.name
 
     if not needs_normalization:
-        shutil.copy(str(rec_path), str(rec_dst))
-        shutil.copy(str(lig_path), str(lig_dst))
+        if rec_allowed_chains is None:
+            shutil.copy(str(rec_path), str(rec_dst))
+        else:
+            _copy_pdb_selected_chains(
+                rec_path,
+                rec_dst,
+                rec_allowed_chains,
+            )
+
+        if lig_allowed_chains is None:
+            shutil.copy(str(lig_path), str(lig_dst))
+        else:
+            _copy_pdb_selected_chains(
+                lig_path,
+                lig_dst,
+                lig_allowed_chains,
+            )
         return rec_dst, lig_dst
 
     if ambig:
@@ -878,15 +928,19 @@ def haddock_pipeline(
     # Execute haddock if requested (local or container).
     # Helper returns a human-readable description of what was run,
     # e.g. "container:docker image=... -> haddock3 run.cfg".
-    executed_cmd = _execute_haddock_run(
-        run_dir,
-        cfg_path,
-        run_haddock,
-        haddock_cmd,
-        container,
-        container_image,
-        workspace_root,
-    )
+    try:
+        executed_cmd = _execute_haddock_run(
+            run_dir,
+            cfg_path,
+            run_haddock,
+            haddock_cmd,
+            container,
+            container_image,
+            workspace_root,
+        )
+    except Exception as exc:
+        exc.run_dir = run_dir
+        raise
 
     return run_dir, cfg_path, executed_cmd
 
