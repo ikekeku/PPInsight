@@ -337,6 +337,25 @@ def test_cfg_can_skip_refinement_modules(tmp_path, monkeypatch):
     assert "[clustfcc]" in text
 
 
+def test_write_cfg_skip_flexref_forces_skip_emref(tmp_path):
+    cfg_path = tmp_path / "run.cfg"
+    pdb_to_haddock.write_cfg(
+        cfg_path=cfg_path,
+        runname="skip_refine",
+        mode="local",
+        ncores=1,
+        rec_rel="data/rec.pdb",
+        lig_rel="data/lig.pdb",
+        ambig_rel="",
+        skip_flexref=True,
+        skip_emref=False,
+    )
+
+    text = cfg_path.read_text()
+    assert "[flexref]" not in text
+    assert "[emref]" not in text
+
+
 def test_cfg_honors_custom_tolerance(tmp_path, monkeypatch):
     inp = tmp_path / "input"
     inp.mkdir()

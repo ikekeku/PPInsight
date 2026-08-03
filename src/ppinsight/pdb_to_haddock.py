@@ -531,6 +531,9 @@ def write_cfg(
     keeps ``cmrest`` in ``flexref`` so HADDOCK does not abort when there are
     no AIR restraints.
     """
+    if skip_flexref:
+        skip_emref = True
+
     # If no ambiguous restraints are provided, keep the ab-initio workflow
     # restrained by center-of-mass terms through rigid-body docking and
     # semi-flexible refinement. HADDOCK's flexref stage aborts when there are
