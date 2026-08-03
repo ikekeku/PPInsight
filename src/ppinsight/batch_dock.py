@@ -158,10 +158,6 @@ def _format_elapsed_time(seconds: float) -> str:
     return f"{remaining_seconds}s"
 
 
-def _empty_error_fields() -> dict[str, str]:
-    """Return the standard empty diagnostic fields for a result row."""
-    return {"error_type": "", "error_message": "", "log_path": ""}
-
 
 def _result_row(
     protein_a: str,
