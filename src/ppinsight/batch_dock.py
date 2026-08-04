@@ -1129,8 +1129,11 @@ def main(argv=None):
     _FLUSH_EVERY = 10
 
     def _flush_to_disk(force: bool = False) -> None:
+        nonlocal existing_results
         _flush_counter[0] += 1
         if not force and _flush_counter[0] % _FLUSH_EVERY != 0:
+            return
+        if not new_results:
             return
         combined = _upsert_results(
             existing_results,
@@ -1140,9 +1143,11 @@ def main(argv=None):
         temporary_path = f"{output_path}.tmp"
         combined.to_csv(temporary_path, sep=out_sep, index=False)
         os.replace(temporary_path, output_path)
+        existing_results = combined
+        new_results.clear()
 
     def persist_result(result: dict) -> None:
-        """Persist progress after each newly completed engine run."""
+        """Buffer a completed engine result and periodically flush to disk."""
         new_results.append(result)
         _flush_to_disk()
 

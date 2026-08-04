@@ -356,7 +356,7 @@ Useful batch flags when you need tighter control:
 
 - `--cores N`: set CPU cores for supported runners.
 - `--preflight`: validate inputs and engine prerequisites without launching docking.
-- `--resume`: skip engine runs already marked successful and save progress after each new engine run; reuse the same `-o` results path when resuming. A successful retry replaces its prior failed manifest row.
+- `--resume`: skip engine runs already marked successful and periodically save progress to disk; reuse the same `-o` results path when resuming. A successful retry replaces its prior failed manifest row.
 - `--clean-failed`: with `--resume`, remove a safely recorded failed directory under `--output-root` before retrying it.
 - `--screening`: apply the reduced end-to-end preset described below; explicit engine flags override individual preset values.
 - `--output-root DIR`: put engine runs and the default batch results table under one root.
@@ -411,8 +411,8 @@ ppinsight batch data/input/pairs/pairs.csv \
 Any explicit engine flag overrides its screening value. For example,
 `--screening --haddock-sampling 2000 --rosetta-n-runs 200` keeps the screening
 profile but raises sampling for those two engines. `--resume` skips only rows
-already marked `ok` in the specified results table and saves each newly
-completed engine result incrementally.
+already marked `ok` in the specified results table and periodically persists
+newly completed engine results to disk.
 
 ### Preflight, retry, and cleanup
 
