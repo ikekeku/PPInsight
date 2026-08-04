@@ -258,33 +258,6 @@ def _build_roc_data(engines, pairs_binder, pairs_nonbinder, rng, metric="dockq")
     return pd.DataFrame(rows)
 
 
-def _build_prodigy_scores(engines, pairs, rng):
-    rows = []
-    prodigy_params = {
-        "HADDOCK": (-9.5, 2.0),
-        "LightDock": (-7.8, 2.5),
-        "Rosetta": (-8.6, 1.8),
-    }
-    for eng in engines:
-        mu, sigma = prodigy_params[eng]
-        for protA, protB in pairs:
-            for pose_idx, v in enumerate(rng.normal(mu, sigma, N_POSES), start=1):
-                run_id, pose_id, output_path = _traceability_fields(
-                    eng, protA, protB, pose_idx,
-                )
-                rows.append({
-                    "model": eng,
-                    "score_type": "prodigy_ddg",
-                    "score_value": float(v),
-                    "proteinA": protA,
-                    "proteinB": protB,
-                    "run_id": run_id,
-                    "pose_id": pose_id,
-                    "output_path": output_path,
-                })
-    return pd.DataFrame(rows)
-
-
 def build_fabricated_scores():
     rng = np.random.default_rng(RNG_SEED)
     binder_pairs = [(f"bind_rec_{i:02d}", f"bind_lig_{i:02d}") for i in range(50)]
@@ -298,7 +271,6 @@ def build_fabricated_scores():
         ),
         _build_engine_scores(ENGINES, PAIRS, rng),
         _build_roc_data(ENGINES, binder_pairs, nonbinder_pairs, rng),
-        _build_prodigy_scores(ENGINES, PAIRS[:2], rng),
     ]
 
     return pd.concat(frames, ignore_index=True, sort=False)
@@ -424,16 +396,6 @@ def gen_cdf(scores_df):
         )
         fig = cdf_plot(df, metric="dockq", output=None)
         _save(fig, f"cdf_{n_eng}eng_dockq.png")
-
-        pdf = _subset_scores(
-            scores_df,
-            engines=ENGINES[:n_eng],
-            pairs=PAIRS[:2],
-            metrics=["prodigy_ddg"],
-        )
-        fig = cdf_plot(pdf, metric="prodigy_ddg", output=None)
-        _save(fig, f"cdf_{n_eng}eng_prodigy_ddg.png")
-
 
 def main():
     matplotlib.use("Agg")

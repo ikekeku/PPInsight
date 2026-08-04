@@ -18,7 +18,6 @@ Usage::
     ppinsight batch     pairs.csv --engines lightdock haddock
     ppinsight quality   model.pdb native.pdb
     ppinsight quality   scores.tsv native.pdb -o scores_quality.tsv
-    ppinsight prodigy   scores.tsv --output scores_prodigy.tsv
 """
 
 import sys
@@ -33,8 +32,8 @@ _SUBCOMMANDS = {
     "compare":   "ppinsight.visualizer",
     "parse":     "ppinsight.parse_pairs",
     "batch":     "ppinsight.batch_dock",
+    "purge":     "ppinsight.purge_runs",
     "quality":   "ppinsight.quality",
-    "prodigy":   "ppinsight.prodigy",
 }
 
 
@@ -78,8 +77,8 @@ def _print_help():
         "compare":   "Visualise and compare docking scores",
         "parse":     "Parse an interaction table into a flat pairs file",
         "batch":     "Batch-run docking for all pairs in a pairs file",
+        "purge":     "Preview or remove failed batch-run directories",
         "quality":   "Evaluate docking quality with DockQ (CAPRI metrics)",
-        "prodigy":   "Predict binding affinity with PRODIGY",
     }
     for cmd in _SUBCOMMANDS:
         desc = descriptions.get(cmd, "")

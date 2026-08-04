@@ -77,3 +77,8 @@ class TestUmbrellaCLI:
         assert "--enable-rosetta-runner" not in result.stdout
         assert "--lightdock-retry-without-anm" not in result.stdout
         assert "--rosetta-n-runs" in result.stdout
+
+    def test_subcommand_help_purge(self):
+        result = _run_cli("purge", "--help")
+        assert result.returncode == 0
+        assert "failed" in result.stdout.lower()

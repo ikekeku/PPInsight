@@ -87,6 +87,8 @@ def _pdb_component_ids(
         for line in handle:
             if line[:6].strip() not in _PDB_COORD_RECORDS:
                 continue
+            if len(line) < 22:
+                continue
             segid = line[72:76].strip()
             chain = line[21].strip()
             if allowed_chains is not None and chain not in allowed_chains:
@@ -132,6 +134,9 @@ def _rewrite_pdb_as_single_chain(
                 continue
 
             if record in _PDB_COORD_RECORDS:
+                if len(line) < 22:
+                    previous_coord_was_written = False
+                    continue
                 segid = line[72:76].strip()
                 chain = line[21].strip()
                 if allowed_chains is not None and chain not in allowed_chains:
@@ -191,6 +196,41 @@ def _rewrite_pdb_as_single_chain(
     }
 
 
+def _copy_pdb_selected_chains(
+    input_pdb: str | Path,
+    output_pdb: str | Path,
+    allowed_chains: set[str],
+) -> None:
+    """Copy coordinate records for DBREF-selected chains without renaming.
+
+    This preserves chain identifiers for restraint-compatible inputs while
+    ensuring that accession-based filtering is applied even when the selected
+    chain layout does not otherwise require single-chain normalization.
+    """
+    previous_coord_was_written = False
+
+    with open(input_pdb, encoding="utf-8") as src, open(
+        output_pdb, "w", encoding="utf-8"
+    ) as dst:
+        for line in src:
+            record = line[:6].strip()
+            if record in _PDB_COORD_RECORDS:
+                if len(line) < 22 or line[21].strip() not in allowed_chains:
+                    previous_coord_was_written = False
+                    continue
+                dst.write(line)
+                previous_coord_was_written = True
+                continue
+
+            if record == "TER":
+                if previous_coord_was_written:
+                    dst.write(line)
+                previous_coord_was_written = False
+                continue
+
+            dst.write(line)
+
+
 def _maybe_normalize_haddock_partners(
     rec_path: Path,
     lig_path: Path,
@@ -248,8 +288,23 @@ def _maybe_normalize_haddock_partners(
     lig_dst = data_dir / lig_path.name
 
     if not needs_normalization:
-        shutil.copy(str(rec_path), str(rec_dst))
-        shutil.copy(str(lig_path), str(lig_dst))
+        if rec_allowed_chains is None:
+            shutil.copy(str(rec_path), str(rec_dst))
+        else:
+            _copy_pdb_selected_chains(
+                rec_path,
+                rec_dst,
+                rec_allowed_chains,
+            )
+
+        if lig_allowed_chains is None:
+            shutil.copy(str(lig_path), str(lig_dst))
+        else:
+            _copy_pdb_selected_chains(
+                lig_path,
+                lig_dst,
+                lig_allowed_chains,
+            )
         return rec_dst, lig_dst
 
     if ambig:
@@ -456,6 +511,11 @@ def write_cfg(
     rec_rel: str,
     lig_rel: str,
     ambig_rel: str,
+    sampling: int = 10000,
+    select_top: int = 400,
+    tolerance: int = 5,
+    skip_flexref: bool = False,
+    skip_emref: bool = False,
 ):
     """Write a HADDOCK3 TOML config (.cfg) to *cfg_path*.
 
@@ -465,18 +525,47 @@ def write_cfg(
         topoaa → rigidbody → caprieval → seletop → flexref →
         emref → clustfcc → seletopclusts
 
+    ``skip_flexref`` and ``skip_emref`` allow brittle runs to continue
+    without HADDOCK refinement stages.  When ``skip_flexref`` is True,
+    ``skip_emref`` should also be True because emref depends on flexref
+    outputs.
+
     If no ambiguous restraints file is provided (empty *ambig_rel*),
     ``cmrest = true`` is injected into the rigid-body stage to enable
     centre-of-mass restraint-based ab-initio docking. The same no-AIR path
     keeps ``cmrest`` in ``flexref`` so HADDOCK does not abort when there are
     no AIR restraints.
     """
+    if skip_flexref:
+        skip_emref = True
+
     # If no ambiguous restraints are provided, keep the ab-initio workflow
     # restrained by center-of-mass terms through rigid-body docking and
     # semi-flexible refinement. HADDOCK's flexref stage aborts when there are
     # no AIR restraints and cmrest is disabled.
     rigidbody_abinitio_block = "" if ambig_rel else "cmrest = true\n"
     flexref_abinitio_block = "" if ambig_rel else "cmrest = true\n"
+
+    flexref_section = ""
+    if not skip_flexref:
+        flexref_section = (
+            "\n"
+            "    # Semi-flexible refinement (it1)\n"
+            "    [flexref]\n"
+            f"    tolerance = {tolerance}\n"
+            f"    ambig_fname = \"{ambig_rel}\"\n"
+            f"    {flexref_abinitio_block}\n"
+        )
+
+    emref_section = ""
+    if not skip_emref:
+        emref_section = (
+            "\n"
+            "    # Final energy minimization in explicit solvent (itw)\n"
+            "    [emref]\n"
+            f"    tolerance = {tolerance}\n"
+            f"    ambig_fname = \"{ambig_rel}\"\n"
+        )
 
     text = f"""# ====================================================================
     # Protein-protein docking example (auto-generated by PPInsight)
@@ -513,9 +602,9 @@ def write_cfg(
 
     # Rigid-body energy minimization (it0)
     [rigidbody]
-    tolerance = 20
+    tolerance = {tolerance}
     ambig_fname = "{ambig_rel}"
-    sampling = 20
+    sampling = {sampling}
 
     {rigidbody_abinitio_block}
     # Score evaluation against reference (leave blank for no reference)
@@ -524,18 +613,8 @@ def write_cfg(
 
     # Select top models to carry forward to flexible refinement
     [seletop]
-    select = 5
-
-    # Semi-flexible refinement (it1)
-    [flexref]
-    tolerance = 20
-    ambig_fname = "{ambig_rel}"
-    {flexref_abinitio_block}
-
-    # Final energy minimization in explicit solvent (itw)
-    [emref]
-    tolerance = 20
-    ambig_fname = "{ambig_rel}"
+    select = {select_top}
+{flexref_section}{emref_section}
 
     # Fraction of Common Contacts clustering
     [clustfcc]
@@ -665,6 +744,11 @@ def _stage_run(
     mode: str,
     ncores: int,
     auto_filter: bool,
+    sampling: int,
+    select_top: int,
+    tolerance: int,
+    skip_flexref: bool,
+    skip_emref: bool,
 ):
     """Create run dir, copy inputs, and write the HADDOCK cfg file.
 
@@ -694,7 +778,20 @@ def _stage_run(
     # Write config file
     cfg_path = run_dir / f"{chosen_runname}.cfg"
     _remove_existing_cfgs(run_dir)
-    write_cfg(cfg_path, chosen_runname, mode, ncores, rec_rel, lig_rel, ambig_rel)
+    write_cfg(
+        cfg_path,
+        chosen_runname,
+        mode,
+        ncores,
+        rec_rel,
+        lig_rel,
+        ambig_rel,
+        sampling=sampling,
+        select_top=select_top,
+        tolerance=tolerance,
+        skip_flexref=skip_flexref,
+        skip_emref=skip_emref,
+    )
 
     return run_dir, cfg_path
 
@@ -793,6 +890,11 @@ def haddock_pipeline(
     container_image = opts.get("container_image", CONTAINER_IMAGE)
     workspace_root = opts.get("workspace_root")
     auto_filter = opts.get("auto_filter", True)
+    sampling = int(opts.get("sampling", 10000))
+    select_top = int(opts.get("select_top", 400))
+    tolerance = int(opts.get("tolerance", 5))
+    skip_flexref = bool(opts.get("skip_flexref", False))
+    skip_emref = bool(opts.get("skip_emref", False) or skip_flexref)
 
     # Resolve inputs so short basenames like "2UUY_rec" work (searches the repo)
     rec = resolve_input_path(rec)
@@ -824,20 +926,29 @@ def haddock_pipeline(
         mode=mode,
         ncores=ncores,
         auto_filter=auto_filter,
+        sampling=sampling,
+        select_top=select_top,
+        tolerance=tolerance,
+        skip_flexref=skip_flexref,
+        skip_emref=skip_emref,
     )
 
     # Execute haddock if requested (local or container).
     # Helper returns a human-readable description of what was run,
     # e.g. "container:docker image=... -> haddock3 run.cfg".
-    executed_cmd = _execute_haddock_run(
-        run_dir,
-        cfg_path,
-        run_haddock,
-        haddock_cmd,
-        container,
-        container_image,
-        workspace_root,
-    )
+    try:
+        executed_cmd = _execute_haddock_run(
+            run_dir,
+            cfg_path,
+            run_haddock,
+            haddock_cmd,
+            container,
+            container_image,
+            workspace_root,
+        )
+    except Exception as exc:
+        exc.run_dir = run_dir
+        raise
 
     return run_dir, cfg_path, executed_cmd
 
