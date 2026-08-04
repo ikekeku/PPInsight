@@ -827,8 +827,10 @@ def main(argv=None):
             "Use a reduced end-to-end preset for checking that pairs run: "
             "LightDock 50 steps/50 swarms/50 glowworms without ANM; HADDOCK "
             "1000 rigidbody models, select 100, no refinement; Rosetta 100 "
-            "trajectories without FastRelax. Explicit engine flags override "
-            "the corresponding preset value."
+            "trajectories without FastRelax. Numeric and string engine flags "
+            "override the corresponding preset value; some boolean preset "
+            "flags (e.g. --lightdock-auto-clean-pdb, --haddock-skip-"
+            "refinement) have no complementary negation flag."
         ),
     )
 
@@ -1123,10 +1125,13 @@ def main(argv=None):
         }
 
     new_results: list[dict] = []
+    _flush_counter = [0]
+    _FLUSH_EVERY = 10
 
-    def persist_result(result: dict) -> None:
-        """Atomically persist progress after each newly completed engine run."""
-        new_results.append(result)
+    def _flush_to_disk(force: bool = False) -> None:
+        _flush_counter[0] += 1
+        if not force and _flush_counter[0] % _FLUSH_EVERY != 0:
+            return
         combined = _upsert_results(
             existing_results,
             pd.DataFrame(new_results),
@@ -1135,6 +1140,11 @@ def main(argv=None):
         temporary_path = f"{output_path}.tmp"
         combined.to_csv(temporary_path, sep=out_sep, index=False)
         os.replace(temporary_path, output_path)
+
+    def persist_result(result: dict) -> None:
+        """Persist progress after each newly completed engine run."""
+        new_results.append(result)
+        _flush_to_disk()
 
     results_df = batch_dock(
         pairs_df,
@@ -1149,6 +1159,8 @@ def main(argv=None):
         clean_failed=args.clean_failed,
         on_result=persist_result,
     )
+    if new_results:
+        _flush_to_disk(force=True)
 
     combined_results = _upsert_results(
         existing_results,
