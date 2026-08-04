@@ -87,6 +87,8 @@ def _pdb_component_ids(
         for line in handle:
             if line[:6].strip() not in _PDB_COORD_RECORDS:
                 continue
+            if len(line) < 22:
+                continue
             segid = line[72:76].strip()
             chain = line[21].strip()
             if allowed_chains is not None and chain not in allowed_chains:
@@ -132,6 +134,9 @@ def _rewrite_pdb_as_single_chain(
                 continue
 
             if record in _PDB_COORD_RECORDS:
+                if len(line) < 22:
+                    previous_coord_was_written = False
+                    continue
                 segid = line[72:76].strip()
                 chain = line[21].strip()
                 if allowed_chains is not None and chain not in allowed_chains:
@@ -210,7 +215,7 @@ def _copy_pdb_selected_chains(
         for line in src:
             record = line[:6].strip()
             if record in _PDB_COORD_RECORDS:
-                if line[21].strip() not in allowed_chains:
+                if len(line) < 22 or line[21].strip() not in allowed_chains:
                     previous_coord_was_written = False
                     continue
                 dst.write(line)
