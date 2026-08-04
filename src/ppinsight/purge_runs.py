@@ -46,18 +46,23 @@ def purge_failed_runs(
     removable = candidates[candidates["safe_to_remove"]]
     skipped = len(candidates) - len(removable)
 
+    removed = 0
     for row in removable.itertuples(index=False):
         path = Path(row.output_dir)
         action = "Removing" if execute else "Would remove"
         print(f"{action}: {path}")
-        if execute and path.is_dir():
-            import shutil
+        if execute:
+            if path.is_dir():
+                import shutil
 
-            shutil.rmtree(path)
+                shutil.rmtree(path)
+                removed += 1
+        else:
+            removed += 1
 
     for row in candidates[~candidates["safe_to_remove"]].itertuples(index=False):
         print(f"Skipping unsafe path outside output root: {row.output_dir}")
-    return len(removable), skipped
+    return removed, skipped
 
 
 def main(argv=None):

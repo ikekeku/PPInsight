@@ -828,7 +828,9 @@ def main(argv=None):
             "LightDock 50 steps/50 swarms/50 glowworms without ANM; HADDOCK "
             "1000 rigidbody models, select 100, no refinement; Rosetta 100 "
             "trajectories without FastRelax. Explicit engine flags override "
-            "the corresponding preset value."
+            "the corresponding preset value where a CLI option exists; some "
+            "preset-applied booleans cannot currently be overridden back to "
+            "their default via the command line."
         ),
     )
 
