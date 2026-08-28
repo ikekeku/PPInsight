@@ -74,6 +74,23 @@ class DetectorFunc(Protocol):
     def __call__(self, directory: str) -> bool: ...
 
 
+class EngineRunError(RuntimeError):
+    """A failed engine run with structured diagnostic context for batch mode."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        output_dir: str | None = None,
+        log_path: str | None = None,
+        error_type: str | None = None,
+    ):
+        super().__init__(message)
+        self.output_dir = output_dir
+        self.log_path = log_path
+        self.error_type = error_type or type(self).__name__
+
+
 @dataclass(slots=True)
 class EnginePlugin:
     """Encapsulates a docking-engine integration.
@@ -144,14 +161,13 @@ def _confirm_lightdock_retry_without_anm(rec_pdb: str, lig_pdb: str) -> bool:
 
 def _run_rosetta_batch(rec_pdb, lig_pdb, output_root, pair_label, **kw):
     """Default Rosetta runner used by batch mode."""
-    import sys
-
     from ppinsight.pdb_to_rosetta import (
         _make_output_dir,
         _rosetta_outputs_support_clustering,
     )
     from ppinsight.rosetta.pipeline import DockingPipeline
 
+    output_dir = None
     try:
         output_dir = kw.get("output_dir") or _make_output_dir(
             rec_pdb,
@@ -200,8 +216,11 @@ def _run_rosetta_batch(rec_pdb, lig_pdb, output_root, pair_label, **kw):
 
         return str(output_dir)
     except Exception as exc:
-        print(f"  [rosetta] FAILED: {exc}", file=sys.stderr)
-        return None
+        raise EngineRunError(
+            str(exc),
+            output_dir=str(output_dir) if output_dir else None,
+            error_type=type(exc).__name__,
+        ) from exc
 
 
 def _ensure_defaults() -> None:
@@ -230,8 +249,6 @@ def _register_lightdock() -> None:
         return bool(glob.glob(os.path.join(directory, "swarm_*")))
 
     def _run(rec_pdb, lig_pdb, output_root, pair_label, **kw):
-        import sys
-
         from ppinsight.pdb_to_lightdock import (
             LightDockSimulationError,
             _cleanup_previous_outputs,
@@ -326,8 +343,15 @@ def _register_lightdock() -> None:
 
             return workdir
         except Exception as exc:
-            print(f"  [lightdock] FAILED: {exc}", file=sys.stderr)
-            return None
+            log_path = None
+            if "workdir" in locals():
+                log_path = os.path.join(workdir, "lightdock.log")
+            raise EngineRunError(
+                str(exc),
+                output_dir=workdir if "workdir" in locals() else None,
+                log_path=log_path,
+                error_type=type(exc).__name__,
+            ) from exc
 
     _registry["lightdock"] = EnginePlugin(
         name="lightdock",
@@ -352,21 +376,30 @@ def _register_haddock() -> None:
         return False
 
     def _run(rec_pdb, lig_pdb, output_root, pair_label, **kw):
-        import sys
-
         from ppinsight.pdb_to_haddock import haddock_pipeline
         from ppinsight.utils import _project_root
         try:
-            run_dir, cfg_path, _ = haddock_pipeline(
+            run_opts = dict(kw)
+            sampling = int(run_opts.pop("sampling", 10000))
+            select_top = int(run_opts.pop("select_top", 400))
+            run_dir, _, _ = haddock_pipeline(
                 rec_pdb, lig_pdb,
                 workspace_root=_project_root(),
-                run_haddock=False,
-                **kw,
+                base_root=output_root,
+                run_haddock=True,
+                sampling=sampling,
+                select_top=select_top,
+                **run_opts,
             )
             return str(run_dir)
         except Exception as exc:
-            print(f"  [haddock] FAILED: {exc}", file=sys.stderr)
-            return None
+            run_dir = getattr(exc, "run_dir", None)
+            raise EngineRunError(
+                str(exc),
+                output_dir=str(run_dir) if run_dir else None,
+                log_path=os.path.join(str(run_dir), "log") if run_dir else None,
+                error_type=type(exc).__name__,
+            ) from exc
 
     _registry["haddock"] = EnginePlugin(
         name="haddock",

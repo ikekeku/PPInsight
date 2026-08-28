@@ -308,6 +308,81 @@ def test_cfg_carries_cmrest_into_flexref_for_ab_initio_runs(tmp_path, monkeypatc
     assert text.count("cmrest = true") == 2
 
 
+def test_cfg_can_skip_refinement_modules(tmp_path, monkeypatch):
+    inp = tmp_path / "input"
+    inp.mkdir()
+    rec = inp / "rec.pdb"
+    lig = inp / "lig.pdb"
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
+
+    work_root = tmp_path / "output"
+    work_root.mkdir()
+
+    monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
+
+    _, cfg_path, _ = pdb_to_haddock.haddock_pipeline(
+        str(rec),
+        str(lig),
+        runname="skip_refine",
+        run_haddock=False,
+        base_root=str(work_root),
+        method="haddock_runs",
+        skip_flexref=True,
+    )
+
+    text = cfg_path.read_text()
+    assert "[flexref]" not in text
+    assert "[emref]" not in text
+    assert "[clustfcc]" in text
+
+
+def test_write_cfg_skip_flexref_forces_skip_emref(tmp_path):
+    cfg_path = tmp_path / "run.cfg"
+    pdb_to_haddock.write_cfg(
+        cfg_path=cfg_path,
+        runname="skip_refine",
+        mode="local",
+        ncores=1,
+        rec_rel="data/rec.pdb",
+        lig_rel="data/lig.pdb",
+        ambig_rel="",
+        skip_flexref=True,
+        skip_emref=False,
+    )
+
+    text = cfg_path.read_text()
+    assert "[flexref]" not in text
+    assert "[emref]" not in text
+
+
+def test_cfg_honors_custom_tolerance(tmp_path, monkeypatch):
+    inp = tmp_path / "input"
+    inp.mkdir()
+    rec = inp / "rec.pdb"
+    lig = inp / "lig.pdb"
+    _write_simple_pdb(rec, chain="A")
+    _write_simple_pdb(lig, chain="B")
+
+    work_root = tmp_path / "output"
+    work_root.mkdir()
+
+    monkeypatch.setattr(pdb_to_haddock, "run_command", lambda *a, **k: None)
+
+    _, cfg_path, _ = pdb_to_haddock.haddock_pipeline(
+        str(rec),
+        str(lig),
+        runname="tol20",
+        run_haddock=False,
+        base_root=str(work_root),
+        method="haddock_runs",
+        tolerance=20,
+    )
+
+    text = cfg_path.read_text()
+    assert text.count("tolerance = 20") == 3
+
+
 def test_cfg_out_root_and_method_respected(tmp_path, monkeypatch):
     """
     author: ikekeku
@@ -452,6 +527,35 @@ def test_copy_inputs_prefers_dbref_chains_for_matching_accession(tmp_path):
             last_residue = residue_id
 
     assert ligand_residues == ["1", "2"]
+
+
+def test_copy_inputs_filters_single_dbref_selected_chain(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    rec = tmp_path / "P39905.pdb"
+    lig = tmp_path / "P35968.pdb"
+    rec.write_text(
+        "DBREF  1ABC B    1     1  UNP    P39905   TEST_HUMAN      1      1\n"
+        + _make_atom_line(1, "CA", "GLY", "A", 1, segid="A")
+        + _make_atom_line(2, "CA", "GLY", "B", 2, segid="B")
+        + _make_atom_line(3, "CA", "GLY", "C", 3, segid="C")
+        + "END\n"
+    )
+    lig.write_text(
+        "DBREF  2ABC A    1     1  UNP    P35968   TEST_HUMAN      1      1\n"
+        + _make_atom_line(1, "CA", "SER", "A", 1, segid="A")
+        + "END\n"
+    )
+
+    rec_dst, lig_dst, _ = pdb_to_haddock.copy_inputs(
+        data_dir,
+        str(rec),
+        str(lig),
+    )
+
+    assert {line[21] for line in _atom_lines(rec_dst)} == {"B"}
+    assert {line[21] for line in _atom_lines(lig_dst)} == {"A"}
 
 
 def test_copy_inputs_can_disable_dbref_auto_filter(tmp_path):

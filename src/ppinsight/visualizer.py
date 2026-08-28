@@ -1042,27 +1042,6 @@ METRIC_METADATA: dict[str, dict] = {
             "Lower = better."
         ),
     },
-    # ── PRODIGY binding affinity ────────────────────────────────────────
-    # Produced by ``ppinsight.prodigy`` which wraps the ``prodigy-prot``
-    # package.  Install with ``pip install ppinsight[prodigy]``.
-    "prodigy_ddg": {
-        "higher_is_better": False,
-        "display_name": "PRODIGY ΔG",
-        "description": (
-            "PRODIGY predicted binding free energy (ΔG, kcal/mol).  "
-            "More negative = stronger predicted binding.  "
-            "Requires the optional prodigy-prot package."
-        ),
-    },
-    "prodigy_kd": {
-        "higher_is_better": False,
-        "display_name": "PRODIGY Kd",
-        "description": (
-            "PRODIGY predicted dissociation constant (Kd, M) at 25 °C.  "
-            "Lower = tighter predicted binding.  "
-            "Requires the optional prodigy-prot package."
-        ),
-    },
 }
 
 
