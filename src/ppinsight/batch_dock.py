@@ -507,6 +507,21 @@ def main(argv=None):
             parser_ok = "✓" if plugin.parser else "✗"
             desc = plugin.description or "(no description)"
             print(f"  {name:15s}  runner={runner_ok}  parser={parser_ok}  {desc}")
+
+        # consrank isn't a registry EnginePlugin (it reranks a pool of poses
+        # gathered from other engines rather than running/parsing one engine's
+        # run directory), but its binary availability is checked the same
+        # way, so surface it here for a single place to check tool readiness.
+        from ppinsight.consrank import (
+            consrank_binary_available,
+            default_consrank_binary,
+        )
+        bin_ok = "✓" if consrank_binary_available() else "✗"
+        print(
+            f"  {'consrank':15s}  binary={bin_ok}       "
+            f"Reference-free consensus ranking (Iter-CONSRANK) "
+            f"[{default_consrank_binary()}]"
+        )
         return
 
     if not args.pairs:

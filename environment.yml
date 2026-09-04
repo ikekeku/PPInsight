@@ -19,6 +19,9 @@ dependencies:
   - mpi4py
   - zlib
   - haddock_biobb==2025.5
+  - c-compiler
+  - cxx-compiler
+  - fortran-compiler
   - pip
   - pip:
     - lightdock

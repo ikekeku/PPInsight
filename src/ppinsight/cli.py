@@ -19,6 +19,7 @@ Usage::
     ppinsight quality   model.pdb native.pdb
     ppinsight quality   scores.tsv native.pdb -o scores_quality.tsv
     ppinsight prodigy   scores.tsv --output scores_prodigy.tsv
+    ppinsight consrank  data/output/rosetta_runs/run1 --engine rosetta
 """
 
 import sys
@@ -35,6 +36,7 @@ _SUBCOMMANDS = {
     "batch":     "ppinsight.batch_dock",
     "quality":   "ppinsight.quality",
     "prodigy":   "ppinsight.prodigy",
+    "consrank":  "ppinsight.consrank",
 }
 
 
@@ -80,6 +82,7 @@ def _print_help():
         "batch":     "Batch-run docking for all pairs in a pairs file",
         "quality":   "Evaluate docking quality with DockQ (CAPRI metrics)",
         "prodigy":   "Predict binding affinity with PRODIGY",
+        "consrank":  "Reference-free consensus ranking (Iter-CONSRANK)",
     }
     for cmd in _SUBCOMMANDS:
         desc = descriptions.get(cmd, "")
