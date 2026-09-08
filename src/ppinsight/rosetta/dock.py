@@ -335,8 +335,6 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
     if global_docking and n_runs < _MIN_GLOBAL:
         warnings.warn(
             f"Global docking requested with only {n_runs} decoys. "
-            "PPInsight's default n_runs=10 is intended as a smoke-test "
-            "setting only. "
             f"The RosettaDock protocol recommends 10,000–100,000 decoys "
             f"for global docking to adequately sample the conformational "
             f"space.  Results with fewer than {_MIN_GLOBAL} decoys should "

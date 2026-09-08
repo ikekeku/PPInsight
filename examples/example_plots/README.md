@@ -50,4 +50,4 @@ fabricated long-format scores table.
 
 - `1eng` / `2eng` / `3eng` — number of docking engines
 - `1pair` / `2pair` / `3pair` — number of protein pairs
-- Metric name when relevant (e.g. `dockq`, `score`, `prodigy_ddg`)
+- Metric name when relevant (e.g. `dockq`, `score`, `i_sc`)

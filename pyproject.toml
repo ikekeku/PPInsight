@@ -41,9 +41,6 @@ dependencies = [
 quality = [
     "dockq @ git+https://github.com/nrontsis/DockQ.git@update-to-numpy>2",
 ]
-prodigy = [
-    "prodigy-prot",
-]
 dev = [
     "pytest",
     "pytest-cov",
@@ -61,8 +58,8 @@ compare_scores = "ppinsight.visualizer:main"
 collect_scores = "ppinsight.collect_scores:main"
 parse_pairs = "ppinsight.parse_pairs:main"
 batch_dock = "ppinsight.batch_dock:main"
+ppinsight_purge = "ppinsight.purge_runs:main"
 ppinsight_quality = "ppinsight.quality:main"
-ppinsight_prodigy = "ppinsight.prodigy:main"
 ppinsight_consrank = "ppinsight.consrank:main"
 
 [tool.pytest.ini_options]

@@ -12,7 +12,7 @@ protein-protein docking results across multiple prediction engines.
 PPInsight collects docking scores from supported docking engines,
 normalises them, and visualises the results with a unified Python API and
 command-line interface.  It can also assess prediction quality using the
-CAPRI protocol (requires DockQ) and predict binding affinity using PRODIGY.
+CAPRI protocol (requires DockQ).
 
 ### Which Python version is required?
 
@@ -27,11 +27,8 @@ pip install ppinsight
 # With DockQ quality assessment
 pip install "ppinsight[quality]"
 
-# With PRODIGY binding-affinity scoring
-pip install "ppinsight[prodigy]"
-
 # Everything
-pip install "ppinsight[quality,prodigy,dev]"
+pip install "ppinsight[quality,dev]"
 ```
 
 ### Does `ppinsight fetch` accept gene names like `VEGFA`?
@@ -141,73 +138,6 @@ pip install "dockq @ git+https://github.com/nrontsis/DockQ.git@update-to-numpy>2
 
 ---
 
-## PRODIGY Binding Affinity
-
-### What is PRODIGY?
-
-PRODIGY (PROtein binDIng enerGY prediction) predicts the binding free energy
-(ΔG, kcal/mol) and dissociation constant (Kd, M) of a protein-protein
-complex from its 3-D structure.
-
-Reference: Vangone A & Bonvin AMJJ. (2015). *eLife* 4:e07454.
-DOI: 10.7554/eLife.07454
-
-### How do I install PRODIGY?
-
-```bash
-pip install "ppinsight[prodigy]"
-# or:
-pip install prodigy-prot
-```
-
-### How do I score docked poses with PRODIGY?
-
-```python
-from ppinsight.prodigy import score_pdb, add_prodigy_to_scores
-import pandas as pd
-
-# Score a single PDB
-result = score_pdb("complex.pdb", chains=["A", "B"])
-print(result["prodigy_ddg"])   # ΔG in kcal/mol
-print(result["prodigy_kd"])    # Kd in M
-
-# Append to a unified scores DataFrame
-scores = pd.read_csv("all_scores.tsv", sep="\t")
-scores = add_prodigy_to_scores(scores)
-```
-
-Or use the command-line tool:
-
-```bash
-ppinsight prodigy all_scores.tsv --output scored.tsv
-ppinsight prodigy all_scores.tsv --top-n 5 --engine HADDOCK
-```
-
-If your scores file does not have `output_path`, keep using `--pdb-dir` as a
-fallback together with a `pdb` filename column, for example with manually
-assembled or external scores tables.
-
-### `score_pdb` returns `{"error": "no_contacts", …}` with NaN values
-
-PRODIGY could not find inter-chain contacts in the PDB file.  Common causes:
-
-1. **Single-chain structure** — PRODIGY requires at least two protein chains
-   in the same file.  Make sure receptor and ligand chains are in one PDB.
-2. **Chains too far apart** — the chains do not have inter-chain contacts
-   within the 5.5 Å distance cutoff.  The structure may be a docking decoy
-   where the two proteins are not in contact.
-3. **Wrong chain IDs** — pass `chains=["A", "B"]` explicitly.
-
-### `prodigy_ddg` vs `prodigy_kd` — which should I use for ranking?
-
-For ranking docked poses, prefer `prodigy_ddg` (lower = stronger predicted
-binding).  `prodigy_kd` is useful when you need to express the result in
-concentration units for biological interpretation.
-
-Both metrics have `higher_is_better=False` in `METRIC_METADATA`.
-
----
-
 ## Visualisation
 
 ### What plot types are available?
@@ -258,7 +188,6 @@ ax.legend()
 | Error | Likely cause | Fix |
 |-------|-------------|-----|
 | `ValueError: quality_bar_chart requires CAPRI metrics` | Passing engine scores to a CAPRI-only function | Add fnat/irmsd/lrmsd/dockq columns first |
-| `ImportError: prodigy-prot is required` | Optional package missing | `pip install ppinsight[prodigy]` |
 | `ValueError: No data found for metric 'X'` | Wrong metric name or empty DataFrame | Check `score_type` values with `df["score_type"].unique()` |
 | `ValueError: No shared protein pairs` | Two models have no pairs in common | Check proteinA/proteinB columns match |
 | `ModuleNotFoundError: No module named 'dockq'` | DockQ not installed | `pip install ppinsight[quality]` |

@@ -189,6 +189,7 @@ class TestBatchDock:
         seen = {}
 
         def fake_runner(rec_pdb, lig_pdb, output_root, pair_label, **kwargs):
+            seen["output_root"] = output_root
             seen["kwargs"] = kwargs
             return str(tmp_path / "fake_run")
 
@@ -207,6 +208,374 @@ class TestBatchDock:
         assert results.iloc[0]["status"] == "ok"
         assert seen["kwargs"]["cores"] == 8
         assert seen["kwargs"]["steps"] == 25
+        assert seen["output_root"] == str((tmp_path / "out").resolve())
+
+    def test_resume_skips_successful_engine(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock
+
+        (tmp_path / "A.pdb").write_text("END\n", encoding="utf-8")
+        (tmp_path / "B.pdb").write_text("END\n", encoding="utf-8")
+        pairs_df = pd.DataFrame({
+            "proteinA": ["A"],
+            "proteinB": ["B"],
+            "label": ["interaction"],
+        })
+
+        def fail_if_called(*_args, **_kwargs):
+            raise AssertionError("resumed engine must not run")
+
+        plugin = SimpleNamespace(runner=fail_if_called)
+        monkeypatch.setattr(batch_dock.registry, "get", lambda _name: plugin)
+
+        results = batch_dock.batch_dock(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            completed_runs={("A", "B", "lightdock")},
+        )
+
+        assert results.empty
+
+    def test_runner_exception_records_structured_failure(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock, registry
+
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\n", encoding="utf-8"
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        failed_dir = tmp_path / "output" / "lightdock_runs" / "A_vs_B"
+        failed_dir.mkdir(parents=True)
+        log_path = failed_dir / "lightdock.log"
+        log_path.write_text("failure details\n", encoding="utf-8")
+        pairs_df = pd.DataFrame({"proteinA": ["A"], "proteinB": ["B"]})
+
+        def failed_runner(*_args, **_kwargs):
+            raise registry.EngineRunError(
+                "LightDock did not produce outputs.",
+                output_dir=str(failed_dir),
+                log_path=str(log_path),
+                error_type="LightDockSimulationError",
+            )
+
+        monkeypatch.setattr(
+            batch_dock.registry,
+            "get",
+            lambda _name: SimpleNamespace(runner=failed_runner),
+        )
+
+        results = batch_dock.batch_dock(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            output_root=str(tmp_path / "output"),
+        )
+
+        row = results.iloc[0]
+        assert row["status"] == "failed"
+        assert row["error_type"] == "LightDockSimulationError"
+        assert row["error_message"] == "LightDock did not produce outputs."
+        assert row["output_dir"] == str(failed_dir)
+        assert row["log_path"] == str(log_path)
+
+    def test_clean_failed_removes_recorded_directory_before_retry(
+        self, tmp_path, monkeypatch
+    ):
+        from ppinsight import batch_dock
+
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\n", encoding="utf-8"
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        output_root = tmp_path / "output"
+        failed_dir = output_root / "lightdock_runs" / "A_vs_B"
+        failed_dir.mkdir(parents=True)
+        (failed_dir / "partial.txt").write_text("partial\n", encoding="utf-8")
+        pairs_df = pd.DataFrame({"proteinA": ["A"], "proteinB": ["B"]})
+
+        def successful_runner(*_args, **_kwargs):
+            assert not failed_dir.exists()
+            return str(output_root / "lightdock_runs" / "A_vs_B_retry")
+
+        monkeypatch.setattr(
+            batch_dock.registry,
+            "get",
+            lambda _name: SimpleNamespace(runner=successful_runner),
+        )
+
+        results = batch_dock.batch_dock(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            output_root=str(output_root),
+            failed_run_dirs={("A", "B", "lightdock"): str(failed_dir)},
+            clean_failed=True,
+        )
+
+        assert results.iloc[0]["status"] == "ok"
+        assert not failed_dir.exists()
+
+    def test_upsert_results_replaces_failed_row_after_retry(self):
+        from ppinsight import batch_dock
+
+        existing = pd.DataFrame([
+            batch_dock._result_row(
+                "A", "B", "", "", "haddock", "/tmp/failed", "failed",
+                error_type="RuntimeError",
+            )
+        ])
+        retry = pd.DataFrame([
+            batch_dock._result_row(
+                "A", "B", "", "", "haddock", "/tmp/success", "ok"
+            )
+        ])
+
+        result = batch_dock._upsert_results(existing, retry)
+
+        assert len(result) == 1
+        assert result.iloc[0]["status"] == "ok"
+        assert result.iloc[0]["output_dir"] == "/tmp/success"
+
+    def test_cli_resume_upserts_successful_retry(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock, registry
+
+        pairs_path = tmp_path / "pairs.csv"
+        pairs_path.write_text("proteinA,proteinB\nA,B\n", encoding="utf-8")
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\n", encoding="utf-8"
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        output_root = tmp_path / "output"
+        manifest = output_root / "scores" / "batch_results.csv"
+        failed_dir = output_root / "lightdock_runs" / "A_vs_B"
+        failed_dir.mkdir(parents=True)
+
+        def failed_runner(*_args, **_kwargs):
+            raise registry.EngineRunError(
+                "initial failure",
+                output_dir=str(failed_dir),
+                error_type="RuntimeError",
+            )
+
+        plugin = SimpleNamespace(runner=failed_runner)
+        monkeypatch.setattr(batch_dock.registry, "get", lambda _name: plugin)
+        first_args = [
+            str(pairs_path),
+            "--engines",
+            "lightdock",
+            "--pdb-dir",
+            str(tmp_path),
+            "--output-root",
+            str(output_root),
+            "-o",
+            str(manifest),
+        ]
+        batch_dock.main(first_args)
+
+        plugin.runner = lambda *_args, **_kwargs: str(
+            output_root / "lightdock_runs" / "A_vs_B_retry"
+        )
+        batch_dock.main(first_args + ["--resume"])
+
+        results = pd.read_csv(manifest)
+        assert len(results) == 1
+        assert results.iloc[0]["status"] == "ok"
+        assert results.iloc[0]["output_dir"].endswith("A_vs_B_retry")
+
+    def test_preflight_reports_lightdock_heteroatom_warning(
+        self, tmp_path, monkeypatch
+    ):
+        from ppinsight import batch_dock
+
+        (tmp_path / "A.pdb").write_text(
+            "ATOM      1  CA  GLY A   1\nHETATM    2  S   SO4 A   2\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "B.pdb").write_text(
+            "ATOM      1  CA  GLY B   1\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(batch_dock.shutil, "which", lambda _name: "/mock/bin")
+        pairs_df = pd.DataFrame({"proteinA": ["A"], "proteinB": ["B"]})
+
+        results = batch_dock.preflight_batch(
+            pairs_df,
+            engines=["lightdock"],
+            pdb_dir=str(tmp_path),
+            engine_kwargs={"lightdock": {"auto_clean_pdb": True}},
+        )
+
+        row = results.iloc[0]
+        assert row["status"] == "preflight_ok"
+        assert "HETATM" in row["preflight_warnings"]
+        assert "Auto-clean retry is enabled" in row["preflight_warnings"]
+
+    def test_cli_defaults_results_to_output_root(self, tmp_path, capsys):
+        from ppinsight import batch_dock
+
+        pairs_path = tmp_path / "pairs.csv"
+        pairs_path.write_text(
+            "proteinA,proteinB\nA,B\n", encoding="utf-8"
+        )
+        output_root = tmp_path / "custom_output"
+
+        batch_dock.main([
+            str(pairs_path),
+            "--dry-run",
+            "--output-root",
+            str(output_root),
+        ])
+
+        assert (output_root / "scores" / "batch_results.csv").is_file()
+        assert "Total batch runtime:" in capsys.readouterr().out
+
+    def test_haddock_kwargs_include_refine_controls(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            lightdock_steps=100,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            cores=4,
+            lightdock_anm=False,
+            lightdock_scoring=None,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=200,
+            haddock_select_top=50,
+            haddock_tolerance=25,
+            haddock_skip_refinement=True,
+            haddock_skip_flexref=False,
+            haddock_skip_emref=False,
+            rosetta_n_runs=5,
+            rosetta_top_n=20,
+            rosetta_relax=False,
+            rosetta_no_cluster=False,
+            rosetta_cluster_top_n=200,
+            rosetta_rmsd_cutoff=4.0,
+            rosetta_no_auto_filter=False,
+            rosetta_debug_pyrosetta=False,
+            rosetta_save_top=0,
+        )
+
+        kw = batch_dock._engine_kwargs_from_args(args)["haddock"]
+        assert kw["sampling"] == 200
+        assert kw["select_top"] == 50
+        assert kw["tolerance"] == 25
+        assert kw["skip_flexref"] is True
+        assert kw["skip_emref"] is True
+
+    def test_screening_preset_uses_reduced_end_to_end_values(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            screening=True,
+            lightdock_steps=100,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            lightdock_anm=True,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=10000,
+            haddock_select_top=400,
+            haddock_skip_refinement=False,
+            haddock_skip_flexref=False,
+            haddock_skip_emref=False,
+            rosetta_n_runs=5000,
+            rosetta_top_n=20,
+            rosetta_cluster_top_n=200,
+            rosetta_relax=True,
+        )
+
+        batch_dock._apply_screening_preset(args, ["--screening"])
+
+        assert args.lightdock_steps == 50
+        assert args.lightdock_swarms == 50
+        assert args.lightdock_glowworms == 50
+        assert args.lightdock_anm is False
+        assert args.lightdock_auto_clean_pdb is True
+        assert args.haddock_sampling == 1000
+        assert args.haddock_select_top == 100
+        assert args.haddock_skip_refinement is True
+        assert args.rosetta_n_runs == 100
+        assert args.rosetta_top_n == 20
+        assert args.rosetta_cluster_top_n == 100
+        assert args.rosetta_relax is False
+
+    def test_screening_preset_preserves_explicit_overrides(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            screening=True,
+            lightdock_steps=300,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            lightdock_anm=True,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=3000,
+            haddock_select_top=400,
+            haddock_skip_refinement=False,
+            haddock_skip_flexref=False,
+            haddock_skip_emref=False,
+            rosetta_n_runs=500,
+            rosetta_top_n=20,
+            rosetta_cluster_top_n=200,
+            rosetta_relax=True,
+        )
+
+        batch_dock._apply_screening_preset(
+            args,
+            [
+                "--screening",
+                "--lightdock-steps",
+                "300",
+                "--haddock-sampling=3000",
+                "--rosetta-n-runs",
+                "500",
+                "--lightdock-anm",
+                "--rosetta-relax",
+            ],
+        )
+
+        assert args.lightdock_steps == 300
+        assert args.haddock_sampling == 3000
+        assert args.rosetta_n_runs == 500
+        assert args.lightdock_anm is True
+        assert args.rosetta_relax is True
+
+    def test_haddock_skip_flexref_implies_skip_emref(self):
+        from ppinsight import batch_dock
+
+        args = SimpleNamespace(
+            lightdock_steps=100,
+            lightdock_swarms=400,
+            lightdock_glowworms=200,
+            cores=4,
+            lightdock_anm=False,
+            lightdock_scoring=None,
+            lightdock_auto_clean_pdb=False,
+            haddock_sampling=200,
+            haddock_select_top=50,
+            haddock_tolerance=5,
+            haddock_skip_refinement=False,
+            haddock_skip_flexref=True,
+            haddock_skip_emref=False,
+            rosetta_n_runs=5,
+            rosetta_top_n=20,
+            rosetta_relax=False,
+            rosetta_no_cluster=False,
+            rosetta_cluster_top_n=200,
+            rosetta_rmsd_cutoff=4.0,
+            rosetta_no_auto_filter=False,
+            rosetta_debug_pyrosetta=False,
+            rosetta_save_top=0,
+        )
+
+        kw = batch_dock._engine_kwargs_from_args(args)["haddock"]
+        assert kw["skip_flexref"] is True
+        assert kw["skip_emref"] is True
 
 
 # ---------------------------------------------------------------------------

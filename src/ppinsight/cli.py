@@ -18,7 +18,6 @@ Usage::
     ppinsight batch     pairs.csv --engines lightdock haddock
     ppinsight quality   model.pdb native.pdb
     ppinsight quality   scores.tsv native.pdb -o scores_quality.tsv
-    ppinsight prodigy   scores.tsv --output scores_prodigy.tsv
     ppinsight consrank  data/output/rosetta_runs/run1 --engine rosetta
 """
 
@@ -34,8 +33,8 @@ _SUBCOMMANDS = {
     "compare":   "ppinsight.visualizer",
     "parse":     "ppinsight.parse_pairs",
     "batch":     "ppinsight.batch_dock",
+    "purge":     "ppinsight.purge_runs",
     "quality":   "ppinsight.quality",
-    "prodigy":   "ppinsight.prodigy",
     "consrank":  "ppinsight.consrank",
 }
 
@@ -80,8 +79,8 @@ def _print_help():
         "compare":   "Visualise and compare docking scores",
         "parse":     "Parse an interaction table into a flat pairs file",
         "batch":     "Batch-run docking for all pairs in a pairs file",
+        "purge":     "Preview or remove failed batch-run directories",
         "quality":   "Evaluate docking quality with DockQ (CAPRI metrics)",
-        "prodigy":   "Predict binding affinity with PRODIGY",
         "consrank":  "Reference-free consensus ranking (Iter-CONSRANK)",
     }
     for cmd in _SUBCOMMANDS:
