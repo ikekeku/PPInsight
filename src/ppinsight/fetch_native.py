@@ -209,28 +209,14 @@ def _search_payload(accession_a: str, accession_b: str, max_hits: int) -> dict:
             "parameters": {
                 "attribute": (
                     "rcsb_polymer_entity_container_identifiers."
-                    "reference_sequence_identifiers.database_name"
+                    "reference_sequence_identifiers.database_accession"
                 ),
                 "operator": "exact_match",
-                "value": "UniProt",
+                "value": accession,
             },
         }
+        for accession in accessions
     ]
-    for accession in accessions:
-        nodes.append(
-            {
-                "type": "terminal",
-                "service": "text",
-                "parameters": {
-                    "attribute": (
-                        "rcsb_polymer_entity_container_identifiers."
-                        "reference_sequence_identifiers.database_accession"
-                    ),
-                    "operator": "exact_match",
-                    "value": accession,
-                },
-            }
-        )
 
     return {
         "query": {
@@ -404,10 +390,21 @@ def _assembly_record(
     for asym_id in assembly_asym_ids:
         instance_key = (entry_id, asym_id)
         if instance_key not in instance_cache:
-            instance_cache[instance_key] = _get_json(
-                f"{_RCSB_CORE_URL}/polymer_entity_instance/{entry_id}/{asym_id}"
-            )
+            try:
+                instance_cache[instance_key] = _get_json(
+                    f"{_RCSB_CORE_URL}/polymer_entity_instance/{entry_id}/{asym_id}"
+                )
+            except requests.exceptions.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 404:
+                    instance_cache[instance_key] = (
+                        None  # non-polymer asym_id (water, etc.)
+                    )
+                else:
+                    raise
+
         instance_data = instance_cache[instance_key]
+        if instance_data is None:
+            continue
         instance_ids = (
             instance_data.get("rcsb_polymer_entity_instance_container_identifiers", {})
             or {}
