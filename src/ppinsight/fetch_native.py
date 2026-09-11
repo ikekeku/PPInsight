@@ -396,7 +396,9 @@ def _assembly_record(
                 )
             except requests.exceptions.HTTPError as exc:
                 if exc.response is not None and exc.response.status_code == 404:
-                    instance_cache[instance_key] = None  # non-polymer asym_id (water, etc.)
+                    instance_cache[instance_key] = (
+                        None  # non-polymer asym_id (water, etc.)
+                    )
                 else:
                     raise
 
