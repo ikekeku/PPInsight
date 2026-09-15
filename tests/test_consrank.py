@@ -6,7 +6,7 @@ import stat
 
 import pytest
 
-from ppinsight import consrank
+from ppinsight import consrank, provenance
 
 # ---------------------------------------------------------------------------
 # CONTROL file format
@@ -210,6 +210,60 @@ def test_discover_poses_respects_max_poses(tmp_path):
         (run_dir / f"decoy_{i}.pdb").write_text("ATOM\n")
     found = consrank.discover_poses(str(run_dir), "rosetta", max_poses=2)
     assert len(found) == 2
+
+
+def _write_lightdock_run(run_dir, scores):
+    """Lay out swarm_N/lightdock_N.pdb poses plus a rank_by_scoring.list.
+
+    *scores* maps (swarm, glowworm) -> LightDock score. The rank file
+    mirrors lgd_rank.py's real layout, including the parenthesised
+    coordinates column that contains spaces.
+    """
+    lines = [
+        "Swarm  Glowworm   Coordinates   RecID  LigID  Luciferin  Neigh   VR"
+        "     RMSD    PDB             Clashes  Scoring"
+    ]
+    for (swarm, glowworm), score in scores.items():
+        d = run_dir / f"swarm_{swarm}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"lightdock_{glowworm}.pdb").write_text("ATOM\n")
+        lines.append(
+            f"  {swarm}    {glowworm}      (1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)"
+            f"      0      0    16.0     0   0.600   -1.000 "
+            f"lightdock_{glowworm}.pdb      0   {score}"
+        )
+    (run_dir / "rank_by_scoring.list").write_text("\n".join(lines) + "\n")
+
+
+def test_discover_poses_lightdock_max_poses_uses_rank_by_scoring(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_lightdock_run(run_dir, {
+        (0, 1): 10.0,   # filename-first, but worst score
+        (0, 2): 30.0,   # best
+        (1, 1): 20.0,
+        (1, 5): 5.0,
+    })
+    found = consrank.discover_poses(str(run_dir), "lightdock", max_poses=2)
+    assert [os.path.relpath(p, run_dir) for p in found] == [
+        os.path.join("swarm_0", "lightdock_2.pdb"),
+        os.path.join("swarm_1", "lightdock_1.pdb"),
+    ]
+
+
+def test_discover_poses_lightdock_max_poses_falls_back_without_rank_file(tmp_path):
+    run_dir = tmp_path / "run"
+    for swarm in ("swarm_0", "swarm_1"):
+        d = run_dir / swarm
+        d.mkdir(parents=True)
+        (d / "lightdock_1.pdb").write_text("ATOM\n")
+    found = consrank.discover_poses(str(run_dir), "lightdock", max_poses=1)
+    assert len(found) == 1
+
+
+def test_discover_poses_lightdock_uncapped_ignores_rank_file(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_lightdock_run(run_dir, {(0, 1): 1.0, (0, 2): 2.0})
+    assert len(consrank.discover_poses(str(run_dir), "lightdock")) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +511,20 @@ def test_scores_to_dataframe_uses_pose_engine_map(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_parse_pool_spec():
-    assert consrank.parse_pool_spec("rosetta=/some/dir") == ("rosetta", "/some/dir")
+    assert consrank.parse_pool_spec("rosetta=/some/dir") == (
+        "rosetta", "/some/dir", None,
+    )
+
+
+def test_parse_pool_spec_per_pool_cap():
+    assert consrank.parse_pool_spec("lightdock=/some/dir:50") == (
+        "lightdock", "/some/dir", 50,
+    )
+
+
+def test_parse_pool_spec_rejects_cap_below_two():
+    with pytest.raises(consrank.ConsrankError, match="at least 2"):
+        consrank.parse_pool_spec("lightdock=/some/dir:1")
 
 
 def test_parse_pool_spec_rejects_bad_format():
@@ -540,6 +607,180 @@ def test_harmonize_pool_chains_rejects_mismatched_chain_counts(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Cross-engine residue harmonization
+# ---------------------------------------------------------------------------
+
+_AA3 = {"A": "ALA", "C": "CYS", "D": "ASP", "E": "GLU", "F": "PHE", "G": "GLY",
+        "K": "LYS", "L": "LEU", "M": "MET", "N": "ASN", "P": "PRO", "Q": "GLN",
+        "R": "ARG", "S": "SER", "T": "THR", "V": "VAL", "W": "TRP", "Y": "TYR"}
+
+
+def _residue_lines(chain, resnum, one_letter, serial, *, with_h=False):
+    """One residue's CA (and optionally an H atom) as PDB ATOM lines."""
+    resname = _AA3[one_letter]
+    lines = [
+        f"ATOM  {serial:>5}  CA  {resname} {chain}{resnum:>4}    "
+        "0.000   0.000   0.000  1.00 20.00           C\n"
+    ]
+    if with_h:
+        lines.append(
+            f"ATOM  {serial + 1:>5}  HA  {resname} {chain}{resnum:>4}    "
+            "0.000   0.000   0.000  1.00 20.00           H\n"
+        )
+    return "".join(lines)
+
+
+def _write_pose(path, partners, *, with_h=False):
+    """*partners* is [(chain, start_resnum, sequence), ...] in file order."""
+    serial = 1
+    out = []
+    for chain, start, seq in partners:
+        for i, aa in enumerate(seq):
+            out.append(_residue_lines(chain, start + i, aa, serial, with_h=with_h))
+            serial += 2
+        out.append("TER\n")
+    path.write_text("".join(out))
+
+
+def _harmonized_residues(path):
+    """Return [(chain, resnum, resname)] per residue, plus the atom names seen."""
+    residues, atoms = [], set()
+    for line in path.read_text().splitlines():
+        if not line.startswith("ATOM"):
+            continue
+        atoms.add(line[12:16].strip())
+        key = (line[21], int(line[22:26]), line[17:20])
+        if not residues or residues[-1] != key:
+            residues.append(key)
+    return residues, atoms
+
+
+def _source_with_pose(engine, rec_chains, lig_chains, pose_dir, partners, **kw):
+    filename = f"{engine}_pose.pdb"
+    _write_pose(pose_dir / filename, partners, **kw)
+    source = consrank.PoseSource(
+        engine=engine, run_dir=f"/fake/{engine}", pose_paths=[],
+        rec_chains=rec_chains, lig_chains=lig_chains,
+    )
+    source.staged_filenames = [filename]
+    return source
+
+
+def test_harmonize_pool_residues_renumbers_onto_shared_reference(tmp_path):
+    # Rosetta renumbered the whole complex from 1 and dropped the receptor's
+    # first residue; HADDOCK/LightDock keep the original numbering.
+    rosetta = _source_with_pose(
+        "rosetta", "A", "B", tmp_path,
+        [("A", 1, "CDEFG"), ("B", 6, "KLM")],
+    )
+    haddock = _source_with_pose(
+        "haddock", "A", "B", tmp_path,
+        [("A", 16, "ACDEFG"), ("B", 21, "KLM")], with_h=True,
+    )
+
+    rec, lig, summary = consrank.harmonize_pool_residues(
+        str(tmp_path), [rosetta, haddock],
+    )
+
+    assert (rec, lig) == ("A", "B")
+    haddock_res, haddock_atoms = _harmonized_residues(tmp_path / "haddock_pose.pdb")
+    assert haddock_atoms == {"CA"}, "hydrogens must be stripped"
+    assert haddock_res == [
+        ("A", 1, "ALA"), ("A", 2, "CYS"), ("A", 3, "ASP"), ("A", 4, "GLU"),
+        ("A", 5, "PHE"), ("A", 6, "GLY"),
+        ("B", 1, "LYS"), ("B", 2, "LEU"), ("B", 3, "MET"),
+    ]
+    rosetta_res, _ = _harmonized_residues(tmp_path / "rosetta_pose.pdb")
+    # Rosetta's CDEFG aligns to reference positions 2-6: the same physical
+    # residue now has the same (chain, number) key in both engines' poses.
+    assert rosetta_res == [
+        ("A", 2, "CYS"), ("A", 3, "ASP"), ("A", 4, "GLU"), ("A", 5, "PHE"),
+        ("A", 6, "GLY"),
+        ("B", 1, "LYS"), ("B", 2, "LEU"), ("B", 3, "MET"),
+    ]
+    assert summary["reference_lengths"] == {"receptor": 6, "ligand": 3}
+    assert summary["rosetta"]["min_identity"] == 1.0
+
+
+def test_harmonize_pool_residues_merges_multichain_partner(tmp_path):
+    # Rosetta kept the ligand as two chains (B, C); HADDOCK merged them
+    # into one chain B and renumbered from 1. Chain counts differ, which
+    # harmonize_pool_chains would reject -- residue harmonization merges
+    # both onto a single ligand chain with matching numbering instead.
+    rosetta = _source_with_pose(
+        "rosetta", "A", "BC", tmp_path,
+        [("A", 1, "ACD"), ("B", 4, "KLM"), ("C", 7, "NPQ")],
+    )
+    haddock = _source_with_pose(
+        "haddock", "A", "B", tmp_path,
+        [("A", 1, "ACD"), ("B", 1, "KLMNPQ")],
+    )
+
+    consrank.harmonize_pool_residues(str(tmp_path), [rosetta, haddock])
+
+    rosetta_res, _ = _harmonized_residues(tmp_path / "rosetta_pose.pdb")
+    haddock_res, _ = _harmonized_residues(tmp_path / "haddock_pose.pdb")
+    assert rosetta_res == haddock_res
+    assert [r for r in rosetta_res if r[0] == "B"] == [
+        ("B", 1, "LYS"), ("B", 2, "LEU"), ("B", 3, "MET"),
+        ("B", 4, "ASN"), ("B", 5, "PRO"), ("B", 6, "GLN"),
+    ]
+
+
+def test_harmonize_pool_residues_keeps_unaligned_residues_past_reference(tmp_path):
+    # LightDock docked an extra ligand chain the other engine filtered out.
+    # Those residues must survive (CONSRANK needs their atoms for distances)
+    # but get numbers past the reference so they never alias a shared one.
+    lightdock = _source_with_pose(
+        "lightdock", "A", "BC", tmp_path,
+        [("A", 1, "ACD"), ("B", 1, "KLM"), ("C", 1, "WWWW")],
+    )
+    haddock = _source_with_pose(
+        "haddock", "A", "B", tmp_path,
+        [("A", 1, "ACD"), ("B", 1, "KLM")],
+    )
+
+    _, _, summary = consrank.harmonize_pool_residues(
+        str(tmp_path), [lightdock, haddock],
+    )
+
+    # Reference ligand is the longest sequence (LightDock's KLMWWWW, 7 aa).
+    assert summary["reference_lengths"]["ligand"] == 7
+    haddock_res, _ = _harmonized_residues(tmp_path / "haddock_pose.pdb")
+    assert [r for r in haddock_res if r[0] == "B"] == [
+        ("B", 1, "LYS"), ("B", 2, "LEU"), ("B", 3, "MET"),
+    ]
+    assert summary["haddock"]["min_coverage"] == 1.0
+
+
+def test_harmonize_pool_residues_handles_lightdock_letter_collision(tmp_path):
+    # LightDock pose reusing 'A' for both the receptor and the ligand's
+    # first chain; block order alone identifies the partner split.
+    lightdock = _source_with_pose(
+        "lightdock", "A", "AB", tmp_path,
+        [("A", 1, "ACD"), ("A", 1, "KL"), ("B", 1, "MN")],
+    )
+    haddock = _source_with_pose(
+        "haddock", "A", "B", tmp_path,
+        [("A", 1, "ACD"), ("B", 1, "KLMN")],
+    )
+
+    consrank.harmonize_pool_residues(str(tmp_path), [lightdock, haddock])
+
+    lightdock_res, _ = _harmonized_residues(tmp_path / "lightdock_pose.pdb")
+    haddock_res, _ = _harmonized_residues(tmp_path / "haddock_pose.pdb")
+    assert lightdock_res == haddock_res
+
+
+def test_harmonize_pool_residues_rejects_pose_missing_a_partner(tmp_path):
+    source = _source_with_pose(
+        "haddock", "A", "B", tmp_path, [("A", 1, "ACD")],
+    )
+    with pytest.raises(consrank.ConsrankError, match="no residues for one partner"):
+        consrank.harmonize_pool_residues(str(tmp_path), [source])
+
+
+# ---------------------------------------------------------------------------
 # CLI: --pool end-to-end wiring
 # ---------------------------------------------------------------------------
 
@@ -587,3 +828,52 @@ def test_cli_pool_ranks_across_engines(tmp_path, monkeypatch):
     df = pd.read_csv(output_path, sep="\t")
     assert set(df["model"]) == {"rosetta", "haddock"}
     assert len(df) == 3
+
+    sidecar = provenance.read_sidecar(str(output_path))
+    (meta,) = sidecar.values()
+    harmonization = meta["engine_meta"]["harmonization"]
+    assert harmonization["reference_lengths"] == {"receptor": 1, "ligand": 1}
+    assert set(harmonization) >= {"rosetta", "haddock"}
+
+
+def test_cli_pool_rejects_global_max_poses(tmp_path):
+    with pytest.raises(SystemExit):
+        consrank.main(["--pool", f"rosetta={tmp_path}", "--max-poses", "5"])
+
+
+def test_cli_pool_honours_per_pool_cap(tmp_path, monkeypatch):
+    rosetta_dir = tmp_path / "rosetta_run"
+    rosetta_dir.mkdir()
+    for i in (1, 2, 3, 4):
+        (rosetta_dir / f"decoy_{i}.pdb").write_text(
+            _atom_line("A", 1) + _atom_line("B", 2) + "TER\n"
+            "##Begin comments##\nppinsight_partners A_B\n##End comments##\n"
+        )
+    haddock_dir = tmp_path / "haddock_run" / "7_seletopclusts"
+    haddock_dir.mkdir(parents=True)
+    for i in (1, 2, 3):
+        with gzip.open(haddock_dir / f"cluster_{i}_model_1.pdb.gz", "wb") as fh:
+            fh.write((_atom_line("A", 1) + _atom_line("B", 2)).encode())
+
+    monkeypatch.setattr(consrank, "consrank_binary_available", lambda path=None: True)
+    monkeypatch.setattr(consrank, "_project_root", lambda: str(tmp_path))
+
+    def _fake_run_command(cmd, cwd=None):
+        pool = [n for n in os.listdir(cwd) if n.endswith(".pdb")]
+        with open(os.path.join(cwd, "Consrank_score.txt"), "w") as fh:
+            fh.write("\n".join(f"{n} 0.5" for n in pool) + "\n")
+        return ""
+
+    monkeypatch.setattr(consrank, "run_command", _fake_run_command)
+
+    output_path = tmp_path / "combined.tsv"
+    consrank.main([
+        "--pool", f"rosetta={rosetta_dir}:2",
+        "--pool", f"haddock={haddock_dir.parent}",
+        "--iterations", "1",
+        "-o", str(output_path),
+    ])
+
+    import pandas as pd
+    df = pd.read_csv(output_path, sep="\t")
+    assert df["model"].value_counts().to_dict() == {"rosetta": 2, "haddock": 3}

@@ -42,21 +42,31 @@ three engines don't share a chain-ID convention:
 To rank poses pooled *across* engines (the actual point of a reference-free
 consensus ranker -- comparing engines whose native scores aren't on the same
 scale), pass repeated ``--pool engine=run_dir`` instead of a single run_dir.
-Every pool's poses are relabeled onto one shared receptor/ligand chain
-scheme before CONSRANK ever sees them (see ``harmonize_pool_chains``), since
-CONSRANK's CONTROL file has exactly one chain-ID namespace for the whole
-pool. This only works when every pool has the same receptor chain *count*
-and the same ligand chain *count* -- e.g. HADDOCK normalizes a multi-chain
-receptor down to one chain while Rosetta/LightDock preserve the original
-count, so pooling those together for a mixed-complex pair is refused with a
-clear error rather than silently mis-comparing them.
+
+CONSRANK identifies a contact by ``(chain, residue number)`` and only reads
+what is in the PDB, so a pooled consensus is only meaningful if every pose
+names the same physical residue the same way. The engines don't: HADDOCK
+merges each partner into one chain and renumbers multi-chain partners from
+1, Rosetta's ``dump_pdb`` may renumber the whole complex sequentially, and
+LightDock keeps whatever the input PDBs had. ``harmonize_pool_residues``
+therefore rewrites every staged pose onto one shared scheme before CONSRANK
+sees it: each partner's chains are merged into a single letter (receptor
+``A``, ligand ``B``), hydrogens are dropped so explicit-H models don't
+register extra contacts, and residues are renumbered by aligning the
+partner's sequence to a pool-wide reference (the longest partner sequence in
+the pool). Residues that don't align to the reference keep unique numbers
+past the reference range, so nothing is silently dropped -- they just can't
+contribute consensus. Pass ``--no-harmonize`` to fall back to chain
+relabeling only (``harmonize_pool_chains``), which requires every pool to
+share the same receptor/ligand chain counts and identical numbering.
 
 Usage::
 
     python consrank.py data/output/rosetta_runs/2UUY_rec_vs_2UUY_lig --engine rosetta
     python consrank.py data/output/haddock_runs/run1 --engine haddock --cutoff 0.85
     python consrank.py --pool rosetta=data/output/rosetta_runs/run1 \\
-                        --pool haddock=data/output/haddock_runs/run1
+                        --pool haddock=data/output/haddock_runs/run1 \\
+                        --pool lightdock=data/output/lightdock_runs/run1:50
 """
 
 import argparse
@@ -334,6 +344,39 @@ def run_iterative_consrank(
 # Pose discovery per engine
 # ---------------------------------------------------------------------------
 
+def _lightdock_ranked_poses(run_dir: str) -> list[str] | None:
+    """Return LightDock pose paths best-first, from ``rank_by_scoring.list``.
+
+    ``lgd_rank.py`` writes this at the top of the run directory with one row
+    per pose: the swarm number is the first column, the pose filename is the
+    ``PDB`` column, and the LightDock score (higher is better) is the last.
+    The ``Coordinates`` column is a parenthesised tuple containing spaces, so
+    the row is located by its ``.pdb`` token rather than by column index.
+    Returns None when the rank file is missing (post-processing not run).
+    """
+    rank_file = os.path.join(run_dir, "rank_by_scoring.list")
+    if not os.path.isfile(rank_file):
+        return None
+    rows: list[tuple[float, str]] = []
+    with open(rank_file, encoding="utf-8") as fh:
+        for line in fh:
+            parts = line.split()
+            if len(parts) < 3 or not parts[0].isdigit():
+                continue
+            pdb_tokens = [p for p in parts if p.endswith(".pdb")]
+            if not pdb_tokens:
+                continue
+            try:
+                score = float(parts[-1])
+            except ValueError:
+                continue
+            path = os.path.join(run_dir, f"swarm_{parts[0]}", pdb_tokens[0])
+            if os.path.isfile(path):
+                rows.append((score, path))
+    rows.sort(key=lambda row: row[0], reverse=True)
+    return [path for _, path in rows]
+
+
 def discover_poses(
     run_dir: str, engine: str, *, max_poses: int | None = None,
 ) -> list[str]:
@@ -344,6 +387,11 @@ def discover_poses(
     * ``lightdock`` -- generated conformations in every ``swarm_*/`` dir.
     * ``rosetta`` -- ``decoy_*.pdb`` files written by ``save_all_decoys``.
     * ``haddock`` -- clustered models under ``*_seletopclusts/`` (gzipped).
+
+    With *max_poses*, LightDock pools are capped to the top-N poses by
+    LightDock score (via ``rank_by_scoring.list``) rather than the first N
+    filenames, which would be an arbitrary subset of glowworms. Other
+    engines are small enough that filename order is used as-is.
     """
     if engine == "lightdock":
         pattern = os.path.join(run_dir, "swarm_*", "lightdock_*.pdb")
@@ -363,10 +411,27 @@ def discover_poses(
         )
 
     if max_poses is not None and len(found) > max_poses:
-        print(
-            f"  [consrank] {len(found)} poses found, capping to --max-poses {max_poses}"
-        )
-        found = found[:max_poses]
+        if engine == "lightdock":
+            ranked = _lightdock_ranked_poses(run_dir)
+            if ranked:
+                print(
+                    f"  [consrank] {len(found)} lightdock poses found, keeping "
+                    f"the top {max_poses} by LightDock score (rank_by_scoring.list)"
+                )
+                found = ranked[:max_poses]
+            else:
+                print(
+                    f"  [consrank] Warning: no rank_by_scoring.list under "
+                    f"{run_dir}; capping {len(found)} lightdock poses to the "
+                    f"first {max_poses} by filename, not by score."
+                )
+                found = found[:max_poses]
+        else:
+            print(
+                f"  [consrank] {len(found)} poses found, capping to the first "
+                f"{max_poses}"
+            )
+            found = found[:max_poses]
 
     return [os.path.abspath(p) for p in found]
 
@@ -518,17 +583,33 @@ class PoseSource:
     staged_filenames: list[str] = field(default_factory=list)
 
 
-def parse_pool_spec(spec: str) -> tuple[str, str]:
-    """Parse an ``ENGINE=RUN_DIR`` ``--pool`` argument."""
+def parse_pool_spec(spec: str) -> tuple[str, str, int | None]:
+    """Parse an ``ENGINE=RUN_DIR[:MAX_POSES]`` ``--pool`` argument.
+
+    The optional ``:N`` suffix caps that pool alone (see ``discover_poses``),
+    so a large LightDock pool can be trimmed without also truncating the
+    Rosetta/HADDOCK pools it is being compared against.
+    """
     engine, sep, path = spec.partition("=")
     if not sep or not engine or not path:
-        raise ConsrankError(f"Invalid --pool value '{spec}'; expected ENGINE=RUN_DIR.")
+        raise ConsrankError(
+            f"Invalid --pool value '{spec}'; expected ENGINE=RUN_DIR[:MAX_POSES]."
+        )
     if engine not in _CHAIN_RESOLVERS:
         raise ConsrankError(
             f"Unknown engine '{engine}' in --pool '{spec}'. "
             f"Known engines: {', '.join(sorted(_CHAIN_RESOLVERS))}."
         )
-    return engine, path
+    max_poses = None
+    head, colon, tail = path.rpartition(":")
+    if colon and tail.isdigit() and head:
+        max_poses = int(tail)
+        path = head
+        if max_poses < 2:
+            raise ConsrankError(
+                f"--pool '{spec}': MAX_POSES must be at least 2, got {max_poses}."
+            )
+    return engine, path, max_poses
 
 
 def harmonize_pool_chains(
@@ -592,6 +673,239 @@ def harmonize_pool_chains(
             )
 
     return _FRESH_CHAIN_ALPHABET[:n_rec], _FRESH_CHAIN_ALPHABET[n_rec:total]
+
+
+# ---------------------------------------------------------------------------
+# Cross-engine residue harmonization
+# ---------------------------------------------------------------------------
+
+_HARMONIZED_REC_CHAIN = "A"
+_HARMONIZED_LIG_CHAIN = "B"
+_LOW_COVERAGE_WARN = 0.9
+
+
+@dataclass
+class _Residue:
+    partner: int
+    key: tuple[str, str, str]
+    resname: str
+    lines: list[str] = field(default_factory=list)
+
+
+def _is_hydrogen(line: str) -> bool:
+    element = line[76:78].strip() if len(line) >= 78 else ""
+    if element:
+        return element.upper() == "H"
+    name = line[12:16].strip()
+    return bool(name) and name.lstrip("0123456789")[:1].upper() == "H"
+
+
+def _three_to_one(resname: str) -> str:
+    from Bio.PDB.Polypeptide import protein_letters_3to1
+    return protein_letters_3to1.get(resname.upper(), "X")
+
+
+def _read_partner_residues(
+    pose_path: str, rec_chains: str, lig_chains: str,
+) -> list[_Residue]:
+    """Split *pose_path* into heavy-atom residues tagged by partner (0/1).
+
+    Waters and hydrogens are dropped: CONSRANK measures any-atom distances,
+    so explicit-H models (HADDOCK) would otherwise register more contacts
+    than heavy-atom-only ones (LightDock runs with ``noh``).
+    """
+    residues: list[_Residue] = []
+    current: _Residue | None = None
+    with open(pose_path, encoding="utf-8") as fh:
+        for line in fh:
+            if line[:6].strip() not in _PDB_COORD_RECORDS:
+                continue
+            resname = line[17:20].strip()
+            if resname == "HOH" or _is_hydrogen(line):
+                continue
+            chain = line[21]
+            if chain in rec_chains:
+                partner = 0
+            elif chain in lig_chains:
+                partner = 1
+            else:
+                continue
+            key = (chain, line[22:26], line[26])
+            if current is None or current.key != key or current.partner != partner:
+                current = _Residue(partner, key, resname)
+                residues.append(current)
+            current.lines.append(line)
+    return residues
+
+
+def _partner_sequence(residues: list[_Residue], partner: int) -> str:
+    return "".join(_three_to_one(r.resname) for r in residues if r.partner == partner)
+
+
+def _align_to_reference(seq: str, ref: str) -> tuple[dict[int, int], float, float]:
+    """Map *seq* indices onto *ref* indices by global pairwise alignment.
+
+    Returns ``(mapping, coverage, identity)`` where coverage is the fraction
+    of *seq* residues aligned to some reference residue and identity is the
+    fraction of those that match.
+    """
+    if seq == ref:
+        return {i: i for i in range(len(seq))}, 1.0, 1.0
+    if not seq or not ref:
+        return {}, 0.0, 0.0
+    from Bio.Align import PairwiseAligner
+    aligner = PairwiseAligner()
+    aligner.mode = "global"
+    aligner.match_score = 2
+    aligner.mismatch_score = -1
+    aligner.open_gap_score = -4
+    aligner.extend_gap_score = -0.5
+    alignment = aligner.align(ref, seq)[0]
+    mapping: dict[int, int] = {}
+    matches = 0
+    for (r0, r1), (s0, _s1) in zip(*alignment.aligned, strict=True):
+        for offset in range(r1 - r0):
+            mapping[s0 + offset] = r0 + offset
+            if ref[r0 + offset] == seq[s0 + offset]:
+                matches += 1
+    coverage = len(mapping) / len(seq)
+    identity = matches / len(mapping) if mapping else 0.0
+    return mapping, coverage, identity
+
+
+def _write_harmonized_pose(
+    pose_path: str,
+    residues: list[_Residue],
+    mappings: tuple[dict[int, int], dict[int, int]],
+    ref_lengths: tuple[int, int],
+) -> None:
+    """Rewrite *pose_path* with merged chains and reference numbering.
+
+    Residues without a reference counterpart are numbered past the
+    reference length so they stay in the file (CONSRANK still needs their
+    atoms for distances) but can never be mistaken for a shared residue.
+    """
+    chains = (_HARMONIZED_REC_CHAIN, _HARMONIZED_LIG_CHAIN)
+    seq_index = [0, 0]
+    next_extra = [ref_lengths[0] + 1, ref_lengths[1] + 1]
+    out: list[str] = []
+    prev_partner = None
+    for residue in residues:
+        partner = residue.partner
+        if prev_partner is not None and partner != prev_partner:
+            out.append("TER\n")
+        prev_partner = partner
+        ref_index = mappings[partner].get(seq_index[partner])
+        seq_index[partner] += 1
+        if ref_index is None:
+            number = next_extra[partner]
+            next_extra[partner] += 1
+        else:
+            number = ref_index + 1
+        for line in residue.lines:
+            line = line.rstrip("\n")
+            out.append(f"{line[:21]}{chains[partner]}{number:4d} {line[27:]}\n")
+    out.append("END\n")
+    with open(pose_path, "w", encoding="utf-8") as fh:
+        fh.writelines(out)
+
+
+def harmonize_pool_residues(
+    pose_dir: str,
+    sources: list[PoseSource],
+) -> tuple[str, str, dict]:
+    """Rewrite every staged pose across *sources* onto one residue scheme.
+
+    CONSRANK keys contacts by ``(chain, residue number)``, so pooling only
+    means something if the same physical residue has the same key in every
+    pose. Per pose, each partner's chains are merged into one letter (see
+    ``_HARMONIZED_REC_CHAIN``/``_HARMONIZED_LIG_CHAIN``), hydrogens and
+    waters are dropped, and residues are renumbered by aligning the
+    partner's sequence to the longest partner sequence found anywhere in the
+    pool. Alignments are cached per distinct sequence, so a pool of hundreds
+    of poses from one engine costs one alignment per partner.
+
+    Requires each source's poses to be laid out as contiguous per-chain
+    blocks in file order (receptor's chains, then the ligand's), which
+    ``_relabel_pose_chains_by_block_order`` relies on too. Returns the
+    harmonized ``(rec_chains, lig_chains)`` plus a summary dict for
+    provenance.
+    """
+    parsed: list[tuple[PoseSource, str, list[_Residue]]] = []
+    for source in sources:
+        # LightDock can reuse the same letter on both sides of the
+        # receptor/ligand boundary; relabel by block order first so the
+        # partner split is unambiguous before we read residues by chain.
+        n_rec, n_lig = len(source.rec_chains), len(source.lig_chains)
+        chain_map = list(_FRESH_CHAIN_ALPHABET[: n_rec + n_lig])
+        rec_letters = "".join(chain_map[:n_rec])
+        lig_letters = "".join(chain_map[n_rec:])
+        for filename in source.staged_filenames:
+            path = os.path.join(pose_dir, filename)
+            _relabel_pose_chains_by_block_order(path, chain_map)
+            residues = _read_partner_residues(path, rec_letters, lig_letters)
+            if not any(r.partner == 0 for r in residues) or not any(
+                r.partner == 1 for r in residues
+            ):
+                raise ConsrankError(
+                    f"'{filename}' ({source.engine}) has no residues for one "
+                    "partner after splitting by chain; cannot harmonize."
+                )
+            parsed.append((source, path, residues))
+
+    references = tuple(
+        max((_partner_sequence(res, p) for _, _, res in parsed), key=len)
+        for p in (0, 1)
+    )
+    ref_lengths = (len(references[0]), len(references[1]))
+    print(
+        f"  [consrank] harmonizing residues across {len(parsed)} poses: "
+        f"reference receptor={ref_lengths[0]} aa, ligand={ref_lengths[1]} aa"
+    )
+
+    cache: dict[tuple[int, str], tuple[dict[int, int], float, float]] = {}
+    summary: dict[str, dict] = {}
+    for source, path, residues in parsed:
+        mappings = []
+        stats = summary.setdefault(
+            source.engine, {"poses": 0, "min_coverage": 1.0, "min_identity": 1.0},
+        )
+        for partner in (0, 1):
+            seq = _partner_sequence(residues, partner)
+            key = (partner, seq)
+            if key not in cache:
+                cache[key] = _align_to_reference(seq, references[partner])
+            mapping, coverage, identity = cache[key]
+            mappings.append(mapping)
+            stats["min_coverage"] = min(stats["min_coverage"], coverage)
+            stats["min_identity"] = min(stats["min_identity"], identity)
+        stats["poses"] += 1
+        _write_harmonized_pose(path, residues, (mappings[0], mappings[1]), ref_lengths)
+
+    for engine, stats in summary.items():
+        poorly_aligned = (
+            stats["min_coverage"] < _LOW_COVERAGE_WARN
+            or stats["min_identity"] < _LOW_COVERAGE_WARN
+        )
+        if poorly_aligned:
+            print(
+                f"  [consrank] Warning: {engine} poses align poorly to the pool "
+                f"reference (coverage={stats['min_coverage']:.2f}, "
+                f"identity={stats['min_identity']:.2f}). The engines may have "
+                "docked different chain sets for this pair; contacts on "
+                "unshared residues cannot reach consensus."
+            )
+        else:
+            print(
+                f"  [consrank] {engine}: {stats['poses']} poses aligned "
+                f"(coverage>={stats['min_coverage']:.2f}, "
+                f"identity>={stats['min_identity']:.2f})"
+            )
+
+    summary["reference_lengths"] = {
+        "receptor": ref_lengths[0], "ligand": ref_lengths[1],
+    }
+    return _HARMONIZED_REC_CHAIN, _HARMONIZED_LIG_CHAIN, summary
 
 
 # ---------------------------------------------------------------------------
@@ -778,36 +1092,82 @@ def scores_to_dataframe(
 # CLI
 # ---------------------------------------------------------------------------
 
+_CLI_EPILOG = """\
+CONSRANK scores each pose by how often its receptor-ligand contacts recur
+across the whole pool, so a high score means "looks like the others", not
+"close to the native". Iterating with --cutoff prunes the pool towards its
+consensus core. The engines' native scores (LightDock energy, HADDOCK score,
+Rosetta I_sc) are not on a common scale; a pooled CONSRANK ranking is.
+
+examples:
+  # Rank one engine's run (engine auto-detected)
+  ppinsight consrank data/output/rosetta_runs/2UUY_rec_vs_2UUY_lig
+
+  # Pool three engines for the same pair; keep only LightDock's top 50 by score
+  ppinsight consrank \\
+      --pool rosetta=data/output/rosetta_runs/2UUY_rec_vs_2UUY_lig \\
+      --pool haddock=data/output/haddock_runs/2UUY_rec_vs_2UUY_lig \\
+      --pool lightdock=data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig:50 \\
+      -o data/output/scores/2UUY_consrank_pooled.tsv
+
+  # Override chain detection for a run the resolvers can't handle
+  ppinsight consrank my_run/ --engine lightdock --rec-chains AB --lig-chains C
+
+Output: a unified scores TSV (score_type=consrank_score, model=<engine>) plus a
+.provenance.json sidecar; the CONSRANK working directory under
+data/output/consrank_runs/ keeps the harmonized poses and every iteration's
+CONTROL/Consrank_score files.
+"""
+
+
 def main(argv=None):
     """CLI entrypoint: reference-free consensus ranking of pooled poses."""
     parser = argparse.ArgumentParser(
+        prog="ppinsight consrank",
         description=(
-            "Rank a pool of docking poses by contact-map consensus "
-            "(Iter-CONSRANK) -- no native reference structure required."
+            "Rank docking poses by contact-map consensus (Iter-CONSRANK).\n"
+            "Unlike 'ppinsight quality' (DockQ), no native reference structure\n"
+            "is needed, so poses from LightDock, HADDOCK3 and Rosetta can be\n"
+            "compared with each other."
         ),
+        epilog=_CLI_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "run_dir",
         nargs="?",
         default=None,
         help=(
-            "Docking engine run directory containing poses to rank. "
-            "Omit this and use --pool instead to rank poses pooled across "
-            "several engines."
+            "One docking engine's run directory (e.g. "
+            "data/output/haddock_runs/<pair>). Omit it and pass --pool "
+            "instead to rank poses pooled across several engines."
         ),
     )
     parser.add_argument(
         "--pool",
         action="append",
-        metavar="ENGINE=RUN_DIR",
+        metavar="ENGINE=RUN_DIR[:N]",
         default=None,
         help=(
-            "Add one engine's poses to a cross-engine pool, e.g. "
-            "'--pool rosetta=data/output/rosetta_runs/run1'. Repeat for "
-            "each engine to include. Mutually exclusive with run_dir/"
-            "--engine/--rec-chains/--lig-chains -- each pool auto-resolves "
-            "its own chains, then every pose is relabeled onto one shared "
-            "scheme (see the module docstring)."
+            "Add one engine's run directory to a cross-engine pool; repeat "
+            "once per engine (lightdock, haddock, rosetta). An optional :N "
+            "suffix keeps only that pool's top N poses (by LightDock score "
+            "for lightdock, first N otherwise) without capping the other "
+            "pools. Poses from every pool are rewritten onto one shared "
+            "chain/residue-numbering scheme before ranking (see "
+            "--no-harmonize). Cannot be combined with run_dir, --engine, "
+            "--rec-chains, --lig-chains or --max-poses."
+        ),
+    )
+    parser.add_argument(
+        "--no-harmonize",
+        action="store_true",
+        help=(
+            "With --pool: only relabel chain letters, do not merge chains, "
+            "strip hydrogens or renumber residues. Requires every pool to "
+            "have the same receptor/ligand chain counts and identical "
+            "residue numbering; otherwise the consensus silently compares "
+            "different residues."
         ),
     )
     parser.add_argument(
@@ -815,68 +1175,77 @@ def main(argv=None):
         choices=["lightdock", "haddock", "rosetta"],
         default=None,
         help=(
-            "Which engine produced run_dir (default: auto-detect using "
-            "PPInsight's registry detectors, the same ones 'ppinsight "
-            "collect' uses). Not used with --pool."
+            "Engine that produced run_dir. Default: auto-detect with the "
+            "same detectors 'ppinsight collect' uses. Not used with --pool."
         ),
     )
     parser.add_argument(
-        "--rec-chains", default=None,
+        "--rec-chains", default=None, metavar="IDS",
         help=(
-            "Receptor chain IDs, e.g. 'C'. Overrides auto-detection -- use "
-            "this when the per-engine chain resolver can't be applied "
-            "(see the module docstring for why chain IDs aren't uniform "
-            "across engines)."
+            "Receptor chain IDs as found in the pose files, e.g. 'A' or "
+            "'ABC'. Overrides per-engine auto-detection (HADDOCK: fixed "
+            "A/B; Rosetta: the ppinsight_partners comment in each decoy; "
+            "LightDock: the input PDBs copied into the run directory)."
         ),
     )
     parser.add_argument(
-        "--lig-chains", default=None,
-        help="Ligand chain IDs, e.g. 'BA'. Must be given together with --rec-chains.",
+        "--lig-chains", default=None, metavar="IDS",
+        help="Ligand chain IDs, e.g. 'B' or 'DE'. Must be given with --rec-chains.",
     )
     parser.add_argument(
-        "--distance", type=float, default=5.0,
-        help="Contact-distance cutoff in Angstrom (default: 5.0, upstream's default).",
+        "--distance", type=float, default=5.0, metavar="ANGSTROM",
+        help=(
+            "Any-atom distance below which two residues count as in contact "
+            "(default: 5.0, upstream's default)."
+        ),
     )
     parser.add_argument(
         "--gen-mat", action="store_true",
-        help="Also generate the full contacts matrix (CONSRANK's GenMat=1).",
-    )
-    parser.add_argument(
-        "--cutoff", type=float, default=0.85,
         help=(
-            "Fraction of poses kept each iteration (default: 0.85, matching "
-            "upstream's default 'cut' file). Lower values converge faster "
-            "to a smaller consensus set; 1.0 disables pruning between "
-            "iterations."
+            "Also write CONSRANK's full contact-conservation matrix "
+            "(GenMat=1) into the working directory."
         ),
     )
     parser.add_argument(
-        "--iterations", type=int, default=10,
+        "--cutoff", type=float, default=0.85, metavar="FRACTION",
         help=(
-            "Maximum number of refinement iterations (default: 10). "
-            "Stops early once the pool can no longer shrink."
+            "Fraction of poses kept after each iteration (default: 0.85, "
+            "upstream's default). Lower values converge faster to a smaller "
+            "consensus core; 1.0 disables pruning so every pose is scored "
+            "once against the full pool."
         ),
     )
     parser.add_argument(
-        "--max-poses", type=int, default=None,
+        "--iterations", type=int, default=10, metavar="N",
         help=(
-            "Cap the number of poses pulled from run_dir before ranking "
-            "(default: no cap). LightDock pools in particular can include "
-            "hundreds of generated conformations across all swarms."
+            "Maximum number of rank-and-prune iterations (default: 10). "
+            "Stops early once the pool can no longer shrink. The final "
+            "scores are those of the last iteration's surviving poses."
         ),
     )
     parser.add_argument(
-        "--consrank-bin", default=None,
+        "--max-poses", type=int, default=None, metavar="N",
         help=(
-            "Path to the CONSRANK binary "
-            "(default: third_party/iter_consrank/CONSRANK)."
+            "Single run_dir only: keep at most N poses (default: no cap). "
+            "For LightDock this keeps the top N by LightDock score using "
+            "rank_by_scoring.list; other engines keep the first N. With "
+            "--pool, use the per-pool ENGINE=RUN_DIR:N suffix instead so "
+            "one engine's cap doesn't truncate the others."
         ),
     )
     parser.add_argument(
-        "-o", "--output", default=None,
+        "--consrank-bin", default=None, metavar="PATH",
         help=(
-            "Output scores TSV/CSV (default: <run_dir's consrank_runs "
-            "working dir>/consrank_scores.tsv)."
+            "CONSRANK executable (default: third_party/iter_consrank/CONSRANK, "
+            "built by setup.sh; it is never looked up on $PATH)."
+        ),
+    )
+    parser.add_argument(
+        "-o", "--output", default=None, metavar="FILE",
+        help=(
+            "Scores file to write; .tsv or .csv by extension (default: "
+            "consrank_scores.tsv inside the CONSRANK working directory). "
+            "A <FILE>.provenance.json sidecar is written next to it."
         ),
     )
 
@@ -884,12 +1253,19 @@ def main(argv=None):
 
     if bool(args.pool) == bool(args.run_dir):
         parser.error(
-            "Pass exactly one of: run_dir, or one or more --pool ENGINE=RUN_DIR."
+            "Pass exactly one of: run_dir, or one or more --pool ENGINE=RUN_DIR[:N]."
         )
     if args.pool and (args.engine or args.rec_chains or args.lig_chains):
         parser.error(
             "--pool cannot be combined with --engine/--rec-chains/--lig-chains."
         )
+    if args.pool and args.max_poses is not None:
+        parser.error(
+            "--max-poses applies to a single run_dir; with --pool, cap one "
+            "pool with the ENGINE=RUN_DIR:N suffix instead."
+        )
+    if args.no_harmonize and not args.pool:
+        parser.error("--no-harmonize only applies to --pool.")
 
     try:
         consrank_bin = _require_consrank_binary(
@@ -898,12 +1274,12 @@ def main(argv=None):
         if args.pool:
             (
                 pose_dir, rec_chains, lig_chains, staged,
-                pair_label, pose_engine_map, source_dirs,
+                pair_label, pose_engine_map, source_dirs, harmonization,
             ) = _prepare_pool(args)
         else:
             (
                 pose_dir, rec_chains, lig_chains, staged,
-                pair_label, pose_engine_map, source_dirs,
+                pair_label, pose_engine_map, source_dirs, harmonization,
             ) = _prepare_single(args)
 
         result = run_iterative_consrank(
@@ -937,6 +1313,7 @@ def main(argv=None):
         "history": result["history"],
         "consrank_binary": consrank_bin,
         "source_dirs": source_dirs,
+        "harmonization": harmonization,
     })
     run_id = provenance.make_run_id("consrank", pair)
     provenance.write_sidecar(output_path, {run_id: prov})
@@ -987,19 +1364,19 @@ def _prepare_single(args):
             pose_dir, staged, rec_chains, lig_chains,
         )
 
-    return pose_dir, rec_chains, lig_chains, staged, pair_label, None, [run_dir]
+    return pose_dir, rec_chains, lig_chains, staged, pair_label, None, [run_dir], None
 
 
 def _prepare_pool(args):
     """Resolve poses/chains for a --pool cross-engine CLI invocation."""
     sources: list[PoseSource] = []
     for spec in args.pool:
-        engine, path = parse_pool_spec(spec)
+        engine, path, max_poses = parse_pool_spec(spec)
         run_dir = os.path.abspath(path)
         if not os.path.isdir(run_dir):
             print(f"ERROR: run_dir not found: {run_dir}", file=sys.stderr)
             sys.exit(2)
-        pose_paths = discover_poses(run_dir, engine, max_poses=args.max_poses)
+        pose_paths = discover_poses(run_dir, engine, max_poses=max_poses)
         rec_chains, lig_chains = resolve_chains(run_dir, engine, pose_paths)
         print(
             f"[{engine}] {len(pose_paths)} poses from {run_dir} "
@@ -1021,7 +1398,13 @@ def _prepare_pool(args):
             source.pose_paths, pose_dir, prefix=source.engine,
         )
 
-    rec_chains, lig_chains = harmonize_pool_chains(pose_dir, sources)
+    if args.no_harmonize:
+        rec_chains, lig_chains = harmonize_pool_chains(pose_dir, sources)
+        harmonization = None
+    else:
+        rec_chains, lig_chains, harmonization = harmonize_pool_residues(
+            pose_dir, sources,
+        )
     print(f"Harmonized chains across pool: receptor={rec_chains}   ligand={lig_chains}")
 
     staged = [f for s in sources for f in s.staged_filenames]
@@ -1030,7 +1413,7 @@ def _prepare_pool(args):
 
     return (
         pose_dir, rec_chains, lig_chains, staged,
-        pair_label, pose_engine_map, source_dirs,
+        pair_label, pose_engine_map, source_dirs, harmonization,
     )
 
 

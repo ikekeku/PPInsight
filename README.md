@@ -32,7 +32,10 @@ conda activate ppinsight
 
 > `setup.sh` downloads PyRosetta (~1.5 GB) automatically.  To skip that
 > step (e.g. if you only need HADDOCK / LightDock), run
-> `bash setup.sh --no-rosetta`.
+> `bash setup.sh --no-rosetta`.  It also clones and compiles
+> [Iter-CONSRANK](https://github.com/AOCD-lab/Iter-consrank) into
+> `third_party/iter_consrank/` for `ppinsight consrank`; skip that with
+> `--no-iterconsrank`.
 
 <details>
 <summary>Manual step-by-step setup</summary>
@@ -65,6 +68,7 @@ Each subcommand is also available as a standalone command:
 | `ppinsight batch`           | `batch_dock`          |
 | `ppinsight purge`           | `ppinsight_purge`     |
 | `ppinsight quality`         | `ppinsight_quality`   |
+| `ppinsight consrank`        | `ppinsight_consrank`  |
 
 The examples below use the umbrella form.  Replace
 `ppinsight <subcommand>` with the standalone name if you prefer.
@@ -481,6 +485,43 @@ If your scores file came from `ppinsight collect`, `ppinsight quality` reads
 each pose from its `output_path` value and appends DockQ/CAPRI evaluation rows
 back into a new unified scores file.
 
+### 7. Rank poses without a native structure (Iter-CONSRANK)
+
+DockQ needs an experimental reference.  When there is none, `ppinsight
+consrank` ranks poses by *consensus*: each pose is scored by how often its
+receptor–ligand contacts recur across the whole pool
+([Iter-CONSRANK](https://github.com/AOCD-lab/Iter-consrank), compiled by
+`setup.sh`).  Because the score depends only on the pool, poses from
+LightDock, HADDOCK3 and Rosetta — whose native scores are on unrelated
+scales — can be ranked together.
+
+```bash
+# Rank one engine's run (engine auto-detected from the directory layout)
+ppinsight consrank data/output/rosetta_runs/2UUY_rec_vs_2UUY_lig
+
+# Pool three engines for the same pair.  The :50 suffix keeps only
+# LightDock's 50 best-scoring poses (from rank_by_scoring.list) so its
+# thousands of glowworm conformations don't swamp the other engines.
+ppinsight consrank \
+    --pool rosetta=data/output/rosetta_runs/2UUY_rec_vs_2UUY_lig \
+    --pool haddock=data/output/haddock_runs/2UUY_rec_vs_2UUY_lig \
+    --pool lightdock=data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig:50 \
+    -o data/output/scores/2UUY_consrank_pooled.tsv
+
+# The output is a unified scores file: model = source engine per pose
+ppinsight compare data/output/scores/2UUY_consrank_pooled.tsv --metric consrank_score
+```
+
+Before ranking a pool, `consrank` rewrites every pose onto one shared
+scheme — each partner merged into a single chain, hydrogens dropped, and
+residues renumbered by sequence alignment to a pool-wide reference — because
+CONSRANK identifies contacts by chain and residue number and the engines
+don't agree on either.  It prints per-engine alignment coverage/identity and
+warns when an engine's poses don't match the rest of the pool (e.g. the
+engines docked different chain sets for the pair).  A high CONSRANK score
+means "agrees with the pool", not "close to the native"; iterating with
+`--cutoff` prunes towards the consensus core.
+
 ---
 
 ## Tutorial
@@ -501,10 +542,11 @@ Common setup, plotting, and CAPRI questions are covered in
 
 ### Three-layer evaluation
 
-PPInsight supports two complementary comparison layers:
+PPInsight supports three complementary comparison layers:
 
 1. Within-model: use `violin`, `ridge`, and `cdf` on engine-native scores to inspect one engine's pose distribution.
 2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, `scatter`, and `difference` to compare engines on the same protein pair when you have an experimental reference structure for that pair.
+3. Cross-model, reference-free: use `ppinsight consrank --pool` to rank poses from several engines by contact-map consensus when no native structure exists.
 
 ---
 
@@ -522,9 +564,11 @@ src/ppinsight/
   batch_dock.py         # Batch docking for all pairs
   parse_pairs.py        # Protein interaction table → pairs file
   quality.py            # DockQ quality evaluation
+  consrank.py           # Reference-free consensus ranking (Iter-CONSRANK)
   provenance.py         # Run-level metadata & record I/O
   utils.py              # Shared utilities (path resolution)
   rosetta/              # PyRosetta pipeline internals
+third_party/            # Vendored Iter-CONSRANK build (created by setup.sh, gitignored)
 data/                   # User I/O: input PDBs & pairs → output docking runs
 tests/                  # pytest test suite
 tutorials/              # End-to-end walkthrough with pre-built scores & sample plots
@@ -550,6 +594,7 @@ data/
     ├── haddock_runs/      # HADDOCK docking outputs
     ├── lightdock_runs/    # LightDock docking outputs
     ├── rosetta_runs/      # Rosetta docking outputs
+    ├── consrank_runs/     # CONSRANK working dirs (harmonized poses, per-iteration scores)
     ├── scores/            # Unified scores & batch results
     └── plots/             # Saved figures
 ```

@@ -5,12 +5,16 @@ Best practices from the RosettaDock protocol:
 
 * **Prepacking** is mandatory before docking — removes internal clashes in
   each partner so that docking scores are not contaminated by intra-molecular
-  artefacts.
+  artefacts. The packer task is restricted to repacking: PyRosetta's default
+  task allows design at every position, which would silently replace the
+  input sequence.
 * ``-ex1 -ex2aro`` extra rotamer sampling must be enabled for accurate
   side-chain packing at the interface.
-* **Global docking** (PPInsight default) requires ``-spin``,
-  ``-randomize1``, and ``-randomize2`` flags — these are modelled here
-  via rigid-body perturbation movers.
+* **Global docking** (PPInsight default) randomises both partners'
+  orientations and spins the ligand before each trajectory (Rosetta's
+  ``-randomize1 -randomize2 -spin``), then runs the standard two-stage
+  ``DockingProtocol``: centroid low-resolution Monte Carlo search followed by
+  full-atom high-resolution refinement with interface repacking.
 * Production runs should use **10 000–100 000** decoys (``nstruct``).
   The pipeline warns when fewer are requested.
 * The **I_sc** (interface score / ``dG_separated``) is the primary quality
@@ -26,22 +30,31 @@ This module handles:
 import sys
 import warnings
 
-from pyrosetta.rosetta.core.pack.task import TaskFactory
-from pyrosetta.rosetta.protocols.docking import FaDockingSlideIntoContact
-from pyrosetta.rosetta.protocols.minimization_packing import MinMover, PackRotamersMover
-
-# pylint: disable=no-member, import-error
-from pyrosetta.rosetta.protocols.moves import SequenceMover
-
-# pylint: enable=no-member, import-error
-
 try:
     import pyrosetta
     from pyrosetta import rosetta
+    from pyrosetta.rosetta.core.pack.task import TaskFactory, operation
+    from pyrosetta.rosetta.protocols.minimization_packing import PackRotamersMover
 except ImportError:
     print("ERROR: PyRosetta not found!")
     print("Please install PyRosetta: pip install pyrosetta-*.whl")
     sys.exit(1)
+
+
+DOCKING_JUMP = 1
+
+# Rosetta's -dock_pert defaults for local docking: 3 degrees, 8 Angstrom.
+LOCAL_PERTURB_ROT_DEG = 3.0
+LOCAL_PERTURB_TRANS_ANG = 8.0
+
+# DockingProtocol's low-resolution filter rejects trajectories that end
+# without interchain contact or with clashes; the Rosetta app re-runs such
+# jobs (FAIL_RETRY). Cap the retries so a pathological input can't loop.
+MAX_DOCKING_ATTEMPTS = 10
+
+
+class DockingTrajectoryError(RuntimeError):
+    """Raised when every docking attempt was rejected by Rosetta's filters."""
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +69,8 @@ def ensure_init(extra_flags: str = "", *, mute: bool = True):
 
     Always includes ``-ex1 -ex2aro`` for extra rotamer sampling at the
     interface, which is **mandatory** for accurate RosettaDock results.
+    ``prepare_structure.initialize_pyrosetta`` passes the same flags, so the
+    pipeline gets them whichever entry point initialises first.
     """
     global _INIT_DONE
     if _INIT_DONE:
@@ -78,6 +93,22 @@ def ensure_init(extra_flags: str = "", *, mute: bool = True):
 # ---------------------------------------------------------------------------
 # Pre-packing (mandatory before docking)
 # ---------------------------------------------------------------------------
+
+def repack_only_task_factory():
+    """Task factory that repacks side chains without changing the sequence.
+
+    A bare ``TaskFactory()`` yields a task where every residue is
+    designable, so a packer built from it rewrites the protein's sequence.
+    ``RestrictToRepacking`` turns that off; ``InitializeFromCommandline``
+    picks up ``-ex1 -ex2aro``; ``IncludeCurrent`` keeps the input rotamers
+    in the search.
+    """
+    task_factory = TaskFactory()
+    task_factory.push_back(operation.InitializeFromCommandline())
+    task_factory.push_back(operation.IncludeCurrent())
+    task_factory.push_back(operation.RestrictToRepacking())
+    return task_factory
+
 
 def prepack(pose, scorefxn=None):
     """Pre-pack side chains to remove intra-molecular clashes.
@@ -102,70 +133,57 @@ def prepack(pose, scorefxn=None):
     if scorefxn is None:
         scorefxn = pyrosetta.create_score_function("ref2015")
 
-    task_factory = TaskFactory()
     packer = PackRotamersMover()
-    packer.task_factory(task_factory)
+    packer.task_factory(repack_only_task_factory())
     packer.score_function(scorefxn)
     packer.apply(pose)
     return pose
 
 
-def setup_docking_protocol():
-    """
-    Setup a complete docking protocol using DockMCMProtocol.
+# ---------------------------------------------------------------------------
+# Docking protocol
+# ---------------------------------------------------------------------------
+
+def setup_docking_protocol(global_docking=True):
+    """Build the standard RosettaDock ``DockingProtocol`` for jump 1.
+
+    Global docking runs both stages: a centroid low-resolution Monte Carlo
+    rigid-body search, then full-atom high-resolution refinement
+    (``DockMCMProtocol``) with interface repacking and side-chain recovery.
+    Local docking (``global_docking=False``) skips the low-resolution stage
+    and only refines around the starting orientation.
+
+    The fold tree is not rebuilt here (``autofoldtree=False``):
+    ``prepare_structure.combine_proteins`` already set up the docking fold
+    tree for the receptor/ligand partner split.
 
     Calls :func:`ensure_init` to guarantee ``-ex1 -ex2aro`` flags.
-
-    Returns:
-        Configured docking protocol
     """
     ensure_init()
-    # Use the full DockMCMProtocol which includes low-res and high-res docking
-    docking = rosetta.protocols.docking.DockMCMProtocol()  # pylint: disable=no-member
+    protocol = rosetta.protocols.docking.DockingProtocol(  # pylint: disable=no-member
+        DOCKING_JUMP,
+        False,                 # low_res_protocol_only
+        not global_docking,    # docking_local_refine
+        False,                 # autofoldtree
+    )
+    movable_jumps = rosetta.utility.vector1_int()  # pylint: disable=no-member
+    movable_jumps.append(DOCKING_JUMP)
+    protocol.set_movable_jumps(movable_jumps)
+    return protocol
 
-    # Set score functions
-    scorefxn = pyrosetta.get_fa_scorefxn()
-    docking.set_scorefxn(scorefxn)
 
-    return docking
+def randomize_partners(pose, jump=DOCKING_JUMP):
+    """Fully randomise the starting orientation for global docking.
 
-
-def setup_simple_docking():
+    Equivalent to Rosetta's ``-randomize1 -randomize2 -spin``: each partner
+    is rotated uniformly at random about its own centroid, then the
+    downstream partner is spun about the axis joining the two centroids.
+    Modifies *pose* in place.
     """
-    Setup a simple but complete docking workflow.
-
-    Calls :func:`ensure_init` to guarantee ``-ex1 -ex2aro`` flags.
-
-    Returns:
-        Configured SequenceMover with full docking pipeline
-    """
-    ensure_init()
-    # Create a sequence of movers for docking
-
-    # Score function
-    scorefxn = pyrosetta.get_fa_scorefxn()
-
-    # Create movemap for docking
-    movemap = rosetta.core.kinematics.MoveMap()
-    movemap.set_jump(1, True)  # Allow rigid body movement
-    movemap.set_bb(False)      # Don't move backbone
-    movemap.set_chi(True)      # Allow side chain movement
-
-    # Create movers
-    # 1. Slide proteins into contact
-    slide_into_contact = FaDockingSlideIntoContact(1)  # jump number = 1
-
-    # 2. Minimize
-    min_mover = MinMover()
-    min_mover.movemap(movemap)
-    min_mover.score_function(scorefxn)
-
-    # Combine into sequence
-    sequence = SequenceMover()
-    sequence.add_mover(slide_into_contact)
-    sequence.add_mover(min_mover)
-
-    return sequence
+    rigid = rosetta.protocols.rigid  # pylint: disable=no-member
+    rigid.RigidBodyRandomizeMover(pose, jump, rigid.partner_upstream).apply(pose)
+    rigid.RigidBodyRandomizeMover(pose, jump, rigid.partner_downstream).apply(pose)
+    rigid.RigidBodySpinMover(jump).apply(pose)
 
 
 def run_single_docking(pose, docking_protocol=None, scorefxn=None,
@@ -173,120 +191,62 @@ def run_single_docking(pose, docking_protocol=None, scorefxn=None,
     """
     Run a single docking simulation.
 
-    For **global docking** (default), the ligand orientation is fully
-    randomised (equivalent to Rosetta's ``-spin -randomize1 -randomize2``).
+    For **global docking** (default), the starting orientation is fully
+    randomised (see :func:`randomize_partners`); for local docking a small
+    ``-dock_pert``-style perturbation is applied instead.
 
     Args:
         pose: Input Pose object (will be copied, not modified)
         docking_protocol: Docking mover. If None, creates default
         scorefxn: Score function for final scoring. If None, uses default
-        randomize: If True, randomize initial orientation
-        global_docking: If True (default), apply large random perturbation
-            suitable for global docking (no prior knowledge of binding site).
+        randomize: If True, perturb the initial orientation
+        global_docking: If True (default), fully randomise the orientation
+            and run the two-stage protocol (no prior knowledge of the
+            binding site).
 
     Returns:
         Tuple of (docked_pose, score)
+
+    Raises:
+        DockingTrajectoryError: if Rosetta's docking filters rejected every
+            one of ``MAX_DOCKING_ATTEMPTS`` trajectories.
     """
     ensure_init()
-    # Create a working copy
-    work_pose = pyrosetta.Pose()
-    work_pose.assign(pose)
-
-    # Setup score function if not provided
     if scorefxn is None:
         scorefxn = pyrosetta.get_fa_scorefxn()
-
-    # Randomize initial position if requested
-    if randomize:
-        if global_docking:
-            # Large perturbation for global docking:
-            # - Translation: up to 50 Å to explore entire surface
-            # - Rotation: up to 360° for full orientational sampling
-            rigid_body_perturb = rosetta.protocols.rigid.RigidBodyPerturbMover(
-                1, 50.0, 360.0
-            )
-        else:
-            # Small perturbation for local refinement
-            rigid_body_perturb = rosetta.protocols.rigid.RigidBodyPerturbMover(
-                1, 8.0, 8.0
-            )
-        rigid_body_perturb.apply(work_pose)
-
-    # Setup protocol if not provided
     if docking_protocol is None:
-        docking_protocol = setup_simple_docking()
+        docking_protocol = setup_docking_protocol(global_docking=global_docking)
 
-    # Run docking
-    try:
+    ms = rosetta.protocols.moves.MoverStatus  # pylint: disable=no-member
+    for _attempt in range(MAX_DOCKING_ATTEMPTS):
+        work_pose = pyrosetta.Pose()
+        work_pose.assign(pose)
+
+        if randomize:
+            if global_docking:
+                randomize_partners(work_pose)
+            else:
+                rosetta.protocols.rigid.RigidBodyPerturbMover(  # pylint: disable=no-member
+                    DOCKING_JUMP, LOCAL_PERTURB_ROT_DEG, LOCAL_PERTURB_TRANS_ANG,
+                ).apply(work_pose)
+
         docking_protocol.apply(work_pose)
-    except RuntimeError as e:
-        print(f"Docking error: {e}")
+        status = docking_protocol.get_last_move_status()
+        if status == ms.MS_SUCCESS and work_pose.is_fullatom():
+            return work_pose, scorefxn(work_pose)
+        if status in (ms.FAIL_DO_NOT_RETRY, ms.FAIL_BAD_INPUT):
+            raise DockingTrajectoryError(
+                f"DockingProtocol refused the input pose (status {status})."
+            )
 
-
-    # Get final score
-    score = scorefxn(work_pose)
-
-    return work_pose, score
-
-
-def setup_full_docking_protocol(global_docking=True):
-    """
-    Setup a complete docking protocol with all stages.
-
-    For global docking (default), applies large random perturbation
-    equivalent to ``-spin -randomize1 -randomize2``.
-
-    Returns:
-        Configured SequenceMover with complete docking pipeline
-    """
-    ensure_init()
-    scorefxn = pyrosetta.create_score_function("ref2015")
-    # Reduce disulfide weight
-    scorefxn.set_weight(rosetta.core.scoring.ScoreType.dslf_fa13, 0.5)
-
-    # Create movemap
-    movemap = rosetta.core.kinematics.MoveMap()
-    movemap.set_jump(1, True)
-    movemap.set_bb(False)
-    movemap.set_chi(True)
-
-    # Stage 1: Randomize orientation
-    if global_docking:
-        rigid_body_perturb = rosetta.protocols.rigid.RigidBodyPerturbMover(
-            1, 50.0, 360.0
-        )
-    else:
-        rigid_body_perturb = rosetta.protocols.rigid.RigidBodyPerturbMover(
-            1, 8.0, 8.0
-        )
-
-    # Stage 2: Slide into contact
-    slide_into_contact = FaDockingSlideIntoContact(1)
-
-    # Stage 3: Pack rotamers at interface
-    task_factory = TaskFactory()
-    pack_mover = PackRotamersMover()
-    pack_mover.task_factory(task_factory)
-    pack_mover.score_function(scorefxn)
-
-    # Stage 4: Minimize
-    min_mover = MinMover()
-    min_mover.movemap(movemap)
-    min_mover.score_function(scorefxn)
-
-    # Combine into sequence
-    sequence = SequenceMover()
-    sequence.add_mover(rigid_body_perturb)
-    sequence.add_mover(slide_into_contact)
-    sequence.add_mover(pack_mover)
-    sequence.add_mover(min_mover)
-
-    return sequence
+    raise DockingTrajectoryError(
+        f"All {MAX_DOCKING_ATTEMPTS} docking trajectories were rejected by "
+        "Rosetta's low-resolution filters (no interchain contact or clashes)."
+    )
 
 
 def run_docking(pose, n_runs=10, save_all=True, verbose=False,
-                use_full_protocol=False, global_docking=True,
-                skip_prepack=False):
+                global_docking=True, skip_prepack=False):
     """
     Run multiple docking simulations.
 
@@ -298,8 +258,9 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
     * Pre-packing is run automatically before docking unless
       ``skip_prepack=True``.
     * For **global docking** (``global_docking=True``, the default for
-      PPInsight), each run fully randomises the ligand orientation — no
-      prior knowledge of the binding site is assumed.
+      PPInsight), each run fully randomises the starting orientation and
+      runs the two-stage low-/high-resolution protocol — no prior knowledge
+      of the binding site is assumed.
     * Production global docking requires **10 000–100 000 decoys**
       (``n_runs``).  A warning is emitted when fewer than 1000 are
       requested so users are aware of the sampling implications.
@@ -310,7 +271,6 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
             For publication-quality global docking, use 10 000–100 000.
         save_all: If True, return all poses. If False, return only scores
         verbose: If True, print progress
-        use_full_protocol: If True, use full protocol with packing (slower)
         global_docking: If True (default), fully randomize orientation for
             each run (no prior binding-site knowledge assumed).
         skip_prepack: If True, skip the mandatory pre-packing step.
@@ -354,13 +314,7 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
         prepack(pose)
 
     # Setup docking protocol once (reuse for efficiency)
-    if use_full_protocol:
-        docking_protocol = setup_full_docking_protocol(
-            global_docking=global_docking,
-        )
-    else:
-        docking_protocol = setup_simple_docking()
-
+    docking_protocol = setup_docking_protocol(global_docking=global_docking)
     scorefxn = pyrosetta.get_fa_scorefxn()
 
     results = []
@@ -369,7 +323,6 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
         if verbose and (i + 1) % 10 == 0:
             print(f"  Completed {i + 1}/{n_runs} runs...")
 
-        # Run docking with randomization
         docked_pose, total_score = run_single_docking(
             pose,
             docking_protocol,
@@ -381,7 +334,6 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
         # Extract interface score (the primary RosettaDock metric)
         i_sc = get_interface_score(docked_pose, scorefxn)
 
-        # Store results
         result = {
             'run': i + 1,
             'description': f"decoy_{i + 1}",
