@@ -16,6 +16,7 @@ pytestmark = pytest.mark.requires_rosetta
 pyrosetta = pytest.importorskip("pyrosetta", reason="PyRosetta not installed")
 
 from ppinsight.docking import DockingPipeline  # noqa: E402
+from ppinsight.rosetta import dock  # noqa: E402
 from ppinsight.rosetta.prepare_structure import prepare_structures  # noqa: E402
 
 
@@ -191,3 +192,74 @@ def test_prepare_structures_can_disable_dbref_auto_filter(tmp_path):
 
     assert pose.total_residue() == 4
     assert pose.num_chains() == 4
+
+
+def _ca_numbering(pdb_path):
+    """[(chain, resnum)] for every CA atom in *pdb_path*."""
+    out = []
+    with open(pdb_path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("ATOM") and line[12:16].strip() == "CA":
+                out.append((line[21], int(line[22:26])))
+    return out
+
+
+def test_prepare_structures_preserves_input_residue_numbering(tmp_path):
+    # Receptor numbered from 16, ligand from 21 -- as in the real 2UUY
+    # inputs. append_pose_by_jump used to leave PDBInfo obsolete, so
+    # dump_pdb renumbered everything sequentially from 1.
+    receptor = tmp_path / "rec.pdb"
+    ligand = tmp_path / "lig.pdb"
+    lines = []
+    for serial, (resname, resnum, x) in enumerate(
+        [("GLY", 16, 0.0), ("ALA", 17, 4.2)], start=0,
+    ):
+        for offset, (atom, dx) in enumerate(
+            [("N", 0.0), ("CA", 1.5), ("C", 2.9), ("O", 3.9)],
+        ):
+            lines.append(_make_atom_line(
+                serial * 4 + offset + 1, atom, resname, "A", resnum, x + dx,
+            ))
+    receptor.write_text("".join(lines) + "TER\nEND\n", encoding="utf-8")
+    with ligand.open("w", encoding="utf-8") as handle:
+        _write_single_residue_chain(handle, 1, "SER", "B", 21, 30.0)
+        handle.write("END\n")
+
+    pose = prepare_structures(str(receptor), str(ligand), relax=False)
+    out = tmp_path / "combined.pdb"
+    dock.save_docked_structure(pose, out)
+
+    assert _ca_numbering(out) == [("A", 16), ("A", 17), ("B", 21)]
+
+
+def test_prepack_keeps_sequence(pdb_rec, pdb_lig):
+    # A bare TaskFactory lets the packer design every position; prepack
+    # must only repack, or every decoy silently gets a different sequence.
+    pose = prepare_structures(pdb_rec, pdb_lig, relax=False)
+    native = pose.sequence()
+    dock.prepack(pose)
+    assert pose.sequence() == native
+
+
+def test_setup_docking_protocol_is_two_stage_on_jump_one():
+    dock.ensure_init()
+    protocol = dock.setup_docking_protocol(global_docking=True)
+    assert isinstance(protocol, pyrosetta.rosetta.protocols.docking.DockingProtocol)
+    assert list(protocol.movable_jumps()) == [1]
+
+
+def test_global_docking_produces_an_interface(pdb_rec, pdb_lig):
+    # The former protocol (random perturbation + slide-into-contact +
+    # minimise) stopped at the first clash and produced "kissing" poses
+    # with a handful of residue contacts and no meaningful I_sc.
+    pose = prepare_structures(pdb_rec, pdb_lig, relax=False)
+    dock.prepack(pose)
+    native = pose.sequence()
+
+    docked, total_score = dock.run_single_docking(pose, global_docking=True)
+
+    assert docked.sequence() == native
+    assert docked.is_fullatom()
+    assert isinstance(total_score, float)
+    i_sc = dock.get_interface_score(docked)
+    assert i_sc < 0, f"expected a bound interface, got I_sc={i_sc}"

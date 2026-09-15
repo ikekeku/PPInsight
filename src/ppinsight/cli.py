@@ -20,6 +20,8 @@ Usage::
     ppinsight quality   scores.tsv native.pdb -o scores_quality.tsv
     ppinsight prodigy   scores.tsv --output scores_prodigy.tsv
     ppinsight consrank  data/output/rosetta_runs/run1 --engine rosetta
+    ppinsight consrank  --pool rosetta=data/output/rosetta_runs/run1 \\
+                        --pool lightdock=data/output/lightdock_runs/run1:50
 """
 
 import sys
