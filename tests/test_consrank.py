@@ -318,6 +318,26 @@ def test_stage_poses_applies_engine_prefix(tmp_path):
     assert (pose_dir / "rosetta_decoy_1.pdb").is_file()
 
 
+def test_sanitize_staged_poses_keeps_only_coordinate_records(tmp_path):
+    pose_dir = tmp_path / "staged"
+    pose_dir.mkdir()
+    pose = pose_dir / "pose.pdb"
+    pose.write_text(
+        "ATOM      1  CA  ALA A   1      0.000   0.000   0.000\n"
+        "TER\n"
+        "HETATM    2  O   HOH B   2      1.000   1.000   1.000\n"
+        "##Begin comments##\n"
+        "END\n"
+    )
+
+    consrank._sanitize_staged_poses(str(pose_dir), ["pose.pdb"])
+
+    assert pose.read_text().splitlines() == [
+        "ATOM      1  CA  ALA A   1      0.000   0.000   0.000",
+        "HETATM    2  O   HOH B   2      1.000   1.000   1.000",
+    ]
+
+
 def test_prepare_pool_keeps_matching_filenames_from_repeated_engine_sources(
     tmp_path, monkeypatch,
 ):

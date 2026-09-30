@@ -473,6 +473,18 @@ def stage_poses(
     return staged
 
 
+def _sanitize_staged_poses(pose_dir: str, staged_filenames: list[str]) -> None:
+    """Keep only PDB coordinate records in staged poses for CONSRANK."""
+    for filename in staged_filenames:
+        path = os.path.join(pose_dir, filename)
+        with open(path, encoding="utf-8") as fh:
+            coordinate_lines = [
+                line for line in fh if line[:6].strip() in _PDB_COORD_RECORDS
+            ]
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.writelines(coordinate_lines)
+
+
 # ---------------------------------------------------------------------------
 # Chain-ID collision handling (LightDock only -- see resolve_chains)
 # ---------------------------------------------------------------------------
@@ -1362,6 +1374,7 @@ def _prepare_single(args):
             pose_dir, staged, rec_chains, lig_chains,
         )
 
+    _sanitize_staged_poses(pose_dir, staged)
     harmonization = {"mode": "not_applicable"}
     return (
         pose_dir, rec_chains, lig_chains, staged,
@@ -1413,6 +1426,7 @@ def _prepare_pool(args):
     pose_engine_map = {f: s.engine for s in sources for f in s.staged_filenames}
     source_dirs = [s.run_dir for s in sources]
 
+    _sanitize_staged_poses(pose_dir, staged)
     return (
         pose_dir, rec_chains, lig_chains, staged,
         pair_label, pose_engine_map, source_dirs, harmonization,
