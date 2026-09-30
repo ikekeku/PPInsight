@@ -492,8 +492,8 @@ consrank` ranks poses by *consensus*: each pose is scored by how often its
 receptor–ligand contacts recur across the whole pool
 ([Iter-CONSRANK](https://github.com/AOCD-lab/Iter-consrank), compiled by
 `setup.sh`).  Because the score depends only on the pool, poses from
-LightDock, HADDOCK3 and Rosetta — whose native scores are on unrelated
-scales — can be ranked together.
+supported docking engines with unrelated native score scales can be ranked
+together.
 
 ```bash
 # Rank one engine's run (engine auto-detected from the directory layout)

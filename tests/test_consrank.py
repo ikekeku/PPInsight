@@ -3,6 +3,7 @@
 import gzip
 import os
 import stat
+from types import SimpleNamespace
 
 import pytest
 
@@ -315,6 +316,32 @@ def test_stage_poses_applies_engine_prefix(tmp_path):
     )
     assert staged == ["rosetta_decoy_1.pdb"]
     assert (pose_dir / "rosetta_decoy_1.pdb").is_file()
+
+
+def test_prepare_pool_keeps_matching_filenames_from_repeated_engine_sources(
+    tmp_path, monkeypatch,
+):
+    first_run = tmp_path / "first_run"
+    second_run = tmp_path / "second_run"
+    for run_dir, serial in ((first_run, 1), (second_run, 3)):
+        run_dir.mkdir()
+        (run_dir / "decoy_1.pdb").write_text(
+            _atom_line("A", serial)
+            + _atom_line("B", serial + 1)
+            + "##Begin comments##\nppinsight_partners A_B\n##End comments##\n"
+        )
+
+    monkeypatch.setattr(consrank, "_project_root", lambda: str(tmp_path))
+    args = SimpleNamespace(
+        pool=[f"rosetta={first_run}", f"rosetta={second_run}"],
+        no_harmonize=False,
+    )
+
+    pose_dir, _, _, staged, _, pose_engine_map, _, _ = consrank._prepare_pool(args)
+
+    assert staged == ["rosetta_1_decoy_1.pdb", "rosetta_2_decoy_1.pdb"]
+    assert all(os.path.isfile(os.path.join(pose_dir, filename)) for filename in staged)
+    assert pose_engine_map == {filename: "rosetta" for filename in staged}
 
 
 # ---------------------------------------------------------------------------
@@ -832,6 +859,7 @@ def test_cli_pool_ranks_across_engines(tmp_path, monkeypatch):
     sidecar = provenance.read_sidecar(str(output_path))
     (meta,) = sidecar.values()
     harmonization = meta["engine_meta"]["harmonization"]
+    assert harmonization["mode"] == "residue_harmonized"
     assert harmonization["reference_lengths"] == {"receptor": 1, "ligand": 1}
     assert set(harmonization) >= {"rosetta", "haddock"}
 

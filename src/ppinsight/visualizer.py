@@ -1002,6 +1002,16 @@ METRIC_METADATA: dict[str, dict] = {
             "indicate more frequently sampled (more confident) binding modes."
         ),
     },
+    # ── Reference-free consensus ranking ────────────────────────────────
+    "consrank_score": {
+        "higher_is_better": True,
+        "display_name": "CONSRANK Score",
+        "description": (
+            "Contact-map consensus score from Iter-CONSRANK. Higher means "
+            "the pose agrees more closely with the ranked pose pool; it is "
+            "not a native-structure accuracy score."
+        ),
+    },
     # ── DockQ quality metrics (from ppinsight.quality) ─────────────────
     # These use a ``quality_`` prefix to distinguish them from the
     # engine-native metrics above (e.g. HADDOCK's own ``dockq`` score).

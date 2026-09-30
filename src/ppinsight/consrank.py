@@ -56,9 +56,8 @@ register extra contacts, and residues are renumbered by aligning the
 partner's sequence to a pool-wide reference (the longest partner sequence in
 the pool). Residues that don't align to the reference keep unique numbers
 past the reference range, so nothing is silently dropped -- they just can't
-contribute consensus. Pass ``--no-harmonize`` to fall back to chain
-relabeling only (``harmonize_pool_chains``), which requires every pool to
-share the same receptor/ligand chain counts and identical numbering.
+contribute consensus. Advanced users with already-compatible inputs can pass
+``--no-harmonize`` to retain their existing residue numbering.
 
 Usage::
 
@@ -445,9 +444,9 @@ def stage_poses(
     CONSRANK only reads plain ``.pdb`` files in its working directory, so
     gzipped HADDOCK models are decompressed here rather than symlinked.
 
-    Pass *prefix* (e.g. an engine name) when staging several pools into one
-    shared directory, so filenames stay traceable to their source even when
-    two engines happen to use the same naming scheme.
+    Pass a source-specific *prefix* (e.g. ``rosetta_1``) when staging several
+    pools into one shared directory, so filenames stay traceable and distinct
+    even when the same engine contributes multiple runs with matching names.
     """
     os.makedirs(pose_dir, exist_ok=True)
     staged: list[str] = []
@@ -905,6 +904,7 @@ def harmonize_pool_residues(
     summary["reference_lengths"] = {
         "receptor": ref_lengths[0], "ligand": ref_lengths[1],
     }
+    summary["mode"] = "residue_harmonized"
     return _HARMONIZED_REC_CHAIN, _HARMONIZED_LIG_CHAIN, summary
 
 
@@ -1127,7 +1127,7 @@ def main(argv=None):
         description=(
             "Rank docking poses by contact-map consensus (Iter-CONSRANK).\n"
             "Unlike 'ppinsight quality' (DockQ), no native reference structure\n"
-            "is needed, so poses from LightDock, HADDOCK3 and Rosetta can be\n"
+            "is needed, so poses from supported docking engines can be\n"
             "compared with each other."
         ),
         epilog=_CLI_EPILOG,
@@ -1149,13 +1149,13 @@ def main(argv=None):
         metavar="ENGINE=RUN_DIR[:N]",
         default=None,
         help=(
-            "Add one engine's run directory to a cross-engine pool; repeat "
-            "once per engine (lightdock, haddock, rosetta). An optional :N "
+            "Add one supported engine's run directory to a cross-engine pool; "
+            "repeat once for each run. An optional :N "
             "suffix keeps only that pool's top N poses (by LightDock score "
             "for lightdock, first N otherwise) without capping the other "
             "pools. Poses from every pool are rewritten onto one shared "
-            "chain/residue-numbering scheme before ranking (see "
-            "--no-harmonize). Cannot be combined with run_dir, --engine, "
+            "chain/residue-numbering scheme before ranking by default. "
+            "Cannot be combined with run_dir, --engine, "
             "--rec-chains, --lig-chains or --max-poses."
         ),
     )
@@ -1163,11 +1163,10 @@ def main(argv=None):
         "--no-harmonize",
         action="store_true",
         help=(
-            "With --pool: only relabel chain letters, do not merge chains, "
-            "strip hydrogens or renumber residues. Requires every pool to "
-            "have the same receptor/ligand chain counts and identical "
-            "residue numbering; otherwise the consensus silently compares "
-            "different residues."
+            "Advanced use only: keep existing residue numbering instead of "
+            "rewriting pooled poses. Use only when you have verified that all "
+            "pools use identical receptor/ligand residue identities and "
+            "numbering."
         ),
     )
     parser.add_argument(
@@ -1266,7 +1265,6 @@ def main(argv=None):
         )
     if args.no_harmonize and not args.pool:
         parser.error("--no-harmonize only applies to --pool.")
-
     try:
         consrank_bin = _require_consrank_binary(
             args.consrank_bin or default_consrank_binary()
@@ -1364,7 +1362,11 @@ def _prepare_single(args):
             pose_dir, staged, rec_chains, lig_chains,
         )
 
-    return pose_dir, rec_chains, lig_chains, staged, pair_label, None, [run_dir], None
+    harmonization = {"mode": "not_applicable"}
+    return (
+        pose_dir, rec_chains, lig_chains, staged,
+        pair_label, None, [run_dir], harmonization,
+    )
 
 
 def _prepare_pool(args):
@@ -1393,14 +1395,14 @@ def _prepare_pool(args):
         )
 
     pose_dir = make_consrank_output_dir(pair_label)
-    for source in sources:
+    for source_index, source in enumerate(sources, start=1):
         source.staged_filenames = stage_poses(
-            source.pose_paths, pose_dir, prefix=source.engine,
+            source.pose_paths, pose_dir, prefix=f"{source.engine}_{source_index}",
         )
 
     if args.no_harmonize:
         rec_chains, lig_chains = harmonize_pool_chains(pose_dir, sources)
-        harmonization = None
+        harmonization = {"mode": "chain_relabel_only"}
     else:
         rec_chains, lig_chains, harmonization = harmonize_pool_residues(
             pose_dir, sources,
