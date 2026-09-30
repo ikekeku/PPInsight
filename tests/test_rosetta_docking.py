@@ -248,6 +248,29 @@ def test_setup_docking_protocol_is_two_stage_on_jump_one():
     assert list(protocol.movable_jumps()) == [1]
 
 
+def test_run_docking_keeps_deprecated_use_full_protocol_argument(monkeypatch):
+    setup_calls = []
+    monkeypatch.setattr(dock, "ensure_init", lambda: None)
+    monkeypatch.setattr(
+        dock,
+        "setup_docking_protocol",
+        lambda global_docking: setup_calls.append(global_docking),
+    )
+    monkeypatch.setattr(dock.pyrosetta, "get_fa_scorefxn", lambda: object())
+
+    with pytest.warns(UserWarning, match="only 0 decoys"):
+        dock.run_docking(object(), 0, True, False, False, skip_prepack=True)
+    with pytest.warns(UserWarning, match="only 0 decoys"):
+        dock.run_docking(
+            object(),
+            n_runs=0,
+            skip_prepack=True,
+            use_full_protocol=False,
+        )
+
+    assert setup_calls == [True, True]
+
+
 def test_global_docking_produces_an_interface(pdb_rec, pdb_lig):
     # The former protocol (random perturbation + slide-into-contact +
     # minimise) stopped at the first clash and produced "kissing" poses
