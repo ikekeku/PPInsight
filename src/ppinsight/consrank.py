@@ -299,6 +299,11 @@ def run_iterative_consrank(
     history: list[dict] = []
     final_scores: list[tuple[str, float]] = []
 
+    if iterations < 1:
+        raise ConsrankError(f"iterations must be at least 1; got {iterations}.")
+    if not 0 < cutoff <= 1:
+        raise ConsrankError(f"cutoff must be in (0, 1]; got {cutoff}.")
+
     for i in range(1, iterations + 1):
         write_control(
             control_path, rec_chains, lig_chains, current,
