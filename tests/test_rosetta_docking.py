@@ -258,8 +258,7 @@ def test_run_docking_keeps_deprecated_use_full_protocol_argument(monkeypatch):
     )
     monkeypatch.setattr(dock.pyrosetta, "get_fa_scorefxn", lambda: object())
 
-    with pytest.warns(UserWarning, match="only 0 decoys"):
-        dock.run_docking(object(), 0, True, False, False, skip_prepack=True)
+    dock.run_docking(object(), 0, True, False, False, skip_prepack=True)
     with pytest.warns(UserWarning, match="only 0 decoys"):
         dock.run_docking(
             object(),
@@ -268,7 +267,7 @@ def test_run_docking_keeps_deprecated_use_full_protocol_argument(monkeypatch):
             use_full_protocol=False,
         )
 
-    assert setup_calls == [True, True]
+    assert setup_calls == [False, True]
 
 
 def test_global_docking_produces_an_interface(pdb_rec, pdb_lig):

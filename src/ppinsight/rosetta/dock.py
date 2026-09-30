@@ -253,7 +253,7 @@ def run_single_docking(pose, docking_protocol=None, scorefxn=None,
 
 
 def run_docking(pose, n_runs=10, save_all=True, verbose=False,
-                use_full_protocol=True, global_docking=True, skip_prepack=False):
+                global_docking=True, skip_prepack=False, use_full_protocol=True):
     """
     Run multiple docking simulations.
 
@@ -278,10 +278,10 @@ def run_docking(pose, n_runs=10, save_all=True, verbose=False,
             For publication-quality global docking, use 10 000–100 000.
         save_all: If True, return all poses. If False, return only scores
         verbose: If True, print progress
-        use_full_protocol: Deprecated and ignored; DockingProtocol is always used.
         global_docking: If True (default), fully randomize orientation for
             each run (no prior binding-site knowledge assumed).
         skip_prepack: If True, skip the mandatory pre-packing step.
+        use_full_protocol: Deprecated and ignored; DockingProtocol is always used.
 
     Returns:
         List of dictionaries with keys:
