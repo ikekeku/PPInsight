@@ -31,14 +31,16 @@ def test_write_control_matches_upstream_format(tmp_path):
     assert lines[4] == "A"
     assert lines[5].startswith("CUTOffDistance")
     assert "5.0" in lines[5]
-    assert lines[6].startswith("GenMat")
-    assert lines[7].startswith("NumberOfPDBFiles")
-    assert "2" in lines[7]
-    assert lines[8:] == ["a.pdb", "b.pdb"]
+    assert lines[6] == "DataFlag\t\t\t0"
+    assert lines[7].startswith("GenMat")
+    assert lines[8].startswith("NumberOfPDBFiles")
+    assert "2" in lines[8]
+    assert lines[9:] == ["a.pdb", "b.pdb"]
 
 
 def test_control_header_lines_stop_before_pdb_list():
     header = consrank._control_header_lines("C", "BA", distance=5.0, gen_mat=1)
+    assert header[-2] == "DataFlag\t\t\t0"
     assert header[-1] == "GenMat\t\t\t1"
     assert not any(line.startswith("NumberOfPDBFiles") for line in header)
 

@@ -146,6 +146,7 @@ def write_control(
         f"PairwiseChain2\t\t{len(lig_chains)}\t\t! # of chains in pairL",
         *list(lig_chains),
         f"CUTOffDistance\t\t{distance}\t\t! Angstrom",
+        "DataFlag\t\t\t0",
         f"GenMat\t\t\t{gen_mat}",
         f"NumberOfPDBFiles\t\t{len(pdb_filenames)}",
         *pdb_filenames,
@@ -173,6 +174,7 @@ def _control_header_lines(
         f"PairwiseChain2\t\t{len(lig_chains)}\t\t! # of chains in pairL",
         *list(lig_chains),
         f"CUTOffDistance\t\t{distance}\t\t! Angstrom",
+        "DataFlag\t\t\t0",
         f"GenMat\t\t\t{gen_mat}",
     ]
 
