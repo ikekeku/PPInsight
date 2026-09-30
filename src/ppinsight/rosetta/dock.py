@@ -161,13 +161,16 @@ def setup_docking_protocol(global_docking=True):
     Calls :func:`ensure_init` to guarantee ``-ex1 -ex2aro`` flags.
     """
     ensure_init()
-    protocol = rosetta.protocols.docking.DockingProtocol(  # pylint: disable=no-member
+    # Pylint cannot inspect PyRosetta's generated bindings.
+    # pylint: disable-next=no-member
+    protocol = rosetta.protocols.docking.DockingProtocol(
         DOCKING_JUMP,
         False,                 # low_res_protocol_only
         not global_docking,    # docking_local_refine
         False,                 # autofoldtree
     )
-    movable_jumps = rosetta.utility.vector1_int()  # pylint: disable=no-member
+    # pylint: disable-next=no-member
+    movable_jumps = rosetta.utility.vector1_int()
     movable_jumps.append(DOCKING_JUMP)
     protocol.set_movable_jumps(movable_jumps)
     return protocol
@@ -181,7 +184,8 @@ def randomize_partners(pose, jump=DOCKING_JUMP):
     downstream partner is spun about the axis joining the two centroids.
     Modifies *pose* in place.
     """
-    rigid = rosetta.protocols.rigid  # pylint: disable=no-member
+    # pylint: disable-next=no-member
+    rigid = rosetta.protocols.rigid
     rigid.RigidBodyRandomizeMover(pose, jump, rigid.partner_upstream).apply(pose)
     rigid.RigidBodyRandomizeMover(pose, jump, rigid.partner_downstream).apply(pose)
     rigid.RigidBodySpinMover(jump).apply(pose)
@@ -218,7 +222,8 @@ def run_single_docking(pose, docking_protocol=None, scorefxn=None,
     if docking_protocol is None:
         docking_protocol = setup_docking_protocol(global_docking=global_docking)
 
-    ms = rosetta.protocols.moves.MoverStatus  # pylint: disable=no-member
+    # pylint: disable-next=no-member
+    ms = rosetta.protocols.moves.MoverStatus
     for _attempt in range(MAX_DOCKING_ATTEMPTS):
         work_pose = pyrosetta.Pose()
         work_pose.assign(pose)
@@ -227,7 +232,8 @@ def run_single_docking(pose, docking_protocol=None, scorefxn=None,
             if global_docking:
                 randomize_partners(work_pose)
             else:
-                rosetta.protocols.rigid.RigidBodyPerturbMover(  # pylint: disable=no-member
+                # pylint: disable-next=no-member
+                rosetta.protocols.rigid.RigidBodyPerturbMover(
                     DOCKING_JUMP, LOCAL_PERTURB_ROT_DEG, LOCAL_PERTURB_TRANS_ANG,
                 ).apply(work_pose)
 
