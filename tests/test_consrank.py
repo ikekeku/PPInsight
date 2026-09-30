@@ -215,6 +215,12 @@ def test_discover_poses_respects_max_poses(tmp_path):
     assert len(found) == 2
 
 
+@pytest.mark.parametrize("max_poses", [-1, 0, 1])
+def test_discover_poses_rejects_max_poses_below_two(tmp_path, max_poses):
+    with pytest.raises(consrank.ConsrankError, match="MAX_POSES must be at least 2"):
+        consrank.discover_poses(str(tmp_path), "rosetta", max_poses=max_poses)
+
+
 def _write_lightdock_run(run_dir, scores):
     """Lay out swarm_N/lightdock_N.pdb poses plus a rank_by_scoring.list.
 
@@ -255,12 +261,12 @@ def test_discover_poses_lightdock_max_poses_uses_rank_by_scoring(tmp_path):
 
 def test_discover_poses_lightdock_max_poses_falls_back_without_rank_file(tmp_path):
     run_dir = tmp_path / "run"
-    for swarm in ("swarm_0", "swarm_1"):
+    for swarm in ("swarm_0", "swarm_1", "swarm_2"):
         d = run_dir / swarm
         d.mkdir(parents=True)
         (d / "lightdock_1.pdb").write_text("ATOM\n")
-    found = consrank.discover_poses(str(run_dir), "lightdock", max_poses=1)
-    assert len(found) == 1
+    found = consrank.discover_poses(str(run_dir), "lightdock", max_poses=2)
+    assert len(found) == 2
 
 
 def test_discover_poses_lightdock_uncapped_ignores_rank_file(tmp_path):

@@ -398,8 +398,14 @@ def discover_poses(
     With *max_poses*, LightDock pools are capped to the top-N poses by
     LightDock score (via ``rank_by_scoring.list``) rather than the first N
     filenames, which would be an arbitrary subset of glowworms. Other
-    engines are small enough that filename order is used as-is.
+    engines are small enough that filename order is used as-is. The cap must
+    be at least two because CONSRANK needs at least two poses to rank.
     """
+    if max_poses is not None and max_poses < 2:
+        raise ConsrankError(
+            f"MAX_POSES must be at least 2, got {max_poses}."
+        )
+
     if engine == "lightdock":
         pattern = os.path.join(run_dir, "swarm_*", "lightdock_*.pdb")
         found = sorted(glob.glob(pattern))
