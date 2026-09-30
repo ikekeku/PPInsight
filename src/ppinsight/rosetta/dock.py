@@ -27,7 +27,6 @@ This module handles:
 - Extracting interface scores and key metrics
 """
 
-import sys
 import warnings
 
 try:
@@ -35,10 +34,12 @@ try:
     from pyrosetta import rosetta
     from pyrosetta.rosetta.core.pack.task import TaskFactory, operation
     from pyrosetta.rosetta.protocols.minimization_packing import PackRotamersMover
-except ImportError:
-    print("ERROR: PyRosetta not found!")
-    print("Please install PyRosetta: pip install pyrosetta-*.whl")
-    sys.exit(1)
+except ImportError as exc:
+    raise ImportError(
+        "PyRosetta is required for Rosetta docking. Hint: install it with "
+        "python -c \"import pyrosetta_installer; "
+        "pyrosetta_installer.install_pyrosetta()\""
+    ) from exc
 
 
 DOCKING_JUMP = 1
