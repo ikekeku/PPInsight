@@ -800,6 +800,36 @@ def test_harmonize_pool_residues_keeps_unaligned_residues_past_reference(tmp_pat
     assert summary["haddock"]["min_coverage"] == 1.0
 
 
+def test_harmonize_pool_residues_gives_unaligned_residues_unique_numbers(
+    tmp_path, monkeypatch,
+):
+    reference = _source_with_pose(
+        "reference", "A", "B", tmp_path, [("A", 1, "ACD"), ("B", 1, "KLM")],
+    )
+    first = _source_with_pose(
+        "first", "A", "B", tmp_path, [("A", 1, "ACD"), ("B", 1, "KWM")],
+    )
+    second = _source_with_pose(
+        "second", "A", "B", tmp_path, [("A", 1, "ACD"), ("B", 1, "KFM")],
+    )
+    align = consrank._align_to_reference
+
+    def align_with_unaligned_insertions(seq, ref):
+        if seq in {"KWM", "KFM"}:
+            return {0: 0, 2: 2}, 2 / 3, 1.0
+        return align(seq, ref)
+
+    monkeypatch.setattr(
+        consrank, "_align_to_reference", align_with_unaligned_insertions,
+    )
+    consrank.harmonize_pool_residues(str(tmp_path), [reference, first, second])
+
+    first_res, _ = _harmonized_residues(tmp_path / "first_pose.pdb")
+    second_res, _ = _harmonized_residues(tmp_path / "second_pose.pdb")
+    assert [resnum for chain, resnum, _ in first_res if chain == "B"] == [1, 4, 3]
+    assert [resnum for chain, resnum, _ in second_res if chain == "B"] == [1, 5, 3]
+
+
 def test_harmonize_pool_residues_handles_lightdock_letter_collision(tmp_path):
     # LightDock pose reusing 'A' for both the receptor and the ligand's
     # first chain; block order alone identifies the partner split.

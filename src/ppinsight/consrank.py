@@ -793,17 +793,17 @@ def _write_harmonized_pose(
     pose_path: str,
     residues: list[_Residue],
     mappings: tuple[dict[int, int], dict[int, int]],
-    ref_lengths: tuple[int, int],
+    next_extra: list[int],
 ) -> None:
     """Rewrite *pose_path* with merged chains and reference numbering.
 
     Residues without a reference counterpart are numbered past the
     reference length so they stay in the file (CONSRANK still needs their
-    atoms for distances) but can never be mistaken for a shared residue.
+    atoms for distances) but can never be mistaken for a shared residue or
+    an unaligned residue from another pose.
     """
     chains = (_HARMONIZED_REC_CHAIN, _HARMONIZED_LIG_CHAIN)
     seq_index = [0, 0]
-    next_extra = [ref_lengths[0] + 1, ref_lengths[1] + 1]
     out: list[str] = []
     prev_partner = None
     for residue in residues:
@@ -881,6 +881,7 @@ def harmonize_pool_residues(
 
     cache: dict[tuple[int, str], tuple[dict[int, int], float, float]] = {}
     summary: dict[str, dict] = {}
+    next_extra = [ref_lengths[0] + 1, ref_lengths[1] + 1]
     for source, path, residues in parsed:
         mappings = []
         stats = summary.setdefault(
@@ -896,7 +897,7 @@ def harmonize_pool_residues(
             stats["min_coverage"] = min(stats["min_coverage"], coverage)
             stats["min_identity"] = min(stats["min_identity"], identity)
         stats["poses"] += 1
-        _write_harmonized_pose(path, residues, (mappings[0], mappings[1]), ref_lengths)
+        _write_harmonized_pose(path, residues, (mappings[0], mappings[1]), next_extra)
 
     for engine, stats in summary.items():
         poorly_aligned = (
