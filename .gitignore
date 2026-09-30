@@ -43,6 +43,9 @@ data/output/plots/*
 # Ignore local scripts folder (runbooks, HPC scripts)
 scripts/
 
+# Vendored third-party source (cloned/built by setup.sh, e.g. Iter-CONSRANK)
+third_party/
+
 # Build metadata / packaging artifacts
 src/ppinsight.egg-info/
 

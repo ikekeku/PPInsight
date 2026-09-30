@@ -44,7 +44,12 @@ def initialize_pyrosetta(pyrosetta_debug=False):
     # -detect_disulf false: prevents RuntimeError when docking perturbation
     #   separates chains that share a disulfide bond (the scoring
     #   function cannot find the partner after rigid-body moves).
-    init_flags = "-detect_disulf false -ignore_unrecognized_res true"
+    # -ex1 -ex2aro: extra rotamer sampling, mandatory for RosettaDock's
+    #   interface packing. Set here because this is the first init in the
+    #   pipeline; dock.ensure_init is a no-op once PyRosetta is up.
+    init_flags = (
+        "-ex1 -ex2aro -detect_disulf false -ignore_unrecognized_res true"
+    )
     if not pyrosetta_debug:
         init_flags = "-mute all " + init_flags
 
@@ -289,6 +294,12 @@ def combine_proteins(
         "ppinsight_partners",
         partner_string,
     )
+
+    # append_pose_by_jump marks PDBInfo obsolete, which makes dump_pdb
+    # renumber the whole complex sequentially from 1. Downstream tools
+    # (consrank, quality) match residues across engines by PDB number, so
+    # keep the input numbering.
+    combined_pose.pdb_info().obsolete(False)
 
     # Disulfide detection already handled by -detect_disulf init flag.
 

@@ -123,6 +123,10 @@ class TestMetricMetadata:
         assert get_metric_direction("irms") is False
         assert get_metric_direction("rms") is False
 
+    def test_consrank_score_is_registered(self):
+        assert METRIC_METADATA["consrank_score"]["higher_is_better"] is True
+        assert "consensus" in METRIC_METADATA["consrank_score"]["description"]
+
     def test_all_metadata_entries_have_required_keys(self):
         """Every entry in METRIC_METADATA must have higher_is_better and description."""
         for name, meta in METRIC_METADATA.items():
