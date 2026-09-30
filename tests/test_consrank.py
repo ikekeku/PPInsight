@@ -443,6 +443,50 @@ def test_relabel_colliding_lightdock_chains_end_to_end(tmp_path):
     assert counts == {"A": 2, "B": 1, "C": 1, "D": 2}
 
 
+def test_relabel_lightdock_same_chain_uses_original_input_boundary(tmp_path):
+    pose_dir = tmp_path / "poses"
+    pose_dir.mkdir()
+    # LightDock concatenates single-chain receptor and ligand coordinates
+    # without TER, retaining their shared chain ID.
+    (pose_dir / "m1.pdb").write_text(
+        _atom_line("A", 1) + _atom_line("A", 2) + _atom_line("A", 3)
+    )
+
+    rec, lig = consrank.relabel_colliding_lightdock_chains(
+        str(pose_dir), ["m1.pdb"], "A", "A", receptor_coordinate_count=2,
+    )
+
+    assert (rec, lig) == ("A", "B")
+    assert [
+        line[21] for line in (pose_dir / "m1.pdb").read_text().splitlines()
+    ] == ["A", "A", "B"]
+
+
+def test_prepare_single_lightdock_uses_original_input_boundary(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    swarm = run_dir / "swarm_0"
+    swarm.mkdir(parents=True)
+    _write_atom_lines(run_dir / "receptor.pdb", ["A", "A"])
+    _write_atom_lines(run_dir / "ligand.pdb", ["A"])
+    (swarm / "lightdock_0.pdb").write_text(
+        _atom_line("A", 1) + _atom_line("A", 2) + _atom_line("A", 3)
+    )
+    monkeypatch.setattr(consrank, "_project_root", lambda: str(tmp_path))
+    args = SimpleNamespace(
+        run_dir=str(run_dir),
+        engine="lightdock",
+        max_poses=None,
+        rec_chains=None,
+        lig_chains=None,
+    )
+
+    pose_dir, rec, lig, staged, *_ = consrank._prepare_single(args)
+
+    assert (rec, lig) == ("A", "B")
+    with open(os.path.join(pose_dir, staged[0])) as fh:
+        assert [line[21] for line in fh] == ["A", "A", "B"]
+
+
 # ---------------------------------------------------------------------------
 # Chain resolution
 # ---------------------------------------------------------------------------
@@ -493,6 +537,7 @@ def test_resolve_chains_lightdock_reads_original_inputs(tmp_path):
     rec_chains, lig_chains = consrank.resolve_chains(str(run_dir), "lightdock", [])
     assert rec_chains == "AC"
     assert lig_chains == "B"
+    assert consrank._lightdock_receptor_coordinate_count(str(run_dir)) == 2
 
 
 def test_resolve_chains_lightdock_raises_without_exactly_two_inputs(tmp_path):

@@ -503,6 +503,7 @@ _FRESH_CHAIN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 def _relabel_pose_chains_by_block_order(
     pose_path: str,
     chain_map: list[str],
+    receptor_coordinate_count: int | None = None,
 ) -> None:
     """Rewrite *pose_path* in place, relabeling contiguous chain-ID blocks.
 
@@ -521,20 +522,29 @@ def _relabel_pose_chains_by_block_order(
     many the receptor has) map to receptor letters and the rest to ligand
     letters -- either fresh disjoint letters for one pool
     (``relabel_colliding_lightdock_chains``), or one shared scheme across
-    several pools (``harmonize_pool_chains``).
+    several pools (``harmonize_pool_chains``). When supplied,
+    *receptor_coordinate_count* also starts a new block at the boundary
+    preserved from LightDock's original receptor input.
     """
     total_chains = len(chain_map)
 
     lines_out = []
     block_index = -1
     prev_chain = None
+    coordinate_count = 0
     with open(pose_path, encoding="utf-8") as fh:
         for line in fh:
             record = line[:6].strip()
             if record in _PDB_COORD_RECORDS:
                 chain = line[21]
-                if chain != prev_chain:
+                if coordinate_count and (
+                    coordinate_count == receptor_coordinate_count
+                    or chain != prev_chain
+                ):
                     block_index += 1
+                    prev_chain = chain
+                elif block_index == -1:
+                    block_index = 0
                     prev_chain = chain
                 if block_index >= total_chains:
                     raise ConsrankError(
@@ -543,9 +553,19 @@ def _relabel_pose_chains_by_block_order(
                         "relabeling. Pass --rec-chains/--lig-chains explicitly."
                     )
                 line = line[:21] + chain_map[block_index] + line[22:]
+                coordinate_count += 1
             elif record == "TER":
                 prev_chain = None
             lines_out.append(line)
+
+    if (
+        receptor_coordinate_count is not None
+        and coordinate_count <= receptor_coordinate_count
+    ):
+        raise ConsrankError(
+            f"'{pose_path}' has no coordinate records after the receptor "
+            "boundary recovered from the original LightDock inputs."
+        )
 
     with open(pose_path, "w", encoding="utf-8") as fh:
         fh.writelines(lines_out)
@@ -556,6 +576,7 @@ def relabel_colliding_lightdock_chains(
     staged_filenames: list[str],
     rec_chains: str,
     lig_chains: str,
+    receptor_coordinate_count: int | None = None,
 ) -> tuple[str, str]:
     """Relabel every staged pose when receptor/ligand chain IDs collide.
 
@@ -580,7 +601,11 @@ def relabel_colliding_lightdock_chains(
     )
     chain_map = list(_FRESH_CHAIN_ALPHABET[:total])
     for filename in staged_filenames:
-        _relabel_pose_chains_by_block_order(os.path.join(pose_dir, filename), chain_map)
+        _relabel_pose_chains_by_block_order(
+            os.path.join(pose_dir, filename),
+            chain_map,
+            receptor_coordinate_count,
+        )
     new_rec = _FRESH_CHAIN_ALPHABET[: len(rec_chains)]
     new_lig = _FRESH_CHAIN_ALPHABET[len(rec_chains): total]
     return new_rec, new_lig
@@ -600,6 +625,7 @@ class PoseSource:
     rec_chains: str
     lig_chains: str
     staged_filenames: list[str] = field(default_factory=list)
+    receptor_coordinate_count: int | None = None
 
 
 def parse_pool_spec(spec: str) -> tuple[str, str, int | None]:
@@ -688,7 +714,9 @@ def harmonize_pool_chains(
         )
         for filename in source.staged_filenames:
             _relabel_pose_chains_by_block_order(
-                os.path.join(pose_dir, filename), chain_map,
+                os.path.join(pose_dir, filename),
+                chain_map,
+                source.receptor_coordinate_count,
             )
 
     return _FRESH_CHAIN_ALPHABET[:n_rec], _FRESH_CHAIN_ALPHABET[n_rec:total]
@@ -854,7 +882,9 @@ def harmonize_pool_residues(
         lig_letters = "".join(chain_map[n_rec:])
         for filename in source.staged_filenames:
             path = os.path.join(pose_dir, filename)
-            _relabel_pose_chains_by_block_order(path, chain_map)
+            _relabel_pose_chains_by_block_order(
+                path, chain_map, source.receptor_coordinate_count,
+            )
             residues = _read_partner_residues(path, rec_letters, lig_letters)
             if not any(r.partner == 0 for r in residues) or not any(
                 r.partner == 1 for r in residues
@@ -976,14 +1006,8 @@ def _resolve_chains_rosetta(_run_dir: str, pose_paths: list[str]) -> tuple[str, 
     )
 
 
-def _resolve_chains_lightdock(run_dir: str, _pose_paths: list[str]) -> tuple[str, str]:
-    """Recover the split from the original inputs LightDock copies unchanged.
-
-    ``lightdock_pipeline`` copies the receptor/ligand PDBs into the top of
-    the run directory before docking (see ``pdb_to_lightdock.py``), and
-    LightDock does not relabel or merge chain IDs -- so those two files'
-    own chain sets *are* the receptor/ligand split in every generated pose.
-    """
+def _lightdock_input_paths(run_dir: str) -> tuple[str, str]:
+    """Return the receptor/ligand inputs LightDock copies into *run_dir*."""
     top_level_pdbs = [
         p for p in glob.glob(os.path.join(run_dir, "*.pdb"))
         if not os.path.basename(p).startswith("lightdock_")
@@ -994,8 +1018,33 @@ def _resolve_chains_lightdock(run_dir: str, _pose_paths: list[str]) -> tuple[str
             f"(found {len(top_level_pdbs)}); cannot recover the receptor/"
             "ligand chain split automatically. Pass --rec-chains/--lig-chains."
         )
-    top_level_pdbs.sort(key=os.path.getmtime)
-    rec_path, lig_path = top_level_pdbs
+    return tuple(sorted(top_level_pdbs, key=os.path.getmtime))
+
+
+def _lightdock_receptor_coordinate_count(run_dir: str) -> int:
+    """Count receptor coordinates in the original LightDock input."""
+    rec_path, _ = _lightdock_input_paths(run_dir)
+    with open(rec_path, encoding="utf-8") as fh:
+        count = sum(
+            line[:6].strip() in _PDB_COORD_RECORDS
+            for line in fh
+        )
+    if not count:
+        raise ConsrankError(
+            f"Could not read coordinate records from '{rec_path}'."
+        )
+    return count
+
+
+def _resolve_chains_lightdock(run_dir: str, _pose_paths: list[str]) -> tuple[str, str]:
+    """Recover the split from the original inputs LightDock copies unchanged.
+
+    ``lightdock_pipeline`` copies the receptor/ligand PDBs into the top of
+    the run directory before docking (see ``pdb_to_lightdock.py``), and
+    LightDock does not relabel or merge chain IDs -- so those two files'
+    own chain sets *are* the receptor/ligand split in every generated pose.
+    """
+    rec_path, lig_path = _lightdock_input_paths(run_dir)
     rec_chains = "".join(_pdb_chain_order(rec_path))
     lig_chains = "".join(_pdb_chain_order(lig_path))
     if not rec_chains or not lig_chains:
@@ -1373,13 +1422,14 @@ def _prepare_single(args):
     staged = stage_poses(pose_paths, pose_dir)
 
     if engine == "lightdock":
+        receptor_coordinate_count = _lightdock_receptor_coordinate_count(run_dir)
         # LightDock reuses the receptor's/ligand's own chain letters
         # verbatim, so they collide whenever both inputs happen to label
         # chains the same way (e.g. both start at 'A') -- see
         # relabel_colliding_lightdock_chains's docstring. Other engines
         # are disjoint by construction, so this is skipped for them.
         rec_chains, lig_chains = relabel_colliding_lightdock_chains(
-            pose_dir, staged, rec_chains, lig_chains,
+            pose_dir, staged, rec_chains, lig_chains, receptor_coordinate_count,
         )
 
     _sanitize_staged_poses(pose_dir, staged)
@@ -1401,11 +1451,25 @@ def _prepare_pool(args):
             sys.exit(2)
         pose_paths = discover_poses(run_dir, engine, max_poses=max_poses)
         rec_chains, lig_chains = resolve_chains(run_dir, engine, pose_paths)
+        receptor_coordinate_count = (
+            _lightdock_receptor_coordinate_count(run_dir)
+            if engine == "lightdock"
+            else None
+        )
         print(
             f"[{engine}] {len(pose_paths)} poses from {run_dir} "
             f"(receptor={rec_chains}, ligand={lig_chains})"
         )
-        sources.append(PoseSource(engine, run_dir, pose_paths, rec_chains, lig_chains))
+        sources.append(
+            PoseSource(
+                engine,
+                run_dir,
+                pose_paths,
+                rec_chains,
+                lig_chains,
+                receptor_coordinate_count=receptor_coordinate_count,
+            )
+        )
 
     pair_labels = sorted({os.path.basename(s.run_dir.rstrip(os.sep)) for s in sources})
     pair_label = pair_labels[0]
