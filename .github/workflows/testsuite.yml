@@ -24,6 +24,7 @@ jobs:
       ENV_NAME: ppinsight
       PYTHON: ${{ matrix.python-version }}
       OS: ${{ matrix.os }}
+      CFLAGS: -Wno-error=incompatible-pointer-types
     name: Testing
     runs-on: ${{ matrix.os }}
     defaults:
