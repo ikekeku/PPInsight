@@ -802,7 +802,7 @@ def test_harmonize_pool_residues_keeps_unaligned_residues_past_reference(tmp_pat
     assert summary["haddock"]["min_coverage"] == 1.0
 
 
-def test_harmonize_pool_residues_gives_unaligned_residues_unique_numbers(
+def test_harmonize_pool_residues_rejects_unaligned_residues(
     tmp_path, monkeypatch,
 ):
     reference = _source_with_pose(
@@ -824,12 +824,8 @@ def test_harmonize_pool_residues_gives_unaligned_residues_unique_numbers(
     monkeypatch.setattr(
         consrank, "_align_to_reference", align_with_unaligned_insertions,
     )
-    consrank.harmonize_pool_residues(str(tmp_path), [reference, first, second])
-
-    first_res, _ = _harmonized_residues(tmp_path / "first_pose.pdb")
-    second_res, _ = _harmonized_residues(tmp_path / "second_pose.pdb")
-    assert [resnum for chain, resnum, _ in first_res if chain == "B"] == [1, 4, 3]
-    assert [resnum for chain, resnum, _ in second_res if chain == "B"] == [1, 5, 3]
+    with pytest.raises(consrank.ConsrankError, match="cannot be aligned"):
+        consrank.harmonize_pool_residues(str(tmp_path), [reference, first, second])
 
 
 def test_harmonize_pool_residues_handles_lightdock_letter_collision(tmp_path):

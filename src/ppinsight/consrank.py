@@ -54,10 +54,11 @@ sees it: each partner's chains are merged into a single letter (receptor
 ``A``, ligand ``B``), hydrogens are dropped so explicit-H models don't
 register extra contacts, and residues are renumbered by aligning the
 partner's sequence to a pool-wide reference (the longest partner sequence in
-the pool). Residues that don't align to the reference keep unique numbers
-past the reference range, so nothing is silently dropped -- they just can't
-contribute consensus. Advanced users with already-compatible inputs can pass
-``--no-harmonize`` to retain their existing residue numbering.
+the pool). Pools containing residues that don't align to the reference are
+rejected: CONSRANK's dense residue-number matrices cannot safely represent
+those residues without either aliasing them or allocating impractically large
+IDs. Advanced users with already-compatible inputs can pass ``--no-harmonize``
+to retain their existing residue numbering.
 
 Usage::
 
@@ -795,14 +796,11 @@ def _write_harmonized_pose(
     pose_path: str,
     residues: list[_Residue],
     mappings: tuple[dict[int, int], dict[int, int]],
-    next_extra: list[int],
 ) -> None:
     """Rewrite *pose_path* with merged chains and reference numbering.
 
-    Residues without a reference counterpart are numbered past the
-    reference length so they stay in the file (CONSRANK still needs their
-    atoms for distances) but can never be mistaken for a shared residue or
-    an unaligned residue from another pose.
+    Every residue must have a reference counterpart; incompatible pools are
+    rejected by ``harmonize_pool_residues`` before this function is called.
     """
     chains = (_HARMONIZED_REC_CHAIN, _HARMONIZED_LIG_CHAIN)
     seq_index = [0, 0]
@@ -815,11 +813,7 @@ def _write_harmonized_pose(
         prev_partner = partner
         ref_index = mappings[partner].get(seq_index[partner])
         seq_index[partner] += 1
-        if ref_index is None:
-            number = next_extra[partner]
-            next_extra[partner] += 1
-        else:
-            number = ref_index + 1
+        number = ref_index + 1
         for line in residue.lines:
             line = line.rstrip("\n")
             out.append(f"{line[:21]}{chains[partner]}{number:4d} {line[27:]}\n")
@@ -883,7 +877,6 @@ def harmonize_pool_residues(
 
     cache: dict[tuple[int, str], tuple[dict[int, int], float, float]] = {}
     summary: dict[str, dict] = {}
-    next_extra = [ref_lengths[0] + 1, ref_lengths[1] + 1]
     for source, path, residues in parsed:
         mappings = []
         stats = summary.setdefault(
@@ -895,11 +888,18 @@ def harmonize_pool_residues(
             if key not in cache:
                 cache[key] = _align_to_reference(seq, references[partner])
             mapping, coverage, identity = cache[key]
+            if len(mapping) != len(seq):
+                raise ConsrankError(
+                    f"'{os.path.basename(path)}' ({source.engine}) has "
+                    f"residues that cannot be aligned to the pool's "
+                    f"{('receptor', 'ligand')[partner]} reference; "
+                    "cannot harmonize this incompatible pool."
+                )
             mappings.append(mapping)
             stats["min_coverage"] = min(stats["min_coverage"], coverage)
             stats["min_identity"] = min(stats["min_identity"], identity)
         stats["poses"] += 1
-        _write_harmonized_pose(path, residues, (mappings[0], mappings[1]), next_extra)
+        _write_harmonized_pose(path, residues, (mappings[0], mappings[1]))
 
     for engine, stats in summary.items():
         poorly_aligned = (
