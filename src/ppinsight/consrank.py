@@ -238,7 +238,7 @@ def _select_top_fraction(
     """
     ordered = sorted(scored, key=lambda row: row[1])
     n = len(ordered)
-    n_keep = max(1, min(n, round(cutoff * n)))
+    n_keep = max(1, min(n, int(cutoff * n + 0.5)))
     return ordered[n - n_keep:]
 
 
