@@ -34,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import warnings
+from collections import deque
 
 from ppinsight.utils import _project_root, resolve_input_path  # noqa: F401
 
@@ -48,6 +49,7 @@ _LIGHTDOCK_UNSUPPORTED_RESIDUE_RE = re.compile(
     r"\[NotSupportedInScoringError\]\s+Residue\s+(?P<residue>\S+)\s+"
     r"or atom\s+(?P<atom>\S+)\s+not supported"
 )
+_MAX_CAPTURED_OUTPUT_LINES = 200
 
 
 class LightDockSimulationError(RuntimeError):
@@ -277,6 +279,16 @@ def _print_lightdock_success_summary(
     print("\n".join(summary_lines))
 
 
+def _lightdock_log_path(cwd: str | None) -> str | None:
+    """Return the run-level log path for a LightDock command."""
+    if cwd is None:
+        return None
+    directory = os.path.abspath(cwd)
+    if os.path.basename(directory).startswith("swarm_"):
+        directory = os.path.dirname(directory)
+    return os.path.join(directory, "lightdock.log")
+
+
 def run_command(cmd, cwd=None):
     """
     Print and execute a shell command.
@@ -309,11 +321,20 @@ def run_command(cmd, cwd=None):
         )
         sys.exit(2)
 
-    output_lines: list[str] = []
+    output_lines: deque[str] = deque(maxlen=_MAX_CAPTURED_OUTPUT_LINES)
+    log_path = _lightdock_log_path(cwd)
     assert proc.stdout is not None
-    for line in proc.stdout:
-        print(line, end="")
-        output_lines.append(line)
+    log_handle = open(log_path, "a", encoding="utf-8") if log_path else None
+    try:
+        if log_handle is not None:
+            log_handle.write(">> " + " ".join(map(str, cmd)) + "\n")
+        for line in proc.stdout:
+            if log_handle is not None:
+                log_handle.write(line)
+            output_lines.append(line)
+    finally:
+        if log_handle is not None:
+            log_handle.close()
 
     return_code = proc.wait()
     output = "".join(output_lines)

@@ -1140,14 +1140,9 @@ def main(argv=None):
         }
 
     new_results: list[dict] = []
-    _flush_counter = [0]
-    _FLUSH_EVERY = 10
 
-    def _flush_to_disk(force: bool = False) -> None:
+    def _flush_to_disk() -> None:
         nonlocal existing_results
-        _flush_counter[0] += 1
-        if not force and _flush_counter[0] % _FLUSH_EVERY != 0:
-            return
         if not new_results:
             return
         combined = _upsert_results(
@@ -1162,7 +1157,7 @@ def main(argv=None):
         new_results.clear()
 
     def persist_result(result: dict) -> None:
-        """Buffer a completed engine result and periodically flush to disk."""
+        """Persist each completed engine result for interruption-safe resume."""
         new_results.append(result)
         _flush_to_disk()
 
@@ -1180,7 +1175,7 @@ def main(argv=None):
         on_result=persist_result,
     )
     if new_results:
-        _flush_to_disk(force=True)
+        _flush_to_disk()
 
     combined_results = _upsert_results(
         existing_results,

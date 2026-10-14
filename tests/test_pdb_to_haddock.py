@@ -356,6 +356,24 @@ def test_write_cfg_skip_flexref_forces_skip_emref(tmp_path):
     assert "[emref]" not in text
 
 
+def test_write_cfg_uses_automatic_histidine_assignment(tmp_path):
+    cfg_path = tmp_path / "run.cfg"
+    pdb_to_haddock.write_cfg(
+        cfg_path=cfg_path,
+        runname="autohis",
+        mode="local",
+        ncores=1,
+        rec_rel="data/rec.pdb",
+        lig_rel="data/lig.pdb",
+        ambig_rel="",
+    )
+
+    text = cfg_path.read_text()
+    assert "autohis = true" in text
+    assert "[topoaa.mol1]" not in text
+    assert "[topoaa.mol2]" not in text
+
+
 def test_cfg_honors_custom_tolerance(tmp_path, monkeypatch):
     inp = tmp_path / "input"
     inp.mkdir()
@@ -793,7 +811,7 @@ def test_run_in_container_builds_docker_command_with_haddock_entrypoint(
                 "ghcr.io/haddocking/haddock3:latest",
                 "run1.cfg",
             ],
-            None,
+            run_dir,
         )
     ]
 
@@ -833,9 +851,21 @@ def test_run_in_container_builds_apptainer_command_in_run_dir(
                 "haddock3",
                 "run1.cfg",
             ],
-            None,
+            run_dir,
         )
     ]
+
+
+def test_run_command_explains_container_failure(tmp_path, monkeypatch):
+    error = subprocess.CalledProcessError(1, ["apptainer", "exec"])
+    monkeypatch.setattr(
+        pdb_to_haddock.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(RuntimeError, match="HADDOCK container command failed"):
+        pdb_to_haddock.run_command(["apptainer", "exec"], cwd=tmp_path)
 
 
 def test_main_reports_runtime_error_cleanly(tmp_path, monkeypatch, capsys):

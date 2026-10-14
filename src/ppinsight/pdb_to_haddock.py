@@ -42,6 +42,15 @@ def run_command(cmd, cwd=None):
     print(">>", " ".join(map(str, cmd)))
     try:
         subprocess.run(list(map(str, cmd)), cwd=cwd, check=True)
+    except subprocess.CalledProcessError as exc:
+        if cmd and str(cmd[0]) in {"apptainer", "singularity", "docker"}:
+            location = f" in {cwd}" if cwd else ""
+            raise RuntimeError(
+                "HADDOCK container command failed"
+                f"{location} with exit code {exc.returncode}. "
+                "See the Slurm log and the HADDOCK run directory for details."
+            ) from exc
+        raise
     except FileNotFoundError:
         exe = cmd[0]
         print(
@@ -439,7 +448,7 @@ def _run_in_container(
             "haddock3",
             cfg_base,
         ]
-    run_command(cmd)
+    run_command(cmd, cwd=run_dir_path)
 
 
 def make_run_dir(rec, lig, runname, base_root=BASE_ROOT, method=METHOD):
@@ -589,16 +598,7 @@ def write_cfg(
 
     # Topology generation — protonation and histidine states
     [topoaa]
-    autohis = false
-    [topoaa.mol1]
-    nhisd = 0
-    nhise = 1
-    hise_1 = 75
-    [topoaa.mol2]
-    nhisd = 1
-    hisd_1 = 76
-    nhise = 1
-    hise_1 = 15
+    autohis = true
 
     # Rigid-body energy minimization (it0)
     [rigidbody]

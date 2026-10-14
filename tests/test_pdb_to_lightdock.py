@@ -256,6 +256,28 @@ def test_clean_pdb_for_lightdock_removes_hetero_records(tmp_path):
     assert cleaned.read_text(encoding="utf-8") == atom_line + "TER\n" + "END\n"
 
 
+def test_run_command_writes_detail_to_run_log(tmp_path, monkeypatch, capsys):
+    class FakeProcess:
+        stdout = ["detail one\n", "detail two\n"]
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(
+        pdb_to_lightdock.subprocess,
+        "Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+
+    output = pdb_to_lightdock.run_command(["fake-lightdock"], cwd=str(tmp_path))
+
+    assert output == "detail one\ndetail two\n"
+    assert "detail one" not in capsys.readouterr().out
+    assert (tmp_path / "lightdock.log").read_text(encoding="utf-8") == (
+        ">> fake-lightdock\ndetail one\ndetail two\n"
+    )
+
+
 def test_pipeline_raises_cleanable_error_for_unsupported_residue(
     sample_input_dirs,
     monkeypatch,

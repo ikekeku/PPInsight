@@ -1,6 +1,7 @@
 """Tests for parse_pairs and batch_dock modules."""
 
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -386,6 +387,46 @@ class TestBatchDock:
         assert len(results) == 1
         assert results.iloc[0]["status"] == "ok"
         assert results.iloc[0]["output_dir"].endswith("A_vs_B_retry")
+
+    def test_cli_persists_each_completed_engine_run(self, tmp_path, monkeypatch):
+        from ppinsight import batch_dock
+
+        pairs_path = tmp_path / "pairs.csv"
+        pairs_path.write_text("proteinA,proteinB\nA,B\nA,C\n", encoding="utf-8")
+        for name in ("A", "B", "C"):
+            (tmp_path / f"{name}.pdb").write_text(
+                f"ATOM      1  CA  GLY {name}   1\n", encoding="utf-8"
+            )
+
+        output_root = tmp_path / "output"
+        manifest = output_root / "scores" / "batch_results.csv"
+        calls = []
+
+        def runner(rec_pdb, lig_pdb, output_dir, *_args, **_kwargs):
+            if calls:
+                saved = pd.read_csv(manifest)
+                assert len(saved) == 1
+                assert saved.iloc[0]["status"] == "ok"
+            calls.append((rec_pdb, lig_pdb))
+            return str(Path(output_dir) / f"run_{len(calls)}")
+
+        monkeypatch.setattr(
+            batch_dock.registry,
+            "get",
+            lambda _name: SimpleNamespace(runner=runner),
+        )
+
+        batch_dock.main([
+            str(pairs_path),
+            "--engines", "lightdock",
+            "--pdb-dir", str(tmp_path),
+            "--output-root", str(output_root),
+            "-o", str(manifest),
+        ])
+
+        results = pd.read_csv(manifest)
+        assert len(results) == 2
+        assert set(results["status"]) == {"ok"}
 
     def test_preflight_reports_lightdock_heteroatom_warning(
         self, tmp_path, monkeypatch
