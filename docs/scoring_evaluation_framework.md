@@ -104,6 +104,29 @@ Since engine-native scores lack thresholds, the only path to universal binning i
 
 For users who **lack** a native reference structure (the common real-world case), the scoring metrics can only be used for **within-run relative ranking** — there is no scientifically defensible way to assign absolute quality labels.
 
+### 2.4 Native-Reference Rank Audit
+
+When a native reference is available, evaluate all score-traceable poses (or a
+documented broad subset) with DockQ and summarize each engine separately:
+
+| Field | Question answered |
+|---|---|
+| `poses_ranked` | How many poses did the engine score? |
+| `poses_evaluated` | How many of those poses were available for DockQ? |
+| `best_dockq` | Did the engine generate a near-native pose at all? |
+| `engine_rank_of_best_dockq` | Where did that best-DockQ pose rank by the engine's own score? |
+| `best_dockq_in_top_n` | How accurate was the engine's usual top-N selection? |
+| `acceptable_pose_generated` | Did the engine generate at least one DockQ ≥ 0.23 pose? |
+
+This is not a metric-versus-metric scatter plot. It audits one engine's ranking
+against an independent native-reference measure for the same poses. PPInsight
+writes this table with `ppinsight quality <scores.tsv> <native.pdb> --rank-summary -o <quality.tsv>`.
+
+For HADDOCK, prefer PDBs from the most refined available stage in this order:
+`emref`, then `flexref`, then `rigidbody`. HADDOCK commonly stores successful
+model PDBs as `.pdb.gz`; PPInsight's quality evaluator can read these compressed
+files without permanently unpacking the run directory.
+
 ---
 
 ## 3. Cross-Model Normalization

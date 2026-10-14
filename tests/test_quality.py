@@ -16,6 +16,7 @@ from ppinsight.quality import (
     evaluate_complex,
     evaluate_directory,
     evaluate_scores_dataframe,
+    summarize_engine_ranking,
 )
 
 # ---------------------------------------------------------------------------
@@ -194,6 +195,31 @@ class TestEvaluateComplex:
         )
         assert received["chain_map"] == {"X": "A", "Y": "B"}
 
+    def test_reads_compressed_model(self, tmp_path):
+        import gzip
+
+        model = tmp_path / "model.pdb.gz"
+        native = tmp_path / "native.pdb"
+        with gzip.open(model, "wt", encoding="utf-8") as handle:
+            handle.write("ATOM\n")
+        native.write_text("ATOM\n", encoding="utf-8")
+        loaded_paths = []
+
+        def recording_loader(path):
+            loaded_paths.append(path)
+            return _FakeModel(path)
+
+        result = evaluate_complex(
+            str(model),
+            str(native),
+            _load_fn=recording_loader,
+            _run_fn=_make_fake_runner(),
+        )
+
+        assert result["model_path"] == str(model)
+        assert loaded_paths[0] != str(model)
+        assert loaded_paths[0].endswith(".pdb")
+
 
 # ---------------------------------------------------------------------------
 # evaluate_directory
@@ -332,6 +358,54 @@ class TestEvaluateScoresDataFrame:
         )
 
         assert result.loc[0, "output_path"] == str(model)
+
+    def test_resolves_cleaned_haddock_pdb_to_compressed_model(self, tmp_path):
+        import gzip
+
+        native = tmp_path / "native.pdb"
+        archived_model = tmp_path / "rigidbody_1.pdb.gz"
+        native.write_text("ATOM", encoding="utf-8")
+        with gzip.open(archived_model, "wt", encoding="utf-8") as handle:
+            handle.write("ATOM")
+        scores = pd.DataFrame({
+            "model": ["haddock"],
+            "score_type": ["score"],
+            "score_value": [-10.0],
+            "output_path": [str(tmp_path / "rigidbody_1.pdb")],
+            "pose_id": ["rigidbody_1"],
+        })
+
+        result = evaluate_scores_dataframe(
+            scores,
+            str(native),
+            _load_fn=_fake_load_pdb,
+            _run_fn=_make_fake_runner(),
+        )
+
+        assert result.loc[0, "output_path"] == str(archived_model)
+
+
+class TestEngineRankingSummary:
+    def test_reports_best_dockq_rank_and_sampling_success(self):
+        scores = pd.DataFrame({
+            "model": ["lightdock", "lightdock", "lightdock"],
+            "score_type": ["luciferin_score"] * 3,
+            "score_value": [30.0, 20.0, 10.0],
+            "pose_id": ["first", "second", "third"],
+        })
+        quality = pd.DataFrame({
+            "model": ["lightdock", "lightdock", "lightdock"],
+            "pose_id": ["first", "second", "third"],
+            "DockQ": [0.05, 0.30, 0.10],
+        })
+
+        result = summarize_engine_ranking(scores, quality, top_n=1)
+
+        row = result.iloc[0]
+        assert row["best_dockq"] == pytest.approx(0.30)
+        assert row["engine_rank_of_best_dockq"] == 2
+        assert row["best_dockq_in_top_n"] == pytest.approx(0.05)
+        assert bool(row["acceptable_pose_generated"])
 
 
 # ---------------------------------------------------------------------------

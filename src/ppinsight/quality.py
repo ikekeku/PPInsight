@@ -33,8 +33,13 @@ CLI::
 
 import argparse
 import glob
+import gzip
 import os
+import shutil
 import sys
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -86,6 +91,32 @@ def _require_dockq() -> None:
     """
     if not _DOCKQ_AVAILABLE:
         raise ImportError(_DOCKQ_IMPORT_ERROR)
+
+
+def _existing_model_path(path: str) -> str:
+    """Return an existing PDB path, allowing HADDOCK's ``.pdb.gz`` cleanup."""
+    if os.path.isfile(path):
+        return path
+    compressed_path = path if path.endswith(".gz") else f"{path}.gz"
+    return compressed_path if os.path.isfile(compressed_path) else path
+
+
+@contextmanager
+def _dockq_readable_path(path: str):
+    """Yield a path DockQ can read, temporarily unpacking ``.pdb.gz`` files."""
+    if not path.endswith(".gz"):
+        yield path
+        return
+
+    suffix = Path(path[:-3]).suffix or ".pdb"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+        temporary_path = handle.name
+        with gzip.open(path, "rb") as compressed_handle:
+            shutil.copyfileobj(compressed_handle, handle)
+    try:
+        yield temporary_path
+    finally:
+        os.unlink(temporary_path)
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +199,10 @@ def evaluate_complex(
     if _load_fn is None or _run_fn is None:
         _require_dockq()
 
-    model = loader(model_path)
-    native = loader(native_path)
+    with _dockq_readable_path(model_path) as readable_model_path:
+        with _dockq_readable_path(native_path) as readable_native_path:
+            model = loader(readable_model_path)
+            native = loader(readable_native_path)
 
     kwargs: dict[str, Any] = {}
     if chain_map is not None:
@@ -330,7 +363,10 @@ def _find_model_files(
         # HADDOCK writes refined models in numbered step directories.
         # Prefer the most-refined stage: emref > flexref > rigidbody.
         for step in ("*_emref", "*_flexref", "*_rigidbody"):
-            hits = glob.glob(os.path.join(run_dir, step, "*.pdb"))
+            hits = (
+                glob.glob(os.path.join(run_dir, step, "*.pdb"))
+                + glob.glob(os.path.join(run_dir, step, "*.pdb.gz"))
+            )
             if hits:
                 return sorted(hits)
         # Fallback: any PDB anywhere in the run tree
@@ -440,7 +476,11 @@ def evaluate_scores_dataframe(
 
     rows: list[dict[str, Any]] = []
     for _, pose_row in pose_table.iterrows():
-        resolved_path = str(pose_row["_resolved_output_path"])
+        resolved_path = _existing_model_path(
+            str(pose_row["_resolved_output_path"])
+        )
+        if not os.path.isfile(resolved_path):
+            continue
         metadata: dict[str, Any] = {"output_path": resolved_path}
         for logical_name, column_name in (
             ("model", model_col),
@@ -481,6 +521,114 @@ def evaluate_scores_dataframe(
                 "error": str(exc),
             }
         rows.append({**metadata, **row})
+
+    return pd.DataFrame(rows)
+
+
+def summarize_engine_ranking(
+    scores_df: pd.DataFrame,
+    quality_df: pd.DataFrame,
+    *,
+    top_n: int = 20,
+) -> pd.DataFrame:
+    """Summarize whether each engine generated and ranked native-like poses.
+
+    The result compares each engine's native score ordering with explicit DockQ
+    values for the same pose IDs. It answers whether an acceptable pose was
+    generated and, when one exists, where the best-DockQ pose ranked according
+    to the engine's own score.
+    """
+    score_model_col = find_column(scores_df.columns, "model")
+    score_type_col = find_column(scores_df.columns, "score_type")
+    score_value_col = find_column(scores_df.columns, "score_value")
+    score_pose_col = find_column(scores_df.columns, "pose_id")
+    quality_model_col = find_column(quality_df.columns, "model")
+    quality_pose_col = find_column(quality_df.columns, "pose_id")
+    required_columns = (
+        score_model_col,
+        score_type_col,
+        score_value_col,
+        score_pose_col,
+        quality_model_col,
+        quality_pose_col,
+    )
+    if any(column is None for column in required_columns):
+        raise ValueError(
+            "Ranking summary requires model, score_type, score_value, and "
+            "pose_id columns in both scores and quality tables."
+        )
+
+    from ppinsight.visualizer import get_metric_direction
+
+    preferred_metrics = {
+        "lightdock": "luciferin_score",
+        "haddock": "score",
+        "rosetta": "i_sc",
+    }
+    quality = quality_df.copy()
+    quality["DockQ"] = pd.to_numeric(quality["DockQ"], errors="coerce")
+    quality = quality.dropna(subset=["DockQ"])
+    rows: list[dict[str, Any]] = []
+
+    for engine, engine_scores in scores_df.groupby(score_model_col):
+        engine_name = str(engine)
+        preferred_metric = preferred_metrics.get(engine_name.lower())
+        available_metrics = engine_scores[score_type_col].astype(str).str.lower()
+        if preferred_metric and (available_metrics == preferred_metric).any():
+            metric = preferred_metric
+        else:
+            excluded = {
+                "dockq", "fnat", "irmsd", "lrmsd",
+                "quality_dockq", "quality_fnat", "quality_irmsd",
+                "quality_lrmsd", "cluster_size",
+            }
+            candidates = [
+                value for value in available_metrics.unique()
+                if value not in excluded
+            ]
+            if not candidates:
+                continue
+            metric = candidates[0]
+
+        ranked = engine_scores[
+            engine_scores[score_type_col].astype(str).str.lower() == metric
+        ].copy()
+        ranked[score_value_col] = pd.to_numeric(
+            ranked[score_value_col], errors="coerce"
+        )
+        ranked = ranked.dropna(subset=[score_value_col]).drop_duplicates(score_pose_col)
+        ranked = ranked.sort_values(
+            score_value_col,
+            ascending=not get_metric_direction(metric),
+        ).reset_index(drop=True)
+        ranked["engine_rank"] = ranked.index + 1
+
+        engine_quality = quality[
+            quality[quality_model_col].astype(str).str.lower()
+            == engine_name.lower()
+        ][[quality_pose_col, "DockQ"]].drop_duplicates(quality_pose_col)
+        merged = ranked.merge(
+            engine_quality,
+            left_on=score_pose_col,
+            right_on=quality_pose_col,
+            how="inner",
+        )
+        if merged.empty:
+            continue
+
+        best_row = merged.loc[merged["DockQ"].idxmax()]
+        top_quality = merged[merged["engine_rank"] <= top_n]
+        rows.append({
+            "model": engine_name,
+            "native_score_type": metric,
+            "poses_ranked": len(ranked),
+            "poses_evaluated": len(merged),
+            "best_dockq": float(best_row["DockQ"]),
+            "best_dockq_pose_id": str(best_row[score_pose_col]),
+            "engine_rank_of_best_dockq": int(best_row["engine_rank"]),
+            "best_dockq_in_top_n": float(top_quality["DockQ"].max()),
+            "acceptable_pose_generated": bool((merged["DockQ"] >= 0.23).any()),
+        })
 
     return pd.DataFrame(rows)
 
@@ -764,6 +912,15 @@ def main(argv=None):
             "--output is not set."
         ),
     )
+    parser.add_argument(
+        "--rank-summary",
+        action="store_true",
+        help=(
+            "In scores-file mode, write a companion table showing whether "
+            "each engine generated an acceptable pose and where its best "
+            "DockQ pose ranked by the engine's own score."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -826,6 +983,19 @@ def main(argv=None):
                 ),
                 file=sys.stderr,
             )
+            if args.rank_summary:
+                output_base, output_ext = os.path.splitext(args.output)
+                summary_path = f"{output_base}_rank_summary{output_ext}"
+                ranking = summarize_engine_ranking(scores_df, quality_df)
+                ranking.to_csv(
+                    summary_path,
+                    sep=_guess_sep(summary_path),
+                    index=False,
+                )
+                print(
+                    f"Wrote engine ranking summary to {summary_path}",
+                    file=sys.stderr,
+                )
         else:
             merged_scores.to_csv(sys.stdout, sep="\t", index=False)
 
