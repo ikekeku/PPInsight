@@ -221,7 +221,7 @@ single entry point for summaries, classification, and plots.
 
 ```bash
 ppinsight compare data/output/scores/scores.tsv --metric dockq --table
-ppinsight compare data/output/scores/scores.tsv --plot-type quality_bar
+ppinsight compare data/output/scores/scores.tsv --plot-type quality_bar --pair proteinA:proteinB
 ppinsight compare data/output/scores/scores.tsv --guide
 ```
 
@@ -312,12 +312,16 @@ protein pair.
 
 ---
 
-## Step 11 — Ridge plot
+## Step 11 — Strip plot
 
 ```bash
 ppinsight compare tutorials/all_scores.tsv --metric dockq \
-    --plot-type ridge -o tutorials/sample_output/ridge_dockq.png
+    --plot-type strip -o tutorials/sample_output/strip_dockq.png
 ```
+
+Every pose is drawn as a point, with a box showing the median and
+interquartile range.  The number under each engine name is how many poses
+that engine contributed.
 
 ## Step 12 — CAPRI quality classification
 
@@ -325,13 +329,14 @@ ppinsight compare tutorials/all_scores.tsv --metric dockq \
 # Print CAPRI quality tier counts
 ppinsight compare tutorials/all_scores.tsv --capri-quality
 
-# Quality bar chart (stacked: incorrect / acceptable / medium / high)
+# Quality bar chart: % of poses in each CAPRI tier, one protein pair at a time
 ppinsight compare tutorials/all_scores.tsv --plot-type quality_bar \
-    -o tutorials/sample_output/quality_bar.png
+    --pair 2UUY_rec:2UUY_lig -o tutorials/sample_output/quality_bar.png
 ```
 
-The quality bar is **pose-level**.  The **N = X** label beside each bar
-is the number of classified poses, not the number of protein pairs.
+The quality bar is **pose-level** and covers one protein pair.  Tiers come
+from each pose's DockQ, with the thresholds listed in the legend.  The
+**n = X** label under each engine name is the number of classified poses.
 
 
 ## Step 13 — CDF
@@ -341,7 +346,7 @@ ppinsight compare tutorials/all_scores.tsv --metric dockq \
     --plot-type cdf -o tutorials/sample_output/cdf_dockq.png
 ```
 
-For `dockq`, vertical CAPRI threshold lines are drawn automatically.
+For DockQ, vertical CAPRI threshold lines are drawn automatically.
 
 
 ## Step 14 — Filter by pair
@@ -364,7 +369,7 @@ ppinsight compare tutorials/all_scores.tsv --guide
 to see what the shipped tutorial file supports:
 
 - `violin`
-- `ridge`
+- `strip`
 - `quality_bar`
 - `cdf`
 - tabular summaries and ranking tables
@@ -373,19 +378,32 @@ It does **not** support:
 
 - `roc` — because `tutorials/all_scores.tsv` has no `label` column
 - `scatter` — because the models do not share the same pairs
-- `difference` — for the same alignment reason
+- `funnel` and `topn` — because the file has no `pose_id` column and no
+  DockQ rows measured against a native structure (`quality_dockq`)
 
-Scatter and difference become valid only after a real aligned benchmark.
-Reference commands once you have aligned multi-model coverage:
+The `dockq` metric used above is HADDOCK's own caprieval value, so plots
+label it "DockQ (HADDOCK caprieval)".  It is measured against HADDOCK's own
+best-scoring model, not against a native complex; see the FAQ entry on
+`dockq` vs `quality_dockq`.
+
+Scatter becomes valid only after a real aligned benchmark.
+Reference command once you have aligned multi-model coverage:
 
 ```bash
 ppinsight compare data/output/scores/aligned_scores.tsv --metric dockq \
     --plot-type scatter --models haddock lightdock \
     -o tutorials/sample_output/scatter_haddock_vs_lightdock.png
+```
 
-ppinsight compare data/output/scores/aligned_scores.tsv --metric dockq \
-    --plot-type difference --models haddock lightdock \
-    -o tutorials/sample_output/difference_haddock_vs_lightdock.png
+The funnel and top-N plots become valid once you run `ppinsight quality`
+on a collected scores file for one target with a native structure (use
+`--plot-type topn` in place of `funnel` for the top-N plot):
+
+```bash
+ppinsight quality data/output/scores/scores.tsv data/input/native.pdb \
+    -o data/output/scores/scores_with_dockq.tsv
+ppinsight compare data/output/scores/scores_with_dockq.tsv \
+    --plot-type funnel -o tutorials/sample_output/funnel.png
 ```
 
 ---
@@ -498,7 +516,8 @@ ppinsight quality data/output/lightdock_runs/PAIR_A_vs_PAIR_B/ native.pdb \
 | Problem | Solution |
 |---------|----------|
 | `--metric X not found` | Run `--list-metrics` to see available metrics |
-| `--plot-type difference` or `scatter` errors | Both models must share the same pairs on the same metric |
+| `--plot-type scatter` errors | Both models must share the same pairs on the same metric |
+| `--plot-type funnel` says no pose_id matched | Run `ppinsight quality` on the collected scores file, not on a folder of copied or renamed poses |
 | Scatter errors about alignment | Both `--models` must have scored the same pairs |
 | `ModuleNotFoundError: DockQ` | Install with `pip install -e ".[quality]"` |
 | `lightdock` not found | Verify the CLI tools are on `$PATH`, for example: `which lightdock3_setup.py` |

@@ -28,9 +28,11 @@ CLI usage::
 import argparse
 import os
 import sys
+from contextlib import contextmanager
 
 import pandas as pd
 import seaborn as sns
+from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 
@@ -38,21 +40,25 @@ from matplotlib.lines import Line2D
 # Theme configuration
 # ---------------------------------------------------------------------------
 
-# Named themes are internal; PPInsight uses the default theme.
-THEMES: dict[str, dict] = {
-    "white-deep":         {"style": "white",      "palette": "deep"},
-    "whitegrid-Set2":     {"style": "whitegrid",  "palette": "Set2"},
-    "whitegrid-husl":     {"style": "whitegrid",  "palette": "husl"},
-    "whitegrid-deep":     {"style": "whitegrid",  "palette": "deep"},
-    "whitegrid-muted":    {"style": "whitegrid",  "palette": "muted"},
-    "white-pastel":       {"style": "white",      "palette": "pastel"},
-    "ticks-colorblind":   {"style": "ticks",      "palette": "colorblind"},
-    "darkgrid-Set2":      {"style": "darkgrid",   "palette": "Set2"},
-    "white-rocket":       {"style": "white",      "palette": "rocket_r"},
-    "ticks-viridis":      {"style": "ticks",      "palette": "viridis"},
+# Okabe & Ito (2008) colorblind-safe palette — PPInsight's default for
+# every plot.  Yellow is last because it has poor contrast on white.
+OKABE_ITO = {
+    "orange": "#E69F00",
+    "sky_blue": "#56B4E9",
+    "bluish_green": "#009E73",
+    "blue": "#0072B2",
+    "vermillion": "#D55E00",
+    "reddish_purple": "#CC79A7",
+    "black": "#000000",
+    "yellow": "#F0E442",
 }
 
-DEFAULT_THEME = "white-deep"
+# PPInsight has one theme; there is no theme option.
+THEMES: dict[str, dict] = {
+    "white-okabe-ito": {"style": "white", "palette": list(OKABE_ITO.values())},
+}
+
+DEFAULT_THEME = "white-okabe-ito"
 
 PLOT_TITLE_SIZE = 14
 FACET_TITLE_SIZE = 11
@@ -60,18 +66,159 @@ AXIS_LABEL_SIZE = 12
 TICK_LABEL_SIZE = 10
 LEGEND_FONT_SIZE = 8
 LEGEND_TITLE_SIZE = 9
+# Figure-level legends placed below the plot (violin, strip, funnel,
+# quality_bar) have room to be larger than legends inside the axes.
+BELOW_LEGEND_FONT_SIZE = 10
+BELOW_LEGEND_TITLE_SIZE = 11
+VIOLIN_FILL_ALPHA = 0.55
 ANNOTATION_FONT_SIZE = 9
-N_LABEL_SIZE = 9
 TITLE_PAD = 10
-QUALITY_BAR_TITLE_PAD = 12
-RIDGE_TITLE_OFFSET_IN = 0.29
-RIDGE_LEGEND_OFFSET_IN = 0.024
+BAR_ERROR_KW = {"linewidth": 1.0, "capthick": 1.0}
+
+# Below this many shared pairs, correlation coefficients swing widely from
+# one pair to the next, so the scatter still draws but warns.
+MIN_SCATTER_PAIRS = 10
+
+# Violin smoothing: 0.75 × seaborn's default (Scott's rule) bandwidth.  The
+# default filled the gap between two-cluster DockQ distributions; 0.5 kept
+# the gap but looked too bumpy.
+VIOLIN_BW_ADJUST = 0.75
+
+# Most points drawn per engine in strip and violin plots.  Above this a
+# uniform random sample is drawn (so density stays honest) and rare good
+# poses are overlaid; statistics still use all poses.
+MAX_DRAWN_POSES = 5000
+ALWAYS_DRAWN_BEST = 50
+
+# Metrics on the CAPRI DockQ scale: HADDOCK's own ``dockq`` and the
+# native-referenced ``quality_dockq`` written by ``ppinsight quality``.
+DOCKQ_METRICS = {"dockq", "quality_dockq"}
+
+# One colour per CAPRI tier, shared by the quality_bar segments and the
+# DockQ threshold lines so a tier looks the same in every plot.
+CAPRI_TIER_COLORS = {
+    "incorrect": "#b0b0b0",
+    "acceptable": "#31a354",
+    "medium": "#3182bd",
+    "high": "#6a51a3",
+}
 
 DOCKQ_CAPRI_THRESHOLDS = [
-    (0.23, "acceptable", "#f0c040"),
-    (0.49, "medium", "#4090e0"),
-    (0.80, "high", "#40c040"),
+    (0.23, "acceptable", CAPRI_TIER_COLORS["acceptable"]),
+    (0.49, "medium", CAPRI_TIER_COLORS["medium"]),
+    (0.80, "high", CAPRI_TIER_COLORS["high"]),
 ]
+
+ENGINE_COLORS = {
+    "haddock": OKABE_ITO["vermillion"],
+    "lightdock": OKABE_ITO["blue"],
+    "rosetta": OKABE_ITO["reddish_purple"],
+}
+
+# Interaction labels keep the same colors in every plot that uses them.
+LABEL_COLORS = {
+    "interaction": OKABE_ITO["blue"],
+    "non-interaction": OKABE_ITO["orange"],
+}
+
+ENGINE_DISPLAY_NAMES = {
+    "haddock": "HADDOCK3",
+    "lightdock": "LightDock",
+    "rosetta": "RosettaDock",
+}
+
+
+def _engine_label(model: str) -> str:
+    """Return the publication name for an engine (e.g. ``rosetta`` → RosettaDock)."""
+    return ENGINE_DISPLAY_NAMES.get(str(model).lower(), str(model))
+
+
+def _engine_tick_label(
+    model: str, n: int | None = None, shown: int | None = None,
+) -> str:
+    """Engine name for an axis tick, with the pose count underneath."""
+    label = _engine_label(model)
+    if n is None:
+        return label
+    if shown is not None and shown < n:
+        return f"{label}\n(n = {n:,}; {shown:,} sampled)"
+    return f"{label}\n(n = {n:,})"
+
+
+def _resolve_model_name(name: str, available) -> str:
+    """Match a user-typed engine name to a ``model`` value in the data.
+
+    Accepts the raw name (``haddock``) or the display name (``HADDOCK3``),
+    case-insensitively.  Returns *name* unchanged when nothing matches so
+    the caller's own "not found" error still fires.
+    """
+    wanted = str(name).lower()
+    for model in available:
+        if wanted in {str(model).lower(), _engine_label(model).lower()}:
+            return model
+    return name
+
+
+def _with_engine_labels(df: pd.DataFrame) -> pd.DataFrame:
+    """Copy of *df* with the ``model`` column shown as engine display names."""
+    out = df.copy()
+    if "model" in out.columns:
+        out["model"] = out["model"].map(_engine_label)
+    return out
+
+
+def _point_alpha(n: int) -> float:
+    """Point opacity that stays visible for small n and readable for large n."""
+    return float(min(0.8, max(0.08, 6.0 / max(n, 1) ** 0.5)))
+
+
+def _point_size(n: int) -> float:
+    """Marker area that shrinks as the number of poses grows."""
+    if n <= 300:
+        return 16.0
+    if n <= 2000:
+        return 8.0
+    return 4.0
+
+
+def _capri_legend_handles() -> list[Line2D]:
+    """Legend entries for the CAPRI DockQ threshold lines."""
+    return [
+        Line2D([0], [0], color=color, lw=2.0, ls="--",
+               label=f"CAPRI {label} ({threshold:.2f})")
+        for threshold, label, color in DOCKQ_CAPRI_THRESHOLDS
+    ]
+
+
+def _draw_capri_lines(
+    ax, metric: str, orientation: str = "h", zorder: float = 1.5,
+) -> bool:
+    """Draw CAPRI DockQ thresholds when *metric* is on the DockQ scale.
+
+    Returns True when lines were drawn so callers know to add a legend.
+    """
+    if metric.lower() not in DOCKQ_METRICS:
+        return False
+    draw = ax.axhline if orientation == "h" else ax.axvline
+    for threshold, _, color in DOCKQ_CAPRI_THRESHOLDS:
+        draw(threshold, color=color, lw=1.6, ls="--", alpha=0.75, zorder=zorder)
+    return True
+
+
+def _soften_violin_bodies(ax) -> None:
+    """Make violin fills translucent while keeping their outlines solid.
+
+    Threshold lines drawn behind the bodies then show through, as they did
+    in the ridge plot.
+    """
+    from matplotlib.collections import PolyCollection
+
+    for body in ax.collections:
+        if isinstance(body, PolyCollection):
+            faces = body.get_facecolors()
+            if len(faces):
+                faces[:, 3] = VIOLIN_FILL_ALPHA
+                body.set_facecolors(faces)
 
 
 def apply_theme(name: str = DEFAULT_THEME) -> None:
@@ -100,24 +247,24 @@ def apply_theme(name: str = DEFAULT_THEME) -> None:
 def _model_palette(models: list[str]) -> dict[str, tuple[float, float, float]]:
     """Return a stable palette mapping for model names.
 
-    Known engines keep the first three colors of the active seaborn
-    palette so HADDOCK / LightDock / Rosetta remain blue / orange /
-    green across single-engine and multi-engine plots. Unknown engines
-    receive the remaining colors in sorted order.
+    Known engines always get their fixed Okabe-Ito color from
+    :data:`ENGINE_COLORS` (matched case-insensitively), regardless of
+    which other engines are plotted or which theme is active.  Unknown
+    engines receive the unreserved Okabe-Ito colors in sorted order,
+    cycling if there are more engines than colors.
     """
     unique_models = sorted(set(models))
-    base = sns.color_palette(n_colors=max(10, len(unique_models) + 3))
-    preferred_positions = {"HADDOCK": 0, "LightDock": 1, "Rosetta": 2}
+    reserved = set(ENGINE_COLORS.values())
+    spare = [c for c in OKABE_ITO.values() if c not in reserved]
 
     palette: dict[str, tuple[float, float, float]] = {}
-    for model, idx in preferred_positions.items():
-        if model in unique_models:
-            palette[model] = base[idx]
-
-    extra_colors = iter(base[3:])
+    n_unknown = 0
     for model in unique_models:
-        if model not in palette:
-            palette[model] = next(extra_colors)
+        fixed = ENGINE_COLORS.get(str(model).lower())
+        if fixed is None:
+            fixed = spare[n_unknown % len(spare)]
+            n_unknown += 1
+        palette[model] = mcolors.to_rgb(fixed)
 
     return palette
 
@@ -241,20 +388,22 @@ def compare_scores(
             _warnings.warn(
                 f"'{name}' has std ({s_val:.2f}) much larger than the mean "
                 f"({m_val:.2f}).  Consider --plot-type violin for the full "
-                "distribution or --plot-type ridge for a compact density "
-                "comparison.",
+                "distribution or --plot-type strip to see every pose.",
                 stacklevel=2,
             )
 
-    palette = sns.color_palette(n_colors=len(models))
+    metric_name = get_metric_display_name(score_type)
+    model_palette = _model_palette(models)
+    palette = [model_palette[m] for m in models]
     bar_width = max(0.45, min(0.8, 0.65 * len(models)))
     fig, ax = plt.subplots(figsize=(max(6, len(models) * 2.5), 5))
-    ax.bar(models, means, width=bar_width, yerr=stds, capsize=6,
-           color=palette, edgecolor="white", linewidth=0.8,
-           error_kw={"linewidth": 1.5})
+    ax.bar([_engine_label(m) for m in models], means, width=bar_width,
+           yerr=stds, capsize=6, color=palette, edgecolor="white",
+           linewidth=0.8, error_kw=BAR_ERROR_KW)
     ax.set_xlabel("Interaction model")
-    ax.set_ylabel(f"{score_type}")
-    ax.set_title(plot_title or f"{score_type} by model")
+    ax.set_ylabel(f"Mean {metric_name} (± 1 SD)")
+    ax.set_title(plot_title or f"Mean {metric_name} by engine")
+    _apply_metric_bounds(ax, score_type)
     sns.despine(ax=ax)
 
     if output:
@@ -319,6 +468,7 @@ def compare_scores_unified(
 
     pa, pb, pair_tuples = _detect_pairs(df)
     n_pairs = len(pair_tuples)
+    metric_name = get_metric_display_name(metric)
 
     # ── Facet by pair when ≥ 2 pairs and no explicit --pair filter ─
     if n_pairs >= 2 and pair is None:
@@ -339,21 +489,23 @@ def compare_scores_unified(
                                   errors="coerce").dropna().std()
                     if len(grouped.get_group(m)) > 1 else 0.0
                     for m in model_names]
-            palette = sns.color_palette(n_colors=len(model_names))
+            model_palette = _model_palette(model_names)
+            palette = [model_palette[m] for m in model_names]
             bar_w = max(0.45, min(0.8, 0.65 * len(model_names)))
-            ax.bar(model_names, means, width=bar_w, yerr=stds,
-                   capsize=6, color=palette, edgecolor="white",
-                   linewidth=0.8, error_kw={"linewidth": 1.5})
-            ax.set_title(_pair_label(a, b), fontsize=10)
+            ax.bar([_engine_label(m) for m in model_names], means, width=bar_w,
+                   yerr=stds, capsize=6, color=palette, edgecolor="white",
+                   linewidth=0.8, error_kw=BAR_ERROR_KW)
+            ax.set_title(_pair_label(a, b), fontsize=FACET_TITLE_SIZE)
             ax.set_xlabel("")
-            ax.set_ylabel(metric if idx == 0 else "")
+            ax.set_ylabel(f"Mean {metric_name} (± 1 SD)" if idx == 0 else "")
+            _apply_metric_bounds(ax, metric)
             sns.despine(ax=ax)
 
-        suptitle = plot_title or f"{metric} by model"
-        fig.suptitle(suptitle, fontsize=13, y=1.02)
-        fig.tight_layout()
-        # Shared x-label centred across all facets
-        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=11)
+        _finish_figure(
+            fig, axes,
+            title=plot_title or f"Mean {metric_name} by engine",
+            xlabel="Docking Engine",
+        )
 
         if output:
             fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -375,8 +527,10 @@ def compare_scores_unified(
         frames.append(frame.reset_index(drop=True))
         model_names.append(str(name))
 
+    if pair is None and len(pair_tuples) == 1:
+        pair = pair_tuples[0]
     title = plot_title or (
-        f"{metric} by model"
+        f"Mean {metric_name} by engine"
         + (f" ({pair[0]} vs {pair[1]})" if pair else "")
     )
     return compare_scores(frames, model_names, metric, plot_title=title, output=output)
@@ -407,75 +561,6 @@ def available_pairs(scores_df: pd.DataFrame) -> list[tuple[str, str]]:
         return []
     pairs = scores_df[["proteina", "proteinb"]].drop_duplicates()
     return list(pairs.itertuples(index=False, name=None))
-
-
-# ---------------------------------------------------------------------------
-# Label-aware plotting (interaction vs non-interaction)
-# ---------------------------------------------------------------------------
-
-def compare_scores_by_label(
-    scores_df: pd.DataFrame,
-    metric: str,
-    plot_title: str | None = None,
-    output: str | None = None,
-) -> plt.Figure:
-    """Grouped bar chart comparing *metric* across models, split by label.
-
-    Requires a ``label`` column (e.g. ``interaction`` / ``non-interaction``)
-    in *scores_df*.  Each model gets two bars side-by-side.
-
-    Parameters
-    ----------
-    scores_df : DataFrame
-        Unified scores with ``model``, ``score_type``, ``score_value``,
-        and ``label`` columns.
-    metric : str
-        The ``score_type`` value to plot.
-    plot_title : str, optional
-    output : str, optional
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-    """
-    df = scores_df.copy()
-    if "score_type" in df.columns:
-        df = df[df["score_type"].str.lower() == metric.lower()]
-    if df.empty:
-        raise ValueError(f"No rows match metric='{metric}'")
-
-    if "label" not in df.columns:
-        raise ValueError(
-            "No 'label' column in scores — cannot split by interaction status. "
-            "Use --label-file (or legacy --pairs) with collect_scores to "
-            "annotate, or add a 'label' column."
-        )
-
-    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
-    models = sorted(df["model"].unique())
-    n_models = len(models)
-
-    fig, ax = plt.subplots(figsize=(max(8, n_models * 2), 6))
-    sns.barplot(
-        data=df, x="model", y="score_value", hue="label",
-        order=models, errorbar="sd", capsize=0.08,
-        edgecolor="white", linewidth=0.8, ax=ax,
-    )
-
-    ax.set_xlabel("Docking Engine")
-    ax.set_ylabel(metric)
-    ax.set_title(plot_title or f"{metric} — interaction vs non-interaction")
-    ax.legend(title="Label", frameon=True, fancybox=True, framealpha=0.9)
-    sns.despine(ax=ax)
-    fig.tight_layout()
-
-    if output:
-        fig.savefig(output, bbox_inches="tight", dpi=150)
-        print(f"Plot saved to {output}")
-    else:
-        plt.show()
-
-    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +603,10 @@ def violin_plot(
 
     Uses seaborn for rich rendering: inner quartile lines, optional
     split by interaction label, and automatic pair annotation so the
-    user always knows which protein pair(s) are being evaluated.
+    user always knows which protein pair(s) are being evaluated.  The
+    smoothing bandwidth is half of seaborn's default
+    (:data:`VIOLIN_BW_ADJUST`) so two-cluster distributions keep their gap,
+    and bounded metrics such as DockQ always span their full 0–1 range.
 
     Parameters
     ----------
@@ -554,102 +642,76 @@ def violin_plot(
     has_label = "label" in df.columns and split_by_label and df["label"].notna().any()
 
     # ── Facet by pair when ≥ 2 pairs ──────────────────────────────
-    n_pairs = len(pair_tuples)
-    if n_pairs >= 2:
-        n_models = len(models)
-        panel_w = max(5, n_models * 2.0)
-        fig, axes = plt.subplots(1, n_pairs,
-                                 figsize=(panel_w * n_pairs, 6),
-                                 sharey=True)
-        if n_pairs == 1:
-            axes = [axes]
-        for idx, (a, b) in enumerate(pair_tuples):
-            ax = axes[idx]
-            sub = df[(df[pa] == a) & (df[pb] == b)]
-            sub_models = sorted(sub["model"].unique())
-            if has_label:
-                sns.violinplot(
-                    data=sub, x="model", y="score_value", hue="label",
-                    split=True, inner="box", cut=0, ax=ax, linewidth=0.8,
-                    density_norm="width", order=sub_models,
-                )
-                if idx == n_pairs - 1:
-                    ax.legend(
-                        title="Label",
-                        fontsize=LEGEND_FONT_SIZE,
-                        title_fontsize=LEGEND_TITLE_SIZE,
-                    )
-                else:
-                    ax.legend_.remove() if ax.get_legend() else None
-            else:
-                sns.violinplot(
-                    data=sub, x="model", y="score_value", hue="model",
-                    inner="box", cut=0, ax=ax, linewidth=0.8,
-                    density_norm="width", order=sub_models,
-                    hue_order=sub_models, palette=model_palette,
-                    dodge=False, legend=False,
-                )
-                _draw_deterministic_stripplot(ax=ax, data=sub, order=sub_models)
-            ax.set_title(_pair_label(a, b), fontsize=FACET_TITLE_SIZE)
-            ax.set_xlabel("")
-            ax.set_ylabel(metric_name if idx == 0 else "")
-            _add_faint_horizontal_gridlines(ax)
-            sns.despine(ax=ax)
+    if len(pair_tuples) >= 2:
+        panels = [
+            (_pair_label(a, b), df[(df[pa] == a) & (df[pb] == b)])
+            for a, b in pair_tuples
+        ]
+        panel_w = max(4.5, len(models) * 1.9)
+    else:
+        panels = [(None, df)]
+        panel_w = max(7, len(models) * 2.2)
 
-        suptitle = plot_title or f"{metric_name} distribution by model"
-        fig.suptitle(suptitle, fontsize=PLOT_TITLE_SIZE, y=1.03)
-        fig.tight_layout(rect=(0, 0, 1, 0.96), pad=1.0)
-        # Shared x-label centred across all facets
-        fig.text(0.5, -0.02, "Docking Engine", ha="center", fontsize=AXIS_LABEL_SIZE)
+    fig, axes = plt.subplots(
+        1, len(panels), figsize=(panel_w * len(panels), 6),
+        sharey=True, squeeze=False,
+    )
+    axes = list(axes[0])
+    capri_drawn = False
+    highlight_handle = None
 
-        if output:
-            fig.savefig(output, bbox_inches="tight", dpi=180)
-            print(f"Plot saved to {output}")
+    for idx, (ax, (panel_title, data)) in enumerate(zip(axes, panels, strict=False)):
+        panel_models = sorted(data["model"].unique())
+        shown = None
+        if has_label:
+            sns.violinplot(
+                data=data, x="model", y="score_value", hue="label",
+                split=True, inner="box", cut=0, bw_adjust=VIOLIN_BW_ADJUST,
+                ax=ax, linewidth=0.8, density_norm="width", order=panel_models,
+            )
+            if idx == len(panels) - 1:
+                ax.legend(
+                    title="Label",
+                    fontsize=LEGEND_FONT_SIZE,
+                    title_fontsize=LEGEND_TITLE_SIZE,
+                )
+            elif ax.get_legend() is not None:
+                ax.get_legend().remove()
         else:
-            plt.show()
-        return fig
+            sns.violinplot(
+                data=data, x="model", y="score_value", hue="model",
+                inner="box", cut=0, bw_adjust=VIOLIN_BW_ADJUST,
+                ax=ax, linewidth=0.8, density_norm="width", order=panel_models,
+                hue_order=panel_models, palette=model_palette,
+                dodge=False, legend=False,
+            )
+            shown, handle = _draw_deterministic_stripplot(
+                ax=ax, data=data, order=panel_models, metric=metric,
+            )
+            highlight_handle = handle or highlight_handle
+        _set_engine_ticks(ax, data, panel_models, shown)
+        _soften_violin_bodies(ax)
+        capri_drawn = _draw_capri_lines(ax, metric, zorder=0.5) or capri_drawn
+        _apply_metric_bounds(ax, metric)
+        if panel_title:
+            ax.set_title(panel_title, fontsize=FACET_TITLE_SIZE)
+        ax.set_xlabel("")
+        ax.set_ylabel(metric_name if idx == 0 else "")
+        _add_faint_horizontal_gridlines(ax)
+        sns.despine(ax=ax)
 
-    # ── Single pair (or no pair columns) — single-panel plot ──────
-    pairs = [_pair_label(a, b) for a, b in pair_tuples]
-    n_models = len(models)
-    fig_w = max(7, n_models * 2.2)
-    fig, ax = plt.subplots(figsize=(fig_w, 6))
-
-    if has_label:
-        sns.violinplot(
-            data=df, x="model", y="score_value", hue="label",
-            split=True, inner="box", cut=0, ax=ax, linewidth=0.8,
-            density_norm="width", order=models,
-        )
-        ax.legend(
-            title="Label",
-            fontsize=LEGEND_FONT_SIZE,
-            title_fontsize=LEGEND_TITLE_SIZE,
-        )
-    else:
-        sns.violinplot(
-            data=df, x="model", y="score_value", hue="model",
-            inner="box", cut=0, ax=ax, linewidth=0.8,
-            density_norm="width", order=models,
-            hue_order=models, palette=model_palette,
-            dodge=False, legend=False,
-        )
-        _draw_deterministic_stripplot(ax=ax, data=df, order=models)
-
-    ax.set_xlabel("Docking Engine")
-    ax.set_ylabel(metric_name)
-    _add_faint_horizontal_gridlines(ax)
-
-    if plot_title:
-        title = plot_title
-    elif len(pairs) == 1:
-        title = f"{metric_name} distribution by model — {pairs[0]}"
-    else:
-        title = f"{metric_name} distribution by model"
-    ax.set_title(title, pad=TITLE_PAD)
-
-    sns.despine(ax=ax)
-    fig.tight_layout()
+    _finish_figure(
+        fig, axes,
+        title=plot_title or _engines_title(
+            f"{metric_name} distribution", models, pair_tuples,
+        ),
+        xlabel="Docking Engine",
+        legend_handles=(
+            ([highlight_handle] if highlight_handle else [])
+            + (_capri_legend_handles() if capri_drawn else [])
+        ) or None,
+        legend_ncol=2 if highlight_handle else 3,
+    )
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=180)
@@ -688,6 +750,8 @@ def roc_curve_plot(
     output : str | None
     """
     import numpy as np
+
+    _require_reference_free(metric, "A ROC curve")
 
     df = scores_df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
@@ -740,12 +804,17 @@ def roc_curve_plot(
         # np.trapezoid.  We try the new name first for forward-compat.
         _trapz = getattr(np, "trapezoid", None) or np.trapz
         auc = _trapz(tpr_list, fpr_list)
-        ax.plot(fpr_list, tpr_list, label=f"{model} (AUC={auc:.3f})",
+        ax.plot(fpr_list, tpr_list,
+                label=f"{_engine_label(model)} (AUC={auc:.3f})",
                 linewidth=2.2, color=model_palette[model])
 
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
-    ax.set_title(f"ROC Curve — {metric_name}", fontsize=PLOT_TITLE_SIZE, pad=TITLE_PAD)
+    n_pairs = len(agg[["proteina", "proteinb"]].drop_duplicates())
+    ax.set_title(
+        f"ROC Curve — {metric_name} ({n_pairs} protein pairs)",
+        fontsize=PLOT_TITLE_SIZE, pad=TITLE_PAD,
+    )
     ax.legend(
         loc="lower right",
         frameon=True,
@@ -817,6 +886,8 @@ def model_agreement_scatter(
     extra = ["label"] if "label" in df.columns and df["label"].notna().any() else []
     agg = df.groupby(group_cols + extra, as_index=False)["score_value"].mean()
 
+    model_x = _resolve_model_name(model_x, agg["model"].unique())
+    model_y = _resolve_model_name(model_y, agg["model"].unique())
     dx = agg[agg["model"].str.lower() == model_x.lower()].set_index(
         ["proteina", "proteinb"]
     )
@@ -840,60 +911,119 @@ def model_agreement_scatter(
     x_vals = dx.loc[common, "score_value"].values
     y_vals = dy.loc[common, "score_value"].values
     metric_name = get_metric_display_name(metric)
+    label_x, label_y = _engine_label(model_x), _engine_label(model_y)
+
+    few_pairs = len(common) < MIN_SCATTER_PAIRS
+    if few_pairs:
+        import warnings as _warnings
+
+        _warnings.warn(
+            f"Only {len(common)} protein pair(s) are shared by {label_x} and "
+            f"{label_y}.  With fewer than {MIN_SCATTER_PAIRS} pairs, Pearson r "
+            "and Spearman ρ can change a lot from a single pair, so treat the "
+            "agreement shown as a rough impression, not a measurement.",
+            stacklevel=2,
+        )
 
     fig, ax = plt.subplots(figsize=(7, 7))
 
-    # Colour by label if available
-    if "label" in dx.columns:
-        labels = dx.loc[common, "label"].values
-        plot_df = pd.DataFrame({
-            model_x: x_vals, model_y: y_vals, "label": labels,
-        })
-        sns.scatterplot(
-            data=plot_df, x=model_x, y=model_y, hue="label",
-            ax=ax, alpha=0.7, s=45, edgecolor="white", linewidth=0.5,
-        )
-        ax.legend(
-            frameon=True,
-            fancybox=True,
-            framealpha=0.9,
-            fontsize=LEGEND_FONT_SIZE,
-            title_fontsize=LEGEND_TITLE_SIZE,
-        )
+    # Shared, square axes so the y = x diagonal sits at 45°.
+    bounds = get_metric_bounds(metric)
+    if bounds is not None:
+        lo, hi = bounds
     else:
-        ax.scatter(
-            x_vals, y_vals, alpha=0.7, s=45,
-            edgecolors="white", linewidths=0.5,
-        )
+        lo = float(min(x_vals.min(), y_vals.min()))
+        hi = float(max(x_vals.max(), y_vals.max()))
+        pad = (hi - lo) * 0.06 or 0.1
+        lo, hi = lo - pad, hi + pad
+    ax.plot([lo, hi], [lo, hi], "--", color=".55", lw=1.2, zorder=1,
+            label="Perfect agreement (y = x)")
 
-    # Diagonal reference line (perfect agreement)
-    lo = min(x_vals.min(), y_vals.min())
-    hi = max(x_vals.max(), y_vals.max())
-    margin = (hi - lo) * 0.05 or 0.1
-    ax.plot(
-        [lo - margin, hi + margin], [lo - margin, hi + margin],
-        "--", color=".6", alpha=0.5, zorder=0, label="y = x",
-    )
+    point_style = dict(s=55, alpha=0.85, edgecolor="white", linewidth=0.7,
+                       zorder=3, clip_on=False)
+    if "label" in dx.columns:
+        # Colour by label if available
+        labels = dx.loc[common, "label"].values
+        plot_df = pd.DataFrame({"x": x_vals, "y": y_vals, "label": labels})
+        for label_value, grp in plot_df.groupby("label"):
+            ax.scatter(
+                grp["x"], grp["y"],
+                color=LABEL_COLORS.get(str(label_value).lower(), ".3"),
+                label=str(label_value), **point_style,
+            )
+    else:
+        ax.scatter(x_vals, y_vals, color=".25", label="Protein pair",
+                   **point_style)
 
-    # Pearson r
+    # Name the pairs the engines disagree on most.
+    if len(common) >= 5:
+        gaps = np.abs(y_vals - x_vals)
+        for idx in np.argsort(gaps)[::-1][:3]:
+            pair_a, pair_b = common[idx]
+            # Point the label toward the centre so it stays inside the axes.
+            mid = (lo + hi) / 2
+            left_half = x_vals[idx] < mid
+            lower_half = y_vals[idx] < mid
+            ax.annotate(
+                _pair_label(pair_a, pair_b),
+                xy=(x_vals[idx], y_vals[idx]),
+                xytext=(7 if left_half else -7, 6 if lower_half else -6),
+                textcoords="offset points",
+                ha="left" if left_half else "right",
+                va="bottom" if lower_half else "top",
+                fontsize=ANNOTATION_FONT_SIZE - 1, color=".2", zorder=4,
+                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none",
+                          alpha=0.8),
+            )
+
+    # Pearson r (linear agreement) and Spearman ρ (same pair ordering)
     if len(common) >= 2:
         r = np.corrcoef(x_vals, y_vals)[0, 1]
-        r_text = f"r = {r:.3f}" if not np.isnan(r) else "r = n/a"
+        rho = np.corrcoef(
+            pd.Series(x_vals).rank().values, pd.Series(y_vals).rank().values,
+        )[0, 1]
+        stats_text = (
+            f"Pearson r = {r:.2f}" if not np.isnan(r) else "Pearson r = n/a"
+        ) + "\n" + (
+            f"Spearman ρ = {rho:.2f}" if not np.isnan(rho) else "Spearman ρ = n/a"
+        )
     else:
-        r_text = "r = n/a (< 2 points)"
+        stats_text = "r = n/a (< 2 points)"
+    stats_text += f"\nn = {len(common)} pairs"
+    if few_pairs:
+        stats_text += (
+            f"\nWarning: fewer than {MIN_SCATTER_PAIRS} pairs,\n"
+            "correlations are unstable"
+        )
     ax.annotate(
-        f"{r_text}  (n = {len(common)} pairs)",
-        xy=(0.05, 0.95), xycoords="axes fraction",
+        stats_text,
+        xy=(0.04, 0.96), xycoords="axes fraction",
         fontsize=ANNOTATION_FONT_SIZE, va="top",
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+        bbox=dict(
+            boxstyle="round,pad=0.4", fc="white", alpha=0.9,
+            ec=OKABE_ITO["vermillion"] if few_pairs else ".8",
+        ),
     )
 
-    ax.set_xlabel(f"{model_x} — {metric_name}")
-    ax.set_ylabel(f"{model_y} — {metric_name}")
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel(f"{label_x} — mean {metric_name} per pair")
+    ax.set_ylabel(f"{label_y} — mean {metric_name} per pair")
     ax.set_title(
-        f"Model agreement: {model_x} vs {model_y} ({metric_name})",
+        f"Model agreement: {label_x} vs {label_y} ({metric_name})",
         pad=TITLE_PAD,
     )
+    ax.legend(
+        loc="lower right",
+        frameon=True,
+        fancybox=True,
+        framealpha=0.9,
+        fontsize=LEGEND_FONT_SIZE,
+        title_fontsize=LEGEND_TITLE_SIZE,
+    )
+    ax.grid(True, color=".9", linewidth=0.6)
+    ax.set_axisbelow(True)
     sns.despine(ax=ax)
     fig.tight_layout(pad=1.0)
 
@@ -932,27 +1062,54 @@ METRIC_METADATA: dict[str, dict] = {
         "display_name": "Score",
         "description": "HADDOCK overall score (weighted energy). Lower = better.",
     },
+    # HADDOCK's caprieval values below are measured against the reference
+    # HADDOCK was given.  PPInsight stages caprieval without one, and then
+    # caprieval compares every model to HADDOCK's own best-scoring model —
+    # which is why that model shows DockQ = 1.0.  They are not measured
+    # against an experimental native; the quality_* metrics further down are.
     "dockq": {
         "higher_is_better": True,
-        "display_name": "DockQ",
+        "display_name": "DockQ (HADDOCK caprieval)",
         "bounds": (0.0, 1.0),
-        "description": "DockQ quality (0–1). Higher = closer to native complex.",
+        "reference_based": True,
+        "description": (
+            "HADDOCK's own DockQ from its caprieval step (0–1), measured "
+            "against the reference HADDOCK was given — without one, against "
+            "HADDOCK's own best-scoring model, so that model shows 1.0.  "
+            "Not measured against your native complex: for that, run "
+            "'ppinsight quality' and use quality_dockq."
+        ),
     },
     "irmsd": {
         "higher_is_better": False,
-        "display_name": "iRMSD",
-        "description": "Interface RMSD (Å). Lower = better.",
+        "display_name": "iRMSD (HADDOCK caprieval)",
+        "reference_based": True,
+        "description": (
+            "HADDOCK's own interface RMSD (Å) from caprieval, against "
+            "HADDOCK's reference, not your native.  Lower = better.  "
+            "Native-referenced value: quality_irmsd."
+        ),
     },
     "lrmsd": {
         "higher_is_better": False,
-        "display_name": "lRMSD",
-        "description": "Ligand RMSD (Å). Lower = better.",
+        "display_name": "lRMSD (HADDOCK caprieval)",
+        "reference_based": True,
+        "description": (
+            "HADDOCK's own ligand RMSD (Å) from caprieval, against HADDOCK's "
+            "reference, not your native.  Lower = better.  "
+            "Native-referenced value: quality_lrmsd."
+        ),
     },
     "fnat": {
         "higher_is_better": True,
-        "display_name": "Fnat",
+        "display_name": "Fnat (HADDOCK caprieval)",
         "bounds": (0.0, 1.0),
-        "description": "Fraction of native contacts recovered. Higher = better.",
+        "reference_based": True,
+        "description": (
+            "HADDOCK's own fraction of reference contacts from caprieval, "
+            "against HADDOCK's reference, not your native.  Higher = better.  "
+            "Native-referenced value: quality_fnat."
+        ),
     },
     # ── Rosetta ────────────────────────────────────────────────────────
     "interface_score": {
@@ -979,11 +1136,13 @@ METRIC_METADATA: dict[str, dict] = {
     "irms": {
         "higher_is_better": False,
         "display_name": "iRMS",
+        "reference_based": True,
         "description": "Rosetta interface RMSD (Å). Lower = better.",
     },
     "rms": {
         "higher_is_better": False,
         "display_name": "RMS",
+        "reference_based": True,
         "description": "Rosetta ligand RMSD (Å). Lower = better.",
     },
     "dg_separated": {
@@ -1018,6 +1177,7 @@ METRIC_METADATA: dict[str, dict] = {
     # They are produced by ``add_quality_to_scores()`` which compares
     # predicted complexes against a known native structure via DockQ.
     "quality_dockq": {
+        "reference_based": True,
         "higher_is_better": True,
         "display_name": "DockQ",
         "bounds": (0.0, 1.0),
@@ -1028,6 +1188,7 @@ METRIC_METADATA: dict[str, dict] = {
         ),
     },
     "quality_fnat": {
+        "reference_based": True,
         "higher_is_better": True,
         "display_name": "Fnat",
         "bounds": (0.0, 1.0),
@@ -1037,6 +1198,7 @@ METRIC_METADATA: dict[str, dict] = {
         ),
     },
     "quality_irmsd": {
+        "reference_based": True,
         "higher_is_better": False,
         "display_name": "iRMSD",
         "description": (
@@ -1045,6 +1207,7 @@ METRIC_METADATA: dict[str, dict] = {
         ),
     },
     "quality_lrmsd": {
+        "reference_based": True,
         "higher_is_better": False,
         "display_name": "lRMSD",
         "description": (
@@ -1083,32 +1246,295 @@ def get_metric_bounds(metric: str) -> tuple[float, float] | None:
     return float(lo), float(hi)
 
 
+def _require_reference_free(metric: str, purpose: str) -> None:
+    """Refuse binder / non-binder analyses on reference-based metrics."""
+    if is_reference_based(metric):
+        raise ValueError(
+            f"{purpose} cannot use '{metric}': it compares each pose with a "
+            "reference native structure, and a pair that does not bind has no "
+            "native structure, so the value is meaningless for half of the "
+            "comparison.  Use a score every pair has, such as an engine's "
+            "own score."
+        )
+
+
+def is_reference_based(metric: str) -> bool:
+    """True when *metric* compares a pose with a reference structure.
+
+    These values (DockQ, Fnat, RMSDs) only exist for a pair that has a
+    reference complex, so they cannot score a pair that does not bind.
+    """
+    meta = METRIC_METADATA.get(metric.lower())
+    return bool(meta and meta.get("reference_based"))
+
+
+HADDOCK_CAPRIEVAL_METRICS = ("dockq", "fnat", "irmsd", "lrmsd")
+
+
+def haddock_caprieval_note(metrics) -> str | None:
+    """Explain HADDOCK's own caprieval metrics when any appear in *metrics*."""
+    present = sorted({
+        str(m).lower() for m in metrics
+        if str(m).lower() in HADDOCK_CAPRIEVAL_METRICS
+    })
+    if not present:
+        return None
+    return (
+        f"NOTE: {', '.join(present)} {'is' if len(present) == 1 else 'are'} "
+        "HADDOCK's own caprieval value(s), measured against the reference "
+        "HADDOCK was given.  PPInsight runs HADDOCK without one, so caprieval "
+        "compares each model to HADDOCK's own best-scoring model (which "
+        "therefore shows DockQ = 1.0).  They are not measured against your "
+        "native complex.  For DockQ against a native structure, run "
+        "'ppinsight quality <scores.tsv> <native.pdb> -o <merged.tsv>' and "
+        "use the quality_* metrics (e.g. --metric quality_dockq)."
+    )
+
+
+def _apply_metric_bounds(ax, metric: str, axis: str = "y") -> None:
+    """Pin a bounded metric's axis to its full range (DockQ: 0 to 1)."""
+    bounds = get_metric_bounds(metric)
+    if bounds is None:
+        return
+    if axis == "y":
+        ax.set_ylim(bounds)
+    else:
+        ax.set_xlim(bounds)
+
+
+def _engines_title(subject: str, models, pair_tuples) -> str:
+    """'<subject> by engine', naming the engine when there is only one."""
+    models = list(models)
+    if len(models) == 1:
+        title = f"{subject} — {_engine_label(models[0])}"
+    else:
+        title = f"{subject} by engine"
+    if len(pair_tuples) == 1:
+        title += f" ({_pair_label(*pair_tuples[0])})"
+    return title
+
+
+def _rare_good_tier(value_arrays, metric: str, limit: int):
+    """CAPRI tier whose poses are rare enough to always draw, if any.
+
+    For DockQ-scale metrics, returns the lowest ``(threshold, name)`` tier
+    that has at most a fifth of *limit* poses in every engine with more than
+    *limit* poses — acceptable first, then medium, then high.  ``None`` when
+    no engine needs sampling, the metric is not on the DockQ scale, or even
+    high-quality poses are plentiful (the sample then shows them anyway).
+    """
+    import numpy as np
+
+    if metric.lower() not in DOCKQ_METRICS:
+        return None
+    large = [np.asarray(v, dtype=float) for v in value_arrays if len(v) > limit]
+    if not large:
+        return None
+    for threshold, name, _ in DOCKQ_CAPRI_THRESHOLDS:
+        if all((v >= threshold).sum() <= limit // 5 for v in large):
+            return threshold, name
+    return None
+
+
+def _draw_selection(values, metric: str, limit: int, tier=None):
+    """Choose which poses to draw when an engine has more than *limit*.
+
+    Returns ``(background, highlight, sampled)``.  *sampled* is the size of
+    a fixed-seed uniform random sample, so the drawn density matches the
+    real one.  *highlight* holds rare good poses that a sample would likely
+    miss: every pose in *tier* or better for DockQ-scale metrics (see
+    :func:`_rare_good_tier`), or the :data:`ALWAYS_DRAWN_BEST` best poses for
+    other metrics.  They are drawn only in the highlight style, so
+    *background* is the sample minus *highlight*.  At or below *limit*,
+    every pose is in *background*.
+    """
+    import numpy as np
+
+    values = np.asarray(values, dtype=float)
+    empty = np.array([], dtype=int)
+    if len(values) <= limit:
+        return np.arange(len(values)), empty, len(values)
+    sample = np.sort(
+        np.random.default_rng(0).choice(len(values), size=limit, replace=False)
+    )
+    if metric.lower() in DOCKQ_METRICS:
+        if tier is None:
+            return sample, empty, limit
+        tail = np.flatnonzero(values >= tier[0])
+    else:
+        order = np.argsort(values)
+        if get_metric_direction(metric):
+            order = order[::-1]
+        tail = np.sort(order[:ALWAYS_DRAWN_BEST])
+    return np.setdiff1d(sample, tail), tail, limit
+
+
+def _highlight_legend_handle(metric: str, tier=None) -> Line2D:
+    """Legend entry for the always-drawn rare good poses of large runs."""
+    if tier is not None:
+        text = f"Every pose ≥ CAPRI {tier[1]} ({tier[0]:.2f}), always drawn"
+    else:
+        text = f"Each engine's {ALWAYS_DRAWN_BEST} best poses, always drawn"
+    return Line2D([0], [0], marker="o", linestyle="None", markersize=6,
+                  markerfacecolor=".45", markeredgecolor="black",
+                  markeredgewidth=0.8, label=text)
+
+
 def _draw_deterministic_stripplot(
     ax,
     data: pd.DataFrame,
     order: list[str],
-    color: str = ".2",
-) -> None:
-    """Draw a deterministic strip overlay for violin plots."""
+    metric: str = "",
+    color: str = ".15",
+) -> tuple[dict[str, int], Line2D | None]:
+    """Draw a deterministic strip overlay on top of violin bodies.
+
+    Points sit above the violin fill so they stay visible; opacity scales
+    with the largest per-engine pose count so small runs show every pose
+    and large ensembles do not turn into a solid block.  Above
+    :data:`MAX_DRAWN_POSES` per engine a uniform random sample of dots is
+    drawn, with rare good poses drawn in full on top (see
+    :func:`_draw_selection`); the violin itself still uses every pose.
+
+    Returns the number of sampled dots per engine and, when rare good poses
+    were overlaid, the legend entry describing them (else ``None``).
+    """
     import numpy as np
+
+    sampled_parts = []
+    highlight_parts = []
+    shown: dict[str, int] = {}
+    tier = _rare_good_tier(
+        [g.to_numpy(float) for _, g in data.groupby("model")["score_value"]],
+        metric, MAX_DRAWN_POSES,
+    )
+    for model, group in data.groupby("model"):
+        background, highlight, n_sampled = _draw_selection(
+            group["score_value"].to_numpy(), metric, MAX_DRAWN_POSES, tier,
+        )
+        sampled_parts.append(group.iloc[background])
+        highlight_parts.append(group.iloc[highlight])
+        shown[model] = n_sampled
+    sampled = pd.concat(sampled_parts)
+    highlights = pd.concat(highlight_parts)
 
     rng_state = np.random.get_state()
     np.random.seed(0)
     try:
         sns.stripplot(
-            data=data,
+            data=sampled,
             x="model",
             y="score_value",
-            size=1.1,
-            alpha=0.07,
-            jitter=0.16,
+            size=2.2,
+            alpha=_point_alpha(max(shown.values())),
+            jitter=0.12,
             ax=ax,
             color=color,
             order=order,
-            zorder=0,
+            zorder=3,
+            rasterized=max(shown.values()) > 2000,
         )
+        if not highlights.empty:
+            # Rare good poses from a large run: drawn in full on top.
+            sns.stripplot(
+                data=highlights, x="model", y="score_value", size=3.5,
+                alpha=0.9, jitter=0.12, ax=ax, color=color, order=order,
+                zorder=4,
+            )
     finally:
         np.random.set_state(rng_state)
+    handle = None if highlights.empty else _highlight_legend_handle(metric, tier)
+    return shown, handle
+
+
+def _set_engine_ticks(
+    ax, data: pd.DataFrame, order: list[str], shown: dict | None = None,
+) -> None:
+    """Label categorical engine ticks with display names and pose counts."""
+    counts = data.groupby("model")["score_value"].count()
+    shown = shown or {}
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels([
+        _engine_tick_label(m, int(counts.get(m, 0)), shown.get(m))
+        for m in order
+    ])
+
+
+def _text_scale(fig: plt.Figure) -> float:
+    """Text enlargement for wide multi-panel figures.
+
+    A 3-panel figure is shown at the same on-screen width as a 1-panel one,
+    so its text would look about half the size without this.
+    """
+    return float(min(1.5, max(1.0, (fig.get_figwidth() / 8.0) ** 0.5)))
+
+
+def _finish_figure(
+    fig: plt.Figure,
+    axes,
+    *,
+    title: str,
+    xlabel: str | None = None,
+    legend_handles: list | None = None,
+    legend_ncol: int = 3,
+    legend_title: str | None = None,
+    figure_title: bool = False,
+) -> None:
+    """Title the figure and stack the x-label and legend below the panels.
+
+    Multi-panel figures get their text scaled up (see :func:`_text_scale`)
+    and a figure-level title (also used when *figure_title* is True, for
+    single panels whose own title holds other text).  Positions below the
+    panels are measured from the drawn tick labels, so the x-label and
+    legend never overlap them.
+    """
+    axes = list(axes)
+    scale = _text_scale(fig) if len(axes) > 1 else 1.0
+    multi = len(axes) > 1 or figure_title
+    if scale != 1.0:
+        for ax in axes:
+            ax.tick_params(axis="both", labelsize=TICK_LABEL_SIZE * scale)
+            for text in (ax.title, ax.xaxis.label, ax.yaxis.label, *ax.texts):
+                text.set_fontsize(text.get_fontsize() * scale)
+            legend = ax.get_legend()
+            if legend is not None:
+                for text in (*legend.get_texts(), legend.get_title()):
+                    text.set_fontsize(text.get_fontsize() * scale)
+
+    fig_h = fig.get_figheight()
+    gap = 0.1 / fig_h  # 0.1 inch, as a figure fraction
+    if multi:
+        title_h = (PLOT_TITLE_SIZE * scale / 72.0 * 1.8) / fig_h
+        fig.tight_layout(pad=1.0, rect=(0, 0, 1, 1 - title_h))
+        fig.suptitle(title, fontsize=PLOT_TITLE_SIZE * scale,
+                     y=1 - title_h / 2, va="center")
+    else:
+        axes[0].set_title(title, fontsize=PLOT_TITLE_SIZE, pad=TITLE_PAD)
+        if xlabel is not None:
+            axes[0].set_xlabel(xlabel)
+        fig.tight_layout(pad=1.0)
+
+    renderer = fig.canvas.get_renderer()
+    height_px = fig.bbox.height
+    bottom = min(ax.get_tightbbox(renderer).y0 for ax in axes) / height_px
+    if multi and xlabel is not None:
+        label = fig.text(0.5, bottom - gap, xlabel, ha="center", va="top",
+                         fontsize=AXIS_LABEL_SIZE * scale)
+        bottom = label.get_window_extent(renderer).y0 / height_px
+    if legend_handles:
+        fig.legend(
+            handles=legend_handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, bottom - gap),
+            ncol=min(legend_ncol, len(legend_handles)),
+            frameon=True,
+            fancybox=True,
+            framealpha=0.9,
+            fontsize=BELOW_LEGEND_FONT_SIZE * scale,
+            title=legend_title,
+            title_fontsize=BELOW_LEGEND_TITLE_SIZE * scale,
+            handlelength=2.2,
+        )
 
 
 def _add_faint_horizontal_gridlines(ax) -> None:
@@ -1185,10 +1611,14 @@ def _capri_pose_key_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
 
 def _capri_pose_table(scores_df: pd.DataFrame) -> pd.DataFrame:
-    """Build one CAPRI classification row per pose.
+    """Build one CAPRI classification row per pose, from DockQ.
 
-    Uses explicit pose metadata when present and falls back to row-order
-    reconstruction for older unified score files that lack ``pose_id``.
+    Each pose is placed in a tier by its DockQ (see
+    :data:`DOCKQ_CAPRI_THRESHOLDS`).  The native-referenced
+    ``quality_dockq`` is used when the pose has one; HADDOCK's own caprieval
+    ``dockq`` is used only when it does not.  Uses explicit pose metadata
+    when present and falls back to row-order reconstruction for older
+    unified score files that lack ``pose_id``.
     """
     df = scores_df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
@@ -1197,11 +1627,7 @@ def _capri_pose_table(scores_df: pd.DataFrame) -> pd.DataFrame:
     if "score_type" not in df.columns:
         return pd.DataFrame(columns=["model", "capri_quality"])
 
-    capri_metrics = {
-        "fnat", "irmsd", "lrmsd", "dockq",
-        "quality_fnat", "quality_irmsd", "quality_lrmsd", "quality_dockq",
-    }
-    df = df[df["score_type"].str.lower().isin(capri_metrics)].dropna(
+    df = df[df["score_type"].str.lower().isin(DOCKQ_METRICS)].dropna(
         subset=["score_value"]
     )
     if df.empty:
@@ -1216,25 +1642,21 @@ def _capri_pose_table(scores_df: pd.DataFrame) -> pd.DataFrame:
     )
     pivot.columns = [c.lower() for c in pivot.columns]
 
+    import math
+
+    def _nan_to_none(val):
+        if val is not None and isinstance(val, float) and math.isnan(val):
+            return None
+        return val
+
     def _row_quality(row):
-        fnat = row.get("fnat") if "fnat" in row.index else row.get("quality_fnat")
-        lrmsd = row.get("lrmsd") if "lrmsd" in row.index else row.get("quality_lrmsd")
-        irmsd = row.get("irmsd") if "irmsd" in row.index else row.get("quality_irmsd")
-        dockq = row.get("dockq") if "dockq" in row.index else row.get("quality_dockq")
-
-        import math
-
-        def _nan_to_none(val):
-            if val is not None and isinstance(val, float) and math.isnan(val):
-                return None
-            return val
-
-        return capri_quality(
-            fnat=_nan_to_none(fnat),
-            lrmsd=_nan_to_none(lrmsd),
-            irmsd=_nan_to_none(irmsd),
-            dockq=_nan_to_none(dockq),
-        )
+        # Native-referenced quality_dockq wins; HADDOCK's own caprieval
+        # dockq is used only when no native-referenced value exists for this
+        # pose.  (Checking for the column alone would let HADDOCK's column
+        # hide quality_dockq values for every other engine.)
+        native = _nan_to_none(row.get("quality_dockq"))
+        dockq = native if native is not None else _nan_to_none(row.get("dockq"))
+        return capri_quality(dockq=dockq)
 
     pose_table = pivot.reset_index()
     pose_table["capri_quality"] = pivot.apply(_row_quality, axis=1).values
@@ -1363,8 +1785,8 @@ def capri_summary_table(
     Parameters
     ----------
     scores_df : DataFrame
-        Unified scores (long format).  Must have metrics that
-        :func:`classify_capri` can use (fnat, irmsd, lrmsd, or dockq).
+        Unified scores (long format) with DockQ rows (``quality_dockq``, or
+        HADDOCK's own ``dockq``).
 
     Returns
     -------
@@ -1374,11 +1796,7 @@ def capri_summary_table(
     """
     pose_table = _capri_pose_table(scores_df)
     if pose_table.empty or "capri_quality" not in pose_table.columns:
-        raise ValueError(
-            "capri_summary_table requires CAPRI metrics (fnat, irmsd, lrmsd, "
-            "or dockq) but none were found.  Pass a scores DataFrame that "
-            "includes at least one of: fnat, irmsd, lrmsd, dockq."
-        )
+        raise ValueError(_NO_DOCKQ_FOR_TIERS)
 
     rows: list[dict] = []
     for model, grp in pose_table.groupby("model"):
@@ -1408,20 +1826,48 @@ def capri_summary_table(
     return result
 
 
+_NO_DOCKQ_FOR_TIERS = (
+    "CAPRI tiers are assigned from DockQ, but the scores have no DockQ rows "
+    "(score_type 'quality_dockq', or HADDOCK's own 'dockq')."
+)
+
+CAPRI_TIER_LABELS = {
+    "incorrect": "Incorrect (DockQ < 0.23)",
+    "acceptable": "Acceptable (0.23 ≤ DockQ < 0.49)",
+    "medium": "Medium (0.49 ≤ DockQ < 0.80)",
+    "high": "High (DockQ ≥ 0.80)",
+}
+
+
+def _capri_tier_source(classified: pd.DataFrame) -> str:
+    """Legend title naming where the DockQ values behind the tiers came from."""
+    def _present(name: str) -> bool:
+        return name in classified.columns and classified[name].notna().any()
+
+    if _present("quality_dockq") and _present("dockq"):
+        source = "DockQ vs the native where available, else HADDOCK's own"
+    elif _present("dockq"):
+        source = "HADDOCK's own caprieval DockQ, not vs the native"
+    else:
+        source = "DockQ measured against the native structure"
+    return f"CAPRI tier ({source})"
+
+
 def quality_bar_chart(
     scores_df: pd.DataFrame,
     plot_title: str | None = None,
     output: str | None = None,
 ) -> plt.Figure:
-    """100 % stacked bar chart: CAPRI quality tier distribution per engine.
+    """100 % stacked bar chart: percentage of poses in each CAPRI tier.
 
     Each engine gets one bar that fills from 0 % to 100 %.  The bar is
     divided into four colour-coded tiers (incorrect, acceptable, medium,
-    high).  A **N = X poses** label is shown to the right of each bar so
+    high), assigned from each pose's DockQ with the thresholds in the
+    legend.  The pose count (``n = X``) is shown under each engine name so
     the reader knows how many individual poses the percentages are based on.
 
-    This function requires CAPRI-compatible metrics (fnat, irmsd, lrmsd,
-    and/or dockq).  A :exc:`ValueError` is raised if none are present.
+    The plot covers exactly one protein pair: poses from different targets
+    are never pooled into one percentage.
 
     Inspired by the cumulative bar charts in CAPRI assessments (Lensink
     MF *et al.*, *Proteins* 84(S1):323-348, 2016).
@@ -1429,9 +1875,9 @@ def quality_bar_chart(
     Parameters
     ----------
     scores_df : DataFrame
-        Unified scores with CAPRI-relevant metrics (fnat, irmsd, lrmsd,
-        and/or dockq).  Engine-only metrics (e.g. HADDOCK ``score``) are
-        ignored; only pose-level quality metrics drive the classification.
+        Unified scores for one protein pair with DockQ rows
+        (``quality_dockq``, or HADDOCK's own ``dockq``).  Other metrics are
+        ignored.
     plot_title : str or None
     output : str or None
 
@@ -1442,47 +1888,31 @@ def quality_bar_chart(
     Raises
     ------
     ValueError
-        If *scores_df* contains no CAPRI metrics (fnat / irmsd / lrmsd /
-        dockq).
+        If *scores_df* has no DockQ rows or covers more than one protein pair.
     """
     import numpy as np
 
-    # ── CAPRI guard ────────────────────────────────────────────────────
-    _CAPRI_METRICS = {"fnat", "irmsd", "lrmsd", "dockq",
-                      "quality_fnat", "quality_irmsd",
-                      "quality_lrmsd", "quality_dockq"}
-    present: set[str] = set()
-    if "score_type" in scores_df.columns:
-        present = _CAPRI_METRICS & set(
-            scores_df["score_type"].str.lower().unique()
-        )
-    if not present:
+    lowered = scores_df.copy()
+    lowered.columns = [c.strip().lower() for c in lowered.columns]
+    _, _, pair_tuples = _detect_pairs(lowered)
+    if len(pair_tuples) > 1:
         raise ValueError(
-            "quality_bar_chart requires CAPRI metrics (fnat, irmsd, lrmsd, "
-            "or dockq) but none were found in 'score_type'.  "
-            "Pass a scores DataFrame that includes at least one of: "
-            + ", ".join(sorted(_CAPRI_METRICS))
-            + "."
+            "quality_bar shows one target at a time, but the scores contain "
+            f"{len(pair_tuples)} protein pairs."
         )
 
-    # ── Classify per pose ──────────────────────────────────────────────
+    # ── Classify per pose (from DockQ) ─────────────────────────────────
     classified = _capri_pose_table(scores_df)
     if classified.empty or "capri_quality" not in classified.columns:
-        raise ValueError("CAPRI classification failed — no quality metrics found")
+        raise ValueError(_NO_DOCKQ_FOR_TIERS)
 
     models = sorted(classified["model"].unique())
     n = len(models)
 
-    tier_colours = {
-        "incorrect":  "#b0b0b0",
-        "acceptable": "#31a354",
-        "medium":     "#3182bd",
-        "high":       "#6a51a3",
-    }
+    tier_colours = CAPRI_TIER_COLORS
     tier_order = ["incorrect", "acceptable", "medium", "high"]
 
-    # Width: extra right margin for N= labels
-    fig_w = max(6, n * 2.2) + 1.5
+    fig_w = max(6, n * 2.2)
     fig, ax = plt.subplots(figsize=(fig_w, 5))
     x = np.arange(n)
     width = 0.55
@@ -1523,47 +1953,35 @@ def quality_bar_chart(
                 )
         bottom += values
 
-    # N = X label to the right of each bar
-    for i, model in enumerate(models):
-        ax.text(
-            x[i] + width / 2 + 0.07,
-            100,
-            f"N={total_table[model]}",
-            ha="left", va="top",
-            fontsize=N_LABEL_SIZE, color="#444444",
-        )
-
+    # Pose count sits under each engine name so it never crowds the bars.
     ax.set_xticks(x)
     ax.set_xticklabels(
-        models,
+        [_engine_tick_label(m, total_table[m]) for m in models],
         rotation=30 if n > 4 else 0,
         ha="right" if n > 4 else "center",
     )
     ax.set_ylim(0, 100)
-    ax.set_xlabel("Docking Engine", labelpad=8)
     ax.set_ylabel("% of poses")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}%"))
-    ax.set_title(
-        plot_title
-        or "Pose-Level DockQ / CAPRI Quality Tier Distribution by Engine",
-        pad=QUALITY_BAR_TITLE_PAD,
-    )
-
-    # Legend below x-axis title (labelpad above keeps space clear)
-    ax.legend(
-        handles=handles,
-        labels=[t.capitalize() for t in tier_order],
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.205),
-        ncol=4,
-        frameon=True, fancybox=True, framealpha=0.9,
-        title="CAPRI tier",
-        fontsize=LEGEND_FONT_SIZE,
-        title_fontsize=LEGEND_TITLE_SIZE,
-    )
-
     sns.despine(ax=ax)
-    fig.tight_layout(rect=(0, 0.11, 1, 1), pad=1.0)
+
+    # The legend states each tier's DockQ range and where DockQ came from.
+    for handle, tier in zip(handles, tier_order, strict=False):
+        handle.set_label(CAPRI_TIER_LABELS[tier])
+    if len(models) == 1:
+        title = f"Percentage of {_engine_label(models[0])} poses in each CAPRI tier"
+    else:
+        title = "Percentage of poses in each CAPRI tier, by engine"
+    if pair_tuples:
+        title += f" ({_pair_label(*pair_tuples[0])})"
+    _finish_figure(
+        fig, [ax],
+        title=plot_title or title,
+        xlabel="Docking Engine",
+        legend_handles=handles,
+        legend_ncol=2,
+        legend_title=_capri_tier_source(classified),
+    )
 
     if output:
         fig.savefig(output, bbox_inches="tight", dpi=150)
@@ -1574,22 +1992,31 @@ def quality_bar_chart(
 
 
 # ---------------------------------------------------------------------------
-# Ridge plot
+# Strip plot
 # ---------------------------------------------------------------------------
 
-def ridge_plot(
+def strip_plot(
     scores_df: pd.DataFrame,
     metric: str,
     plot_title: str | None = None,
     output: str | None = None,
 ) -> plt.Figure:
-    """Ridgeline (joy) plot: one KDE density row per engine.
+    """Strip plot: one dot per pose, with a box summary per engine.
 
-    Each engine occupies its own horizontally aligned KDE panel.  Panels
-    share the same x-axis so distributions from different engines can be
-    compared by eye.  This plot is especially useful when you have many
-    engines and want to compare their score distributions without the
-    visual clutter of overlapping violins.
+    Nothing is smoothed, so isolated near-native poses, gaps, and the true
+    data range are all visible.  The box shows the median and interquartile
+    range; whiskers reach 1.5 × IQR.  Pose counts sit under each engine name.
+    CAPRI tier thresholds are drawn when *metric* is on the DockQ scale, and
+    bounded metrics always span their full range (DockQ: 0 to 1).
+
+    Very large runs (more than :data:`MAX_DRAWN_POSES` poses for an engine)
+    draw a fixed-seed uniform random sample of that size, so the dot
+    density stays true, and overlay every rare good pose in an outlined
+    style (see :func:`_draw_selection`).  The box and the pose count still
+    use every pose, and the tick label says how many dots were sampled.
+
+    When the data contains **≥ 2 protein pairs**, each pair gets its own
+    side-by-side panel so poses from different targets are never pooled.
 
     Parameters
     ----------
@@ -1605,124 +2032,456 @@ def ridge_plot(
     matplotlib.figure.Figure
     """
     import numpy as np
-    from scipy.stats import gaussian_kde
 
     df = scores_df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    sub = df[df["score_type"].str.lower() == metric.lower()].copy()
-    sub["score_value"] = pd.to_numeric(sub["score_value"], errors="coerce")
-    sub = sub.dropna(subset=["score_value"])
-    if sub.empty:
-        raise ValueError(f"No data found for metric '{metric}'")
+    if "score_type" in df.columns:
+        df = df[df["score_type"].str.lower() == metric.lower()]
+    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
+    df = df.dropna(subset=["score_value"])
+    if df.empty:
+        raise ValueError(f"No rows match metric='{metric}'")
 
-    models = sorted(sub["model"].unique())
-    n = len(models)
+    models = sorted(df["model"].unique())
     metric_name = get_metric_display_name(metric)
-    metric_bounds = get_metric_bounds(metric)
     model_palette = _model_palette(models)
-    palette = [model_palette[m] for m in models]
+    pa, pb, pair_tuples = _detect_pairs(df)
 
-    fig_h = max(3, n * 1.6)
-    fig, axes = plt.subplots(n, 1, figsize=(8, fig_h), sharex=True)
-    if n == 1:
-        axes = [axes]
-
-    all_vals = sub["score_value"].values
-    if metric_bounds is not None:
-        x_min, x_max = metric_bounds
+    if len(pair_tuples) >= 2:
+        panels = [
+            (_pair_label(a, b), df[(df[pa] == a) & (df[pb] == b)])
+            for a, b in pair_tuples
+        ]
     else:
-        x_min, x_max = float(all_vals.min()), float(all_vals.max())
-        pad = (x_max - x_min) * 0.05 or 0.5
-        x_min -= pad
-        x_max += pad
-    xs = np.linspace(x_min, x_max, 400)
-    threshold_guides = DOCKQ_CAPRI_THRESHOLDS if metric.lower() == "dockq" else []
+        panels = [(None, df)]
 
-    for ax, model, color in zip(axes, models, palette, strict=False):
-        vals = sub[sub["model"] == model]["score_value"].values
-        if len(vals) >= 2:
-            ys = gaussian_kde(vals)(xs)
-        else:
-            ys = np.zeros_like(xs)
-        for threshold, _, guide_color in threshold_guides:
-            ax.axvline(
-                threshold,
-                color=guide_color,
-                lw=0.9,
-                ls="--",
-                alpha=0.22,
-                zorder=0,
+    # A lone panel needs room for the two-column legend underneath.
+    panel_w = max(4.5 if len(panels) > 1 else 6.5, 1.9 * len(models) + 1.0)
+    fig, axes = plt.subplots(
+        1, len(panels), figsize=(panel_w * len(panels), 5.5),
+        sharey=True, squeeze=False,
+    )
+    axes = list(axes[0])
+    rng = np.random.default_rng(0)
+    capri_drawn = False
+    highlighted = False
+    tier = _rare_good_tier(
+        [g.to_numpy(float) for _, data in panels
+         for _, g in data.groupby("model")["score_value"]],
+        metric, MAX_DRAWN_POSES,
+    )
+
+    for idx, (ax, (panel_title, data)) in enumerate(zip(axes, panels, strict=False)):
+        panel_models = [m for m in models if m in set(data["model"])]
+        positions = np.arange(len(panel_models))
+        box_data = []
+        tick_labels = []
+        for pos, model in zip(positions, panel_models, strict=False):
+            vals = data.loc[data["model"] == model, "score_value"].to_numpy(float)
+            background, highlight, sampled = _draw_selection(
+                vals, metric, MAX_DRAWN_POSES, tier,
             )
-        ax.fill_between(xs, ys, alpha=0.55, color=color)
-        ax.plot(xs, ys, color=color, lw=1.5)
-        median_val = float(np.median(vals))
-        median_y = float(np.interp(median_val, xs, ys)) if ys.size else 0.0
-        ax.plot(
-            [median_val],
-            [median_y],
-            color=color,
-            marker="o",
-            linestyle="None",
-            markersize=5.5,
-            markerfacecolor="white",
-            markeredgecolor=color,
-            markeredgewidth=1.3,
+            drawn = vals[background]
+            ax.scatter(
+                pos + rng.uniform(-0.18, 0.18, len(drawn)), drawn,
+                s=_point_size(len(drawn)),
+                color=model_palette[model],
+                alpha=_point_alpha(len(drawn)),
+                edgecolors="none",
+                zorder=2,
+                clip_on=False,
+                rasterized=len(drawn) > 2000,
+            )
+            if len(highlight):
+                highlighted = True
+                ax.scatter(
+                    pos + rng.uniform(-0.18, 0.18, len(highlight)), vals[highlight],
+                    s=18, color=model_palette[model], alpha=0.9,
+                    edgecolors="black", linewidths=0.5, zorder=4, clip_on=False,
+                )
+            box_data.append(vals)
+            tick_labels.append(_engine_tick_label(model, len(vals), sampled))
+        ax.boxplot(
+            box_data,
+            positions=positions,
+            widths=0.5,
+            showfliers=False,
+            patch_artist=True,
+            boxprops={"facecolor": "none", "edgecolor": "#333333", "linewidth": 1.2},
+            medianprops={"color": "#111111", "linewidth": 2.0},
+            whiskerprops={"color": "#333333", "linewidth": 1.1},
+            capprops={"color": "#333333", "linewidth": 1.1},
             zorder=3,
         )
-        ax.set_ylabel(model, rotation=0, ha="right", va="center",
-                      labelpad=6, fontsize=TICK_LABEL_SIZE)
-        ax.set_yticks([])
-        sns.despine(ax=ax, left=True, bottom=False)
-        ax.tick_params(axis="x", which="both",
-                       labelbottom=(ax is axes[-1]))
+        capri_drawn = _draw_capri_lines(ax, metric) or capri_drawn
+        ax.set_xticks(positions)
+        ax.set_xticklabels(tick_labels)
+        ax.set_xlim(-0.6, len(panel_models) - 0.4)
+        _apply_metric_bounds(ax, metric)
+        if panel_title:
+            ax.set_title(panel_title, fontsize=FACET_TITLE_SIZE)
+        ax.set_xlabel("")
+        ax.set_ylabel(metric_name if idx == 0 else "")
+        _add_faint_horizontal_gridlines(ax)
+        sns.despine(ax=ax)
 
-    if metric_bounds is not None:
-        axes[-1].set_xlim(metric_bounds)
-    axes[-1].set_xlabel(metric_name)
     legend_handles = [
-        Line2D(
-            [0], [0],
-            marker="o",
-            linestyle="None",
-            markersize=5.5,
-            markerfacecolor="white",
-            markeredgecolor="#444444",
-            markeredgewidth=1.2,
-            label="Median",
-        )
+        Line2D([0], [0], marker="o", linestyle="None", markersize=6,
+               markerfacecolor=".45", markeredgecolor="none",
+               label="One dot = one pose"),
+        Line2D([0], [0], color="#111111", lw=2.0,
+               label="Box: median and IQR (whiskers 1.5 × IQR)"),
     ]
-    for threshold, label, color in threshold_guides:
-        legend_handles.append(
-            Line2D(
-                [0], [0],
-                color=color,
-                lw=1.2,
-                ls="--",
-                alpha=0.7,
-                label=f"CAPRI {label} ({threshold:.2f})",
-            )
-        )
-    fig.suptitle(
-        plot_title or f"Ridge plot – {metric_name}",
-        fontsize=PLOT_TITLE_SIZE,
-        y=1 + (RIDGE_TITLE_OFFSET_IN / fig_h),
+    if highlighted:
+        legend_handles.append(_highlight_legend_handle(metric, tier))
+    if capri_drawn:
+        legend_handles += _capri_legend_handles()
+
+    _finish_figure(
+        fig, axes,
+        title=plot_title or _engines_title(metric_name, models, pair_tuples),
+        xlabel="Docking Engine",
+        legend_handles=legend_handles,
+        legend_ncol=2,
     )
-    fig.legend(
-        handles=legend_handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1 + (RIDGE_LEGEND_OFFSET_IN / fig_h)),
-        ncol=min(4, len(legend_handles)),
-        frameon=True,
-        fancybox=True,
-        framealpha=0.9,
-        fontsize=LEGEND_FONT_SIZE,
-        handlelength=1.8,
-        columnspacing=1.0,
-    )
-    fig.tight_layout(rect=(0, 0, 1, 0.90), pad=1.0)
 
     if output:
-        fig.savefig(output, bbox_inches="tight", dpi=150)
+        fig.savefig(output, bbox_inches="tight", dpi=180)
+        print(f"Plot saved to {output}")
+    else:
+        plt.show()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Funnel plot (native-reference rank audit only)
+# ---------------------------------------------------------------------------
+
+FUNNEL_DOCKQ_METRIC = "quality_dockq"
+
+
+def _funnel_inputs(scores_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a unified scores table into engine scores and native DockQ.
+
+    The funnel plot only ever pairs an engine's own score with
+    native-referenced DockQ (``quality_dockq``) for the same ``pose_id``.
+    Raises ``ValueError`` with an actionable message when that is not
+    possible.
+    """
+    df = scores_df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    for required in ("model", "score_type", "score_value", "pose_id"):
+        if required not in df.columns:
+            raise ValueError(
+                f"Funnel plot needs a '{required}' column so each engine "
+                "score can be matched to the DockQ value of the same pose."
+            )
+    df["score_value"] = pd.to_numeric(df["score_value"], errors="coerce")
+    score_types = df["score_type"].astype(str).str.lower()
+    is_dockq = score_types == FUNNEL_DOCKQ_METRIC
+    if not is_dockq.any():
+        raise ValueError(
+            "Funnel plot needs native-referenced DockQ rows (score_type "
+            f"'{FUNNEL_DOCKQ_METRIC}') in the same file as the engine scores."
+        )
+
+    _, _, pair_tuples = _detect_pairs(df)
+    if len(pair_tuples) > 1:
+        raise ValueError(
+            "Funnel plot compares the poses of one target, but the scores "
+            f"contain {len(pair_tuples)} protein pairs."
+        )
+
+    quality = df[is_dockq].rename(columns={"score_value": "DockQ"})
+    quality = quality[["model", "pose_id", "DockQ"]]
+    engine_scores = df[~score_types.str.startswith("quality_")]
+    return engine_scores, quality
+
+
+def funnel_plot(
+    scores_df: pd.DataFrame,
+    plot_title: str | None = None,
+    output: str | None = None,
+) -> plt.Figure:
+    """Funnel plot for the native-reference rank audit — nothing else.
+
+    One panel per engine.  Each point is one pose: x is its DockQ against
+    the native structure (``quality_dockq``, written by ``ppinsight
+    quality``) and y is the **engine's own** primary ranking score for that
+    same pose (HADDOCK ``score``, LightDock ``luciferin_score``, Rosetta
+    ``i_sc``; other engines use their first native metric).  Scores and
+    DockQ are joined on ``pose_id`` only, so pose identity is preserved.
+
+    The y-axis is oriented so the engine's preferred direction is always
+    down.  A scoring function that recognises near-native poses produces a
+    funnel: the best-scored poses (bottom) sit at high DockQ (right).  Each
+    panel reports how many poses were evaluated, the best DockQ, and that
+    pose's rank by the engine's own score.
+
+    This plot deliberately takes no metric argument.  It is not a general
+    metric-versus-metric scatter: it always pairs an engine's own score
+    with native-referenced DockQ for the same poses, because that is the
+    only question it answers ("does the engine's score put its near-native
+    poses at the top?").
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+        Unified scores for **one** protein pair containing both engine-native
+        rows and ``quality_dockq`` rows that share ``pose_id`` values (the
+        output of ``ppinsight quality <scores.tsv> <native.pdb> -o …``).
+    plot_title : str or None
+    output : str or None
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+
+    Raises
+    ------
+    ValueError
+        If DockQ rows are missing, the scores span several pairs, or no
+        pose IDs match between engine scores and DockQ rows.
+    """
+    import warnings as _warnings
+
+    from ppinsight.quality import rank_engine_poses_by_dockq
+
+    engine_scores, quality = _funnel_inputs(scores_df)
+    ranked = rank_engine_poses_by_dockq(engine_scores, quality)
+    if ranked.empty:
+        raise ValueError(
+            "Funnel plot found no pose_id present in both the engine scores "
+            f"and the '{FUNNEL_DOCKQ_METRIC}' rows, so no pose could be matched."
+        )
+
+    models = sorted(ranked["model"].unique())
+    unmatched = sorted(set(engine_scores["model"].unique()) - set(models))
+    if unmatched:
+        _warnings.warn(
+            "No DockQ values matched the poses of: "
+            + ", ".join(_engine_label(m) for m in unmatched)
+            + ".  These engines are left out of the funnel plot.",
+            stacklevel=2,
+        )
+
+    palette = _model_palette(models)
+    fig, axes = plt.subplots(
+        1, len(models), figsize=(4.8 * len(models), 5.2),
+        sharex=True, squeeze=False,
+    )
+    axes = axes[0]
+
+    for ax, model in zip(axes, models, strict=False):
+        sub = ranked[ranked["model"] == model]
+        score_type = str(sub["native_score_type"].iloc[0])
+        _draw_capri_lines(ax, FUNNEL_DOCKQ_METRIC, orientation="v")
+        ax.scatter(
+            sub["DockQ"], sub["native_score"],
+            s=_point_size(len(sub)),
+            color=palette[model],
+            alpha=max(0.35, _point_alpha(len(sub))),
+            edgecolors="white", linewidths=0.4,
+            zorder=2, clip_on=False, rasterized=len(sub) > 2000,
+        )
+        top = sub.loc[sub["engine_rank"].idxmin()]
+        best = sub.loc[sub["DockQ"].idxmax()]
+        ax.scatter(
+            [top["DockQ"]], [top["native_score"]], s=110,
+            facecolors="none", edgecolors="black", linewidths=1.6,
+            zorder=4, clip_on=False,
+        )
+        ax.scatter(
+            [best["DockQ"]], [best["native_score"]], s=150, marker="*",
+            color="black", edgecolors="white", linewidths=0.6,
+            zorder=5, clip_on=False,
+        )
+
+        if get_metric_direction(score_type):
+            ax.invert_yaxis()
+        ax.set_xlim(0.0, 1.0)
+        # Plain words: an arrow glyph would rotate with the vertical label.
+        ax.set_ylabel(f"{get_metric_display_name(score_type)} (best at bottom)")
+        poses_ranked = int(sub["poses_ranked"].iloc[0])
+        ax.set_title(
+            f"{_engine_label(model)}\n"
+            f"n = {len(sub)} of {poses_ranked} ranked poses\n"
+            f"best DockQ {best['DockQ']:.2f} at engine rank "
+            f"{int(best['engine_rank'])}",
+            fontsize=FACET_TITLE_SIZE - 1,
+        )
+        ax.grid(True, color=".92", linewidth=0.6)
+        ax.set_axisbelow(True)
+        sns.despine(ax=ax)
+
+    _, _, pair_tuples = _detect_pairs(engine_scores)
+    title = plot_title or "Engine's own score vs DockQ" + (
+        f" ({_pair_label(*pair_tuples[0])})" if pair_tuples else ""
+    )
+    legend_handles = [
+        Line2D([0], [0], marker="o", linestyle="None", markersize=9,
+               markerfacecolor="none", markeredgecolor="black",
+               markeredgewidth=1.6, label="Engine's top-ranked pose"),
+        Line2D([0], [0], marker="*", linestyle="None", markersize=12,
+               color="black", label="Best-DockQ pose"),
+        *_capri_legend_handles(),
+    ]
+    _finish_figure(
+        fig, axes,
+        title=title,
+        xlabel="DockQ vs native structure",
+        legend_handles=legend_handles,
+        legend_ncol=5 if len(models) > 1 else 3,
+        figure_title=True,
+    )
+
+    if output:
+        fig.savefig(output, bbox_inches="tight", dpi=180)
+        print(f"Plot saved to {output}")
+    else:
+        plt.show()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Top-N plot (native-reference rank audit only)
+# ---------------------------------------------------------------------------
+
+TOPN_CHECKPOINTS = (1, 5, 10, 20, 50, 100, 200, 500, 1000, 5000, 10000, 50000)
+
+
+def topn_table(scores_df: pd.DataFrame) -> pd.DataFrame:
+    """Best DockQ within each engine's own top-N poses at standard N values.
+
+    Uses the same inputs and pose-ID matching as :func:`funnel_plot`; N runs
+    over :data:`TOPN_CHECKPOINTS` up to the deepest rank with a DockQ value.
+
+    Returns
+    -------
+    DataFrame
+        Columns ``model``, ``N``, ``best_dockq``, ``poses_with_dockq``.
+    """
+    import numpy as np
+
+    from ppinsight.quality import rank_engine_poses_by_dockq
+
+    engine_scores, quality = _funnel_inputs(scores_df)
+    ranked = rank_engine_poses_by_dockq(engine_scores, quality)
+    if ranked.empty:
+        raise ValueError(
+            "Top-N plot found no pose_id present in both the engine scores "
+            f"and the '{FUNNEL_DOCKQ_METRIC}' rows, so no pose could be matched."
+        )
+    max_rank = int(ranked["engine_rank"].max())
+    checkpoints = [n for n in TOPN_CHECKPOINTS if n <= max_rank]
+    if not checkpoints or checkpoints[-1] != max_rank:
+        checkpoints.append(max_rank)
+
+    rows = []
+    for model, sub in ranked.groupby("model"):
+        ranks = sub["engine_rank"].to_numpy()
+        dockq = sub["DockQ"].to_numpy()
+        for n in checkpoints:
+            within = dockq[ranks <= n]
+            rows.append({
+                "model": model,
+                "N": n,
+                "best_dockq": round(float(within.max()), 4) if len(within) else np.nan,
+                "poses_with_dockq": int(len(within)),
+            })
+    return pd.DataFrame(rows)
+
+
+def topn_plot(
+    scores_df: pd.DataFrame,
+    plot_title: str | None = None,
+    output: str | None = None,
+) -> plt.Figure:
+    """Best DockQ within each engine's own top-N poses — rank audit only.
+
+    For every N, each engine's curve shows the best DockQ (against the
+    native structure, ``quality_dockq``) among its N best poses by its
+    **own** score.  Comparing engines at the same N removes the bias that
+    pose-averaged metrics have when engines output very different numbers
+    of poses, and it is the curve behind CAPRI-style "top-1 / top-10
+    success".  A curve that reaches a CAPRI line at small N means the
+    engine ranks a pose of that quality near the top.
+
+    Inputs and pose-ID matching are the same as :func:`funnel_plot`: one
+    protein pair, engine scores plus ``quality_dockq`` rows sharing
+    ``pose_id``.  Like the funnel plot, it takes no metric argument.
+
+    Parameters
+    ----------
+    scores_df : DataFrame
+    plot_title : str or None
+    output : str or None
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    import numpy as np
+    from matplotlib.ticker import FuncFormatter, NullLocator
+
+    from ppinsight.quality import rank_engine_poses_by_dockq
+
+    engine_scores, quality = _funnel_inputs(scores_df)
+    ranked = rank_engine_poses_by_dockq(engine_scores, quality)
+    if ranked.empty:
+        raise ValueError(
+            "Top-N plot found no pose_id present in both the engine scores "
+            f"and the '{FUNNEL_DOCKQ_METRIC}' rows, so no pose could be matched."
+        )
+
+    models = sorted(ranked["model"].unique())
+    palette = _model_palette(models)
+    max_rank = int(ranked["engine_rank"].max())
+
+    fig, ax = plt.subplots(figsize=(8, 5.2))
+    _draw_capri_lines(ax, FUNNEL_DOCKQ_METRIC, orientation="h", zorder=1)
+    handles = []
+    for model in models:
+        sub = ranked[ranked["model"] == model].sort_values("engine_rank")
+        ranks = sub["engine_rank"].to_numpy()
+        best = np.maximum.accumulate(sub["DockQ"].to_numpy())
+        x = np.append(ranks, ranks[-1])
+        y = np.append(best, best[-1])
+        line, = ax.step(
+            x, y, where="post", color=palette[model], lw=2.4, zorder=3,
+            label=(
+                f"{_engine_label(model)} (DockQ for {len(sub):,} of "
+                f"{int(sub['poses_ranked'].iloc[0]):,} ranked poses)"
+            ),
+        )
+        handles.append(line)
+
+    ax.set_xscale("log")
+    ax.set_xlim(1, max(2, max_rank))
+    ticks = [n for n in TOPN_CHECKPOINTS if n <= max(2, max_rank)]
+    ax.set_xticks(ticks)
+    ax.xaxis.set_minor_locator(NullLocator())
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
+    ax.set_ylim(0.0, 1.0)
+    ax.set_ylabel("Best DockQ within top N")
+    ax.grid(True, color=".92", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+    _, _, pair_tuples = _detect_pairs(engine_scores)
+    title = plot_title or "Best DockQ in each engine's top N poses" + (
+        f" ({_pair_label(*pair_tuples[0])})" if pair_tuples else ""
+    )
+    _finish_figure(
+        fig, [ax],
+        title=title,
+        xlabel="N = number of top-ranked poses, by each engine's own score",
+        legend_handles=[*handles, *_capri_legend_handles()],
+        legend_ncol=1 if len(models) > 1 else 2,
+    )
+
+    if output:
+        fig.savefig(output, bbox_inches="tight", dpi=180)
         print(f"Plot saved to {output}")
     else:
         plt.show()
@@ -1744,7 +2503,8 @@ def cdf_plot(
     The CDF shows the fraction of poses scoring ≤ x.  For quality
     metrics where *higher is better* (e.g. DockQ, fnat) the CDF rises
     steeply at higher values for better engines.  CAPRI tier thresholds
-    are drawn as vertical dashed lines when *metric* is ``dockq``.
+    are drawn as vertical dashed lines when *metric* is on the DockQ scale
+    (``dockq`` or ``quality_dockq``).
 
     Parameters
     ----------
@@ -1780,136 +2540,28 @@ def cdf_plot(
         color = model_palette[model]
         vals = np.sort(sub[sub["model"] == model]["score_value"].values)
         cdf = np.arange(1, len(vals) + 1) / len(vals)
-        ax.step(vals, cdf, where="post", color=color, lw=2, label=model)
+        ax.step(vals, cdf, where="post", color=color, lw=2,
+                label=f"{_engine_label(model)} (n = {len(vals)})")
 
-    # CAPRI threshold lines for dockq
-    if metric.lower() == "dockq":
+    # CAPRI threshold lines for HADDOCK dockq and native-referenced DockQ
+    if metric.lower() in {"dockq", "quality_dockq"}:
         for thr, label, color in DOCKQ_CAPRI_THRESHOLDS:
-            ax.axvline(thr, color=color, lw=1.2, ls="--", alpha=0.8,
-                       label=f"CAPRI {label} ({thr})")
+            ax.axvline(thr, color=color, lw=1.3, ls="--", alpha=0.75,
+                       label=f"CAPRI {label} ({thr:.2f})")
 
     if metric_bounds is not None:
         ax.set_xlim(metric_bounds)
     ax.set_xlabel(metric_name)
     ax.set_ylabel("Cumulative fraction of poses")
     ax.set_ylim(0, 1.05)
-    ax.set_title(plot_title or f"Empirical CDF – {metric_name}", pad=TITLE_PAD)
-    ax.legend(
-        frameon=True,
-        fancybox=True,
-        framealpha=0.9,
-        fontsize=LEGEND_FONT_SIZE,
-        title_fontsize=LEGEND_TITLE_SIZE,
-    )
-    sns.despine(ax=ax)
-    fig.tight_layout(pad=1.0)
-
-    if output:
-        fig.savefig(output, bbox_inches="tight", dpi=150)
-        print(f"Plot saved to {output}")
+    _, _, pair_tuples = _detect_pairs(sub)
+    if len(pair_tuples) == 1:
+        where = f" ({_pair_label(*pair_tuples[0])})"
+    elif len(pair_tuples) > 1:
+        where = f" ({len(pair_tuples)} protein pairs pooled)"
     else:
-        plt.show()
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# Pairwise difference plot
-# ---------------------------------------------------------------------------
-
-def pairwise_difference_plot(
-    scores_df: pd.DataFrame,
-    metric: str,
-    model_a: str,
-    model_b: str,
-    plot_title: str | None = None,
-    output: str | None = None,
-) -> plt.Figure:
-    """Histogram of per-pair mean score differences (model A − model B).
-
-    For each protein pair, this plot computes the mean score of *model_a*
-    and the mean score of *model_b*, then histograms their differences.
-    Bars to the right of zero indicate pairs where *model_a* scored
-    higher; bars to the left indicate *model_b* scored higher.
-
-    A vertical dashed line at zero is drawn for reference.  The median
-    difference is annotated on the plot.
-
-    Parameters
-    ----------
-    scores_df : DataFrame
-        Unified scores (long format).  Must contain both *model_a* and
-        *model_b* rows.
-    metric : str
-        ``score_type`` value to compute differences for.
-    model_a : str
-        First model name (positive axis).
-    model_b : str
-        Second model name (negative axis).
-    plot_title : str or None
-    output : str or None
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-
-    Raises
-    ------
-    ValueError
-        If either model is not found or there are no shared pairs.
-    """
-    import numpy as np
-
-    df = scores_df.copy()
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    sub = df[df["score_type"].str.lower() == metric.lower()].copy()
-    sub["score_value"] = pd.to_numeric(sub["score_value"], errors="coerce")
-    sub = sub.dropna(subset=["score_value"])
-    metric_name = get_metric_display_name(metric)
-
-    for name in (model_a, model_b):
-        if name not in sub["model"].values:
-            raise ValueError(
-                f"Model '{name}' not found in scores for metric '{metric}'.  "
-                f"Available: {sorted(sub['model'].unique())}"
-            )
-
-    group_cols = ["model"]
-    if "proteina" in sub.columns and "proteinb" in sub.columns:
-        group_cols = ["model", "proteina", "proteinb"]
-
-    means = sub.groupby(group_cols)["score_value"].mean().reset_index()
-    means.columns = [*group_cols, "mean_score"]
-
-    pair_cols = [c for c in group_cols if c != "model"]
-
-    if pair_cols:
-        a_idx = means[means["model"] == model_a].set_index(pair_cols)["mean_score"]
-        b_idx = means[means["model"] == model_b].set_index(pair_cols)["mean_score"]
-    else:
-        a_idx = means[means["model"] == model_a]["mean_score"].reset_index(drop=True)
-        b_idx = means[means["model"] == model_b]["mean_score"].reset_index(drop=True)
-
-    diff = (a_idx - b_idx).dropna()
-    if diff.empty:
-        raise ValueError(
-            f"No shared protein pairs found between '{model_a}' and '{model_b}'."
-        )
-
-    median_diff = float(np.median(diff.values))
-
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    color = _model_palette([model_a, model_b])[model_a]
-    ax.hist(diff.values, bins="auto", color=color, edgecolor="white",
-            linewidth=0.6, alpha=0.85)
-    ax.axvline(0, color="#444444", lw=1.5, ls="--", label="No difference")
-    ax.axvline(median_diff, color="#e05050", lw=1.5, ls="-",
-               label=f"Median Δ = {median_diff:+.3f}")
-    ax.set_xlabel(f"{metric_name}  ({model_a} − {model_b})")
-    ax.set_ylabel("Number of pairs")
-    ax.set_title(
-        plot_title or f"Per-pair {metric_name} difference: {model_a} vs {model_b}",
-        pad=TITLE_PAD,
-    )
+        where = ""
+    ax.set_title(plot_title or f"Empirical CDF – {metric_name}{where}", pad=TITLE_PAD)
     ax.legend(
         frameon=True,
         fancybox=True,
@@ -2138,7 +2790,7 @@ def _print_metric_overview_table(scores_df: pd.DataFrame) -> pd.DataFrame:
     tbl = metric_overview_table(scores_df)
     print()
     print("── Metric-Agnostic Overview ──")
-    print(tbl.to_string(index=False))
+    print(_with_engine_labels(tbl).to_string(index=False))
     print()
     return tbl
 
@@ -2153,7 +2805,7 @@ def _print_tabular_summary(scores_df: pd.DataFrame, metric: str) -> pd.DataFrame
     direction_label = "higher is better" if direction else "lower is better"
     print()
     print(f"── Tabular Summary: {metric} ({direction_label}) ──")
-    print(tbl.to_string(index=False))
+    print(_with_engine_labels(tbl).to_string(index=False))
     print()
     return tbl
 
@@ -2307,6 +2959,7 @@ def classification_summary(
     DataFrame with columns: model, TP, FP, TN, FN, accuracy, precision,
     recall, f1.
     """
+    _require_reference_free(metric, "Binder / non-binder classification")
     if higher_is_better is None:
         higher_is_better = get_metric_direction(metric)
     df = scores_df.copy()
@@ -2416,9 +3069,10 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     print()
     print("═══ ppinsight compare — plot-type guide ═══")
     print()
+    model_labels = [_engine_label(m) for m in models]
     models_str = (
-        ", ".join(models) if n_models <= 5
-        else ", ".join(models[:5]) + ", …"
+        ", ".join(model_labels) if n_models <= 5
+        else ", ".join(model_labels[:5]) + ", …"
     )
     print(f"  Models   : {n_models}  ({models_str})")
     print(f"  Pairs    : {n_pairs}  ", end="")
@@ -2433,6 +3087,15 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     if n_metrics > 6:
         metrics_str += ", …"
     print(f"  Metrics  : {n_metrics}  ({metrics_str})")
+    haddock_present = [m for m in metrics if m.lower() in HADDOCK_CAPRIEVAL_METRICS]
+    if haddock_present:
+        print(
+            f"             {', '.join(haddock_present)} = HADDOCK's own caprieval "
+            "values (vs HADDOCK's reference: its own best model unless one\n"
+            "             was supplied), not vs your native.\n"
+            "             Native-referenced versions: quality_* from "
+            "'ppinsight quality'."
+        )
     print()
 
     # ── Per-plot-type assessment ──────────────────────────────────
@@ -2446,8 +3109,8 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
     ))
 
     rows.append((
-        "ridge", "✅ yes",
-        "Works with any setup — compact density comparison across engines.",
+        "strip", "✅ yes",
+        "Works with any setup — every pose as a point, with a box summary.",
     ))
 
     # roc
@@ -2470,12 +3133,20 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
             f"Needs ≥ 2 models (you have {n_models}). "
             "Use --models MODEL_A MODEL_B.",
         ))
-    elif shared_metrics and shared_pairs:
+    elif shared_metrics and len(shared_pairs) >= MIN_SCATTER_PAIRS:
         rows.append((
             "scatter",
             "✅ yes",
             f"Shared metrics: {', '.join(sorted(shared_metrics)[:5])}.  "
             f"Shared pairs: {len(shared_pairs)}.  Use --models to pick two."
+        ))
+    elif shared_metrics and shared_pairs:
+        rows.append((
+            "scatter",
+            "⚠️  limited",
+            f"Only {len(shared_pairs)} shared pair(s); correlations are "
+            f"unstable below {MIN_SCATTER_PAIRS}.  The plot still draws, "
+            "with a warning.",
         ))
     elif not shared_pairs:
         rows.append((
@@ -2496,27 +3167,26 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
             "'ppinsight collect' with --pair.",
         ))
 
-    # quality_bar — needs fnat/irmsd/lrmsd or dockq metrics
+    # quality_bar — needs DockQ (tiers come from DockQ) and one pair
     has_quality_metrics = False
     if "score_type" in scores_df.columns:
         st_lower = set(scores_df["score_type"].dropna().str.lower().unique())
-        quality_metrics = {
-            "fnat", "irmsd", "lrmsd", "dockq",
-            "quality_fnat", "quality_irmsd",
-            "quality_lrmsd", "quality_dockq",
-        }
-        has_quality_metrics = bool(st_lower & quality_metrics)
-    if has_quality_metrics:
+        has_quality_metrics = bool(st_lower & DOCKQ_METRICS)
+    if not has_quality_metrics:
         rows.append((
-            "quality_bar", "✅ yes",
-            "Pose-level CAPRI quality tiers (fnat/RMSD/dockq "
-            "detected). No --metric needed.",
+            "quality_bar", "❌ no",
+            "Needs DockQ for CAPRI tiers: run 'ppinsight quality' to add "
+            "quality_dockq (or use HADDOCK's own dockq).",
+        ))
+    elif n_pairs > 1:
+        rows.append((
+            "quality_bar", "⚠️  limited",
+            "One target per plot — plot with --pair proteinA:proteinB.",
         ))
     else:
         rows.append((
-            "quality_bar", "❌ no",
-            "Needs fnat + irmsd/lrmsd, or dockq metrics "
-            "for CAPRI quality tiers.",
+            "quality_bar", "✅ yes",
+            "% of poses in each CAPRI tier (from DockQ). No --metric needed.",
         ))
 
     rows.append((
@@ -2524,22 +3194,41 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
         "Works with any numeric metric; DockQ adds CAPRI threshold lines.",
     ))
 
-    if n_models < 2:
+    # funnel — rank audit: engine's own score vs native DockQ, same poses
+    has_native_dockq = (
+        "score_type" in scores_df.columns
+        and scores_df["score_type"].astype(str).str.lower()
+        .eq(FUNNEL_DOCKQ_METRIC).any()
+    )
+    if not has_native_dockq:
         rows.append((
-            "difference", "❌ no",
-            f"Needs ≥ 2 models (you have {n_models}) and shared pairs.",
+            "funnel", "❌ no",
+            "Needs native-referenced DockQ rows. Run 'ppinsight quality "
+            "<scores.tsv> <native.pdb> -o <merged.tsv>' first.",
         ))
-    elif shared_metrics and shared_pairs:
+    elif "pose_id" not in scores_df.columns:
         rows.append((
-            "difference", "✅ yes",
-            f"Shared metrics: {', '.join(sorted(shared_metrics)[:5])}.  "
-            f"Shared pairs: {len(shared_pairs)}.  Use --models to pick two.",
+            "funnel", "❌ no",
+            "Needs a pose_id column to match engine scores to DockQ.",
+        ))
+    elif n_pairs > 1:
+        rows.append((
+            "funnel", "⚠️  limited",
+            "One target per plot — plot with --pair proteinA:proteinB.",
         ))
     else:
         rows.append((
-            "difference", "❌ no",
-            "Needs two models that scored the same metric on the same pairs.",
+            "funnel", "✅ yes",
+            "Rank audit: each engine's own score vs DockQ for the same "
+            "poses. No --metric needed.",
         ))
+    # topn shares funnel's input; repeat its verdict with its own wording.
+    funnel_status, funnel_detail = rows[-1][1], rows[-1][2]
+    rows.append((
+        "topn", funnel_status,
+        "Rank audit: best DockQ within each engine's top N poses. "
+        "No --metric needed." if funnel_status == "✅ yes" else funnel_detail,
+    ))
 
     # ── Print table ───────────────────────────────────────────────
     col_w = [max(len(r[i]) for r in rows) for i in range(3)]
@@ -2594,8 +3283,7 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
         )
     else:
         extras.append(
-            "--capri-quality  ❌ needs fnat/irmsd/lrmsd "
-            "or dockq metrics."
+            "--capri-quality  ❌ needs DockQ (quality_dockq or dockq)."
         )
     print("  Additional flags:")
     for e in extras:
@@ -2613,7 +3301,16 @@ def _cli_error_with_hint(msg: str, metric: str, scores_df) -> None:
     print(f"ERROR: {msg}", file=sys.stderr)
     lower = msg.lower()
 
-    if "label" in lower:
+    if "reference native structure" in lower:
+        print(
+            "Hint: pick a score that exists without a native structure, e.g. "
+            "--metric score (HADDOCK), luciferin_score (LightDock), or i_sc "
+            "(Rosetta).  Each of these belongs to one engine, so the result "
+            "covers that engine only.  Use --list-metrics to see what your "
+            "file contains.",
+            file=sys.stderr,
+        )
+    elif "label" in lower:
         # Missing interaction labels — need to annotate at collection time
         print(
             "Hint: your scores file has no 'label' column.  Re-run "
@@ -2696,6 +3393,123 @@ def _default_plot_output_path(
         name_parts.append(pair_token)
     base = "_".join(name_parts) + ".png"
     return _next_available_output_path(os.path.join(out_dir, base))
+
+
+def _print_tier_error(exc: Exception) -> None:
+    """Print a CAPRI-tier error with the step that fixes it."""
+    print(f"ERROR: {exc}", file=sys.stderr)
+    msg = str(exc).lower()
+    if "protein pairs" in msg:
+        hint = (
+            "pick one target with --pair proteinA:proteinB "
+            "(use --list-pairs to see the names)."
+        )
+    else:
+        hint = (
+            "run 'ppinsight quality <scores.tsv> <native.pdb> -o "
+            "<merged.tsv>' to add DockQ against your native structure, then "
+            "use the merged file."
+        )
+    print(f"Hint: {hint}", file=sys.stderr)
+
+
+def _print_haddock_note(metrics) -> None:
+    """Explain HADDOCK's own caprieval metrics on stderr when they appear."""
+    note = haddock_caprieval_note(metrics)
+    if note:
+        print(note, file=sys.stderr)
+
+
+def _run_rank_audit_cli(args, analysis_df: pd.DataFrame, pair_filter) -> None:
+    """Print the rank-audit table, then draw the funnel or top-N plot."""
+    kind = args.plot_type
+    if args.metric:
+        print(
+            f"ERROR: --plot-type {kind} does not take --metric.  It always "
+            "uses each engine's own ranking score and DockQ measured "
+            "against the native structure, for the same poses.",
+            file=sys.stderr,
+        )
+        print("Hint: drop --metric and run the command again.", file=sys.stderr)
+        sys.exit(2)
+
+    from ppinsight.quality import summarize_engine_ranking
+
+    try:
+        engine_scores, quality = _funnel_inputs(analysis_df)
+        summary = summarize_engine_ranking(engine_scores, quality)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        msg = str(exc).lower()
+        if "protein pairs" in msg:
+            hint = (
+                "pick one target with --pair proteinA:proteinB "
+                "(use --list-pairs to see the names)."
+            )
+        elif "pose_id" in msg and "column" in msg:
+            hint = (
+                "re-run 'ppinsight collect' so the scores file records a "
+                "pose_id for every pose."
+            )
+        else:
+            hint = (
+                "run 'ppinsight quality <scores.tsv> <native.pdb> -o "
+                "<merged.tsv>' on the collected scores file and plot the "
+                "merged file.  Evaluating a separate folder of copied or "
+                "renamed pose files gives DockQ rows whose pose_id no longer "
+                "matches the engine scores."
+            )
+        print(f"Hint: {hint}", file=sys.stderr)
+        sys.exit(1)
+
+    if summary.empty:
+        print(
+            "ERROR: no pose_id is shared between the engine scores and the "
+            f"'{FUNNEL_DOCKQ_METRIC}' rows.",
+            file=sys.stderr,
+        )
+        print(
+            "Hint: run 'ppinsight quality <scores.tsv> <native.pdb> -o "
+            "<merged.tsv>' on the collected scores file so DockQ rows keep "
+            "the engine's pose IDs.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print()
+    print("── Rank audit: each engine's own score vs DockQ (same poses) ──")
+    print(_with_engine_labels(summary).to_string(index=False))
+    print()
+    if kind == "topn":
+        table = topn_table(analysis_df)
+        wide = table.pivot(index="N", columns="model", values="best_dockq")
+        wide.columns = [_engine_label(m) for m in wide.columns]
+        print("── Best DockQ within each engine's top N poses ──")
+        print(wide.to_string())
+        print()
+
+    plot_out = args.output
+    if plot_out is None and not args.show:
+        plot_out = _default_plot_output_path(
+            kind, "engine_score_vs_dockq", pair_filter,
+        )
+    if plot_out is not None:
+        os.makedirs(os.path.dirname(plot_out) or ".", exist_ok=True)
+    draw = topn_plot if kind == "topn" else funnel_plot
+    with _warnings_to_stderr():
+        draw(analysis_df, plot_title=None, output=plot_out)
+
+
+@contextmanager
+def _warnings_to_stderr():
+    """Show plot warnings as plain ``WARNING:`` lines instead of tracebacks."""
+    import warnings as _warnings
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        yield
+    for warning in caught:
+        print(f"WARNING: {warning.message}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -2849,22 +3663,33 @@ def main(argv=None):
     )
     parser.add_argument(
         "--plot-type",
-        choices=["violin", "ridge", "roc", "scatter",
-                 "quality_bar", "cdf", "difference"],
+        choices=["violin", "strip", "roc", "scatter",
+                 "quality_bar", "cdf", "funnel", "topn"],
         default="violin",
         help=(
-            "Plot style.  'violin' (default): full score distributions "
-            "with individual data points — reveals bimodality or outliers.  "
-            "'ridge': ridgeline KDE per engine — compact when comparing "
-            "many engines.  'roc': ROC curves with AUC — needs labels.  "
+            "Plot style.  'violin' (default): smoothed score distributions "
+            "with individual data points — best for large pose ensembles.  "
+            "'strip': every pose as a point with a box summary — best when "
+            "you want to see each pose (up to a few hundred per engine).  "
+            "'roc': ROC curves with AUC — needs interaction / "
+            "non-interaction labels and a score every pair has (an "
+            "engine's own score, not DockQ, which needs a native "
+            "structure).  "
             "'scatter': model-agreement plot — same metric, same pairs, "
             "one model per axis (use with --models).  "
-            "'quality_bar': 100 %% stacked bar of CAPRI quality tiers "
-            "per engine — requires fnat+RMSD or dockq.  "
+            "'quality_bar': percentage of poses in each CAPRI tier per "
+            "engine, with tiers from DockQ — one protein pair at a time.  "
             "'cdf': empirical CDF per engine — CAPRI thresholds shown "
-            "for dockq.  "
-            "'difference': histogram of per-pair mean score differences "
-            "between two engines (use with --models)."
+            "for DockQ.  "
+            "'funnel': rank audit for one target — each engine's own "
+            "score against DockQ vs the native structure, for the same "
+            "poses.  Needs the merged file from 'ppinsight quality "
+            "<scores.tsv> <native.pdb> -o <merged.tsv>'.  It only ever "
+            "plots engine score vs DockQ, so it takes no --metric.  "
+            "'topn': rank audit for one target — the best DockQ within "
+            "each engine's top N poses by its own score, for every N, so "
+            "engines that output different numbers of poses are compared "
+            "fairly.  Same input as 'funnel'; takes no --metric."
         ),
     )
     parser.add_argument(
@@ -2874,9 +3699,13 @@ def main(argv=None):
         default=None,
         help=(
             "Two model names for --plot-type scatter (e.g. --models "
-            "haddock rosetta).  Each protein pair becomes one point: "
-            "x = model A's score, y = model B's.  Points along the "
-            "diagonal mean the engines agree.  Pearson r is annotated."
+            "haddock rosetta; display names such as HADDOCK3 also work).  "
+            "Each protein pair becomes one point: x = model A's mean score "
+            "for that pair, y = model B's.  Points along the diagonal mean "
+            "the engines agree.  Pearson r and Spearman ρ are annotated.  "
+            "With fewer than 10 shared pairs the plot still draws, but a "
+            "warning is printed and shown on the figure because the "
+            "correlations are unstable."
         ),
     )
     parser.add_argument(
@@ -2902,13 +3731,13 @@ def main(argv=None):
         "--capri-quality",
         action="store_true",
         help=(
-            "Print a CAPRI quality tier summary: count of models classified "
+            "Print a CAPRI quality tier summary: count of poses classified "
             "as high / medium / acceptable / incorrect for each engine.  "
-            "Uses the standard CAPRI protocol: f(nat) + Lrms + irms "
-            "thresholds (Lensink et al. 2016, DOI: 10.1002/prot.25007, "
-            "Table 3).  Falls back to DockQ thresholds (Basu & Wallner 2016, "
-            "DOI: 10.1371/journal.pone.0161879) when RMSD values are absent.  "
-            "Does not require --metric."
+            "Tiers come from each pose's DockQ: high ≥ 0.80, medium ≥ 0.49, "
+            "acceptable ≥ 0.23 (Basu & Wallner 2016, "
+            "DOI: 10.1371/journal.pone.0161879).  DockQ measured against "
+            "your native (quality_dockq) is used when present; HADDOCK's own "
+            "dockq only when it is not.  Does not require --metric."
         ),
     )
 
@@ -2940,8 +3769,10 @@ def main(argv=None):
                 )
 
             if args.list_metrics:
-                for m in available_metrics(scores_df):
+                metrics = available_metrics(scores_df)
+                for m in metrics:
                     print(m)
+                _print_haddock_note(metrics)
                 return
 
             if args.list_pairs:
@@ -2979,14 +3810,25 @@ def main(argv=None):
                         scores_df,
                     )
 
+            if args.metric:
+                _print_haddock_note([args.metric])
+            elif args.capri_quality or args.plot_type == "quality_bar":
+                _print_haddock_note(available_metrics(analysis_df))
+
             # --capri-quality does NOT need --metric
             if args.capri_quality:
                 try:
                     summary = capri_summary_table(analysis_df)
                 except ValueError as exc:
-                    print(f"ERROR: {exc}", file=sys.stderr)
+                    _print_tier_error(exc)
                     sys.exit(1)
-                print(summary.to_string(index=False))
+                print(_with_engine_labels(summary).to_string(index=False))
+                return
+
+            # funnel and topn never take --metric: they always use each
+            # engine's own score and native-referenced DockQ, same poses.
+            if args.plot_type in ("funnel", "topn") and not args.table:
+                _run_rank_audit_cli(args, analysis_df, pair_filter)
                 return
 
             if args.table and not args.metric:
@@ -3016,7 +3858,7 @@ def main(argv=None):
                         output=plot_out,
                     )
                 except ValueError as exc:
-                    print(f"ERROR: {exc}", file=sys.stderr)
+                    _print_tier_error(exc)
                     sys.exit(1)
                 return
 
@@ -3030,6 +3872,18 @@ def main(argv=None):
                     file=sys.stderr,
                 )
                 sys.exit(2)
+
+            # Binder / non-binder analyses need a score every pair has;
+            # refuse reference-based metrics before printing anything else.
+            if args.classify or (args.plot_type == "roc" and not args.table):
+                try:
+                    _require_reference_free(
+                        args.metric,
+                        "Binder / non-binder classification" if args.classify
+                        else "A ROC curve",
+                    )
+                except ValueError as exc:
+                    _cli_error_with_hint(str(exc), args.metric, scores_df)
 
             # ── Mandatory tabular summary ─────────────────────────
             # Always printed before any metric-based output.  Every
@@ -3049,7 +3903,7 @@ def main(argv=None):
                     )
                 except ValueError as exc:
                     _cli_error_with_hint(str(exc), args.metric, scores_df)
-                print(summary.to_string(index=False))
+                print(_with_engine_labels(summary).to_string(index=False))
                 return
 
             # --table: tabular summary only (already printed above)
@@ -3061,7 +3915,7 @@ def main(argv=None):
                     rnk = ranking_table(analysis_df, metric=args.metric)
                 except ValueError as exc:
                     _cli_error_with_hint(str(exc), args.metric, scores_df)
-                print(rnk.to_string(index=False))
+                print(_with_engine_labels(rnk).to_string(index=False))
                 return
 
             # Dispatch by plot type.
@@ -3127,19 +3981,20 @@ def main(argv=None):
                         )
                         sys.exit(2)
                     plot_out = _resolve_plot_output(pt)
-                    fig = model_agreement_scatter(
-                        analysis_df,
-                        metric=args.metric,
-                        model_x=args.models[0],
-                        model_y=args.models[1],
-                        output=plot_out,
-                    )
+                    with _warnings_to_stderr():
+                        fig = model_agreement_scatter(
+                            analysis_df,
+                            metric=args.metric,
+                            model_x=args.models[0],
+                            model_y=args.models[1],
+                            output=plot_out,
+                        )
                     _save_or_show(fig, plot_out)
                     return
 
-                if pt == "ridge":
+                if pt == "strip":
                     plot_out = _resolve_plot_output(pt)
-                    fig = ridge_plot(
+                    fig = strip_plot(
                         analysis_df,
                         metric=args.metric,
                         plot_title=None,
@@ -3154,25 +4009,6 @@ def main(argv=None):
                         analysis_df,
                         metric=args.metric,
                         plot_title=None,
-                        output=plot_out,
-                    )
-                    _save_or_show(fig, plot_out)
-                    return
-
-                if pt == "difference":
-                    if not args.models or len(args.models) != 2:
-                        print(
-                            "ERROR: --plot-type difference requires "
-                            "--models MODEL_A MODEL_B",
-                            file=sys.stderr,
-                        )
-                        sys.exit(2)
-                    plot_out = _resolve_plot_output(pt)
-                    fig = pairwise_difference_plot(
-                        analysis_df,
-                        metric=args.metric,
-                        model_a=args.models[0],
-                        model_b=args.models[1],
                         output=plot_out,
                     )
                     _save_or_show(fig, plot_out)

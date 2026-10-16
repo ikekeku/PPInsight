@@ -261,9 +261,9 @@ Run `ppinsight collect --help` for aggregation options, cluster modes, etc.
 # Violin plot (default) — always prints a tabular summary first
 ppinsight compare data/output/scores/scores.tsv --metric dockq
 
-# Ridge plot — compact density comparison across engines
+# Strip plot — every pose as a point, with a box summary per engine
 ppinsight compare data/output/scores/scores.tsv --metric dockq \
-    --plot-type ridge -o data/output/plots/ridge_dockq.png
+    --plot-type strip -o data/output/plots/strip_dockq.png
 
 # CDF — read off what fraction of poses exceed a threshold
 ppinsight compare data/output/scores/scores.tsv --metric dockq \
@@ -285,12 +285,21 @@ ppinsight compare data/output/scores/scores.tsv --table
 # CAPRI quality classification (high/medium/acceptable/incorrect)
 ppinsight compare data/output/scores/scores.tsv --capri-quality
 ppinsight compare data/output/scores/scores.tsv --plot-type quality_bar \
-    -o data/output/plots/quality.png
+    --pair 2UUY_rec:2UUY_lig -o data/output/plots/quality.png
 
-# Pairwise difference histogram — same metric, same pairs, two engines
-ppinsight compare data/output/scores/scores.tsv --metric dockq \
-    --plot-type difference --models HADDOCK LightDock \
-    -o data/output/plots/difference_haddock_lightdock.png
+# Funnel — rank audit for one target: each engine's own score against
+# DockQ measured against the native structure, for the same poses.
+# Plot the merged file written by 'ppinsight quality'; funnel takes no --metric.
+ppinsight quality data/output/scores/scores.tsv data/input/native.pdb \
+    -o data/output/scores/scores_with_dockq.tsv
+ppinsight compare data/output/scores/scores_with_dockq.tsv \
+    --plot-type funnel -o data/output/plots/funnel.png
+
+# Top-N — same input as funnel: the best DockQ within each engine's top N
+# poses (by its own score), for every N.  Compares engines fairly even when
+# they output very different numbers of poses.  Takes no --metric.
+ppinsight compare data/output/scores/scores_with_dockq.tsv \
+    --plot-type topn -o data/output/plots/topn.png
 
 # Scatter — most useful when many pairs are shared across two engines
 ppinsight compare data/output/scores/scores.tsv --metric dockq \
@@ -311,8 +320,22 @@ Use `ppinsight compare data/output/scores/scores.tsv --guide` for a
 data-aware summary of which plot types and flags work with your specific
 scores file.
 
-The supported CLI plot types are `violin`, `ridge`, `roc`, `scatter`,
-`quality_bar`, `cdf`, and `difference`.
+The supported CLI plot types are `violin`, `strip`, `roc`, `scatter`,
+`quality_bar`, `cdf`, `funnel`, and `topn`.  `funnel` and `topn` are only
+for the native-reference rank audit: they always use each engine's own
+score and DockQ for the same poses, so they do not accept `--metric`.
+`roc` (and `--classify`) needs a score that every pair has, such as an
+engine's own score; DockQ, Fnat and RMSD values are refused there because a
+pair that does not bind has no native structure to compare against.
+
+**Two kinds of DockQ.**  HADDOCK reports its own `dockq` (with `fnat`,
+`irmsd`, `lrmsd`) from its caprieval step.  These are measured against the
+reference HADDOCK was given; PPInsight runs HADDOCK without one, so they
+compare each model with HADDOCK's own best-scoring model, which therefore
+shows DockQ = 1.0.  They are **not** measured against your native complex.
+Plots label them "(HADDOCK caprieval)".  For DockQ against a native
+structure, run `ppinsight quality` and use the `quality_*` metrics, e.g.
+`--metric quality_dockq`.
 
 ### 5. Parse interaction tables & batch-dock
 
@@ -544,8 +567,8 @@ Common setup, plotting, and CAPRI questions are covered in
 
 PPInsight supports three complementary comparison layers:
 
-1. Within-model: use `violin`, `ridge`, and `cdf` on engine-native scores to inspect one engine's pose distribution.
-2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, `scatter`, and `difference` to compare engines on the same protein pair when you have an experimental reference structure for that pair.
+1. Within-model: use `violin`, `strip`, and `cdf` on engine-native scores to inspect one engine's pose distribution.
+2. Cross-model: use DockQ/CAPRI-derived metrics with `quality_bar`, `cdf`, and `scatter` to compare engines on the same protein pair when you have an experimental reference structure for that pair. Use `funnel` to check whether each engine's own score ranks its near-native poses first, and `topn` to compare the best DockQ each engine reaches within its top N poses.
 3. Cross-model, reference-free: use `ppinsight consrank --pool` to rank poses from several engines by contact-map consensus when no native structure exists.
 
 ---
@@ -661,10 +684,11 @@ See [LICENSE](LICENSE).
 ### CAPRI quality classification thresholds
 
 The `--capri-quality` flag and `quality_bar` plot classify docked
-predictions into four tiers (high / medium / acceptable / incorrect)
-using published community thresholds:
+predictions into four tiers (high / medium / acceptable / incorrect) from
+each pose's DockQ (high ≥ 0.80, medium ≥ 0.49, acceptable ≥ 0.23), using
+published community thresholds:
 
 | Source | DOI | Used for |
 |--------|-----|----------|
-| Lensink MF, Velankar S, Wodak SJ (2016). *Proteins* 84(S1):323-348 | [10.1002/prot.25007](https://doi.org/10.1002/prot.25007) | fnat + Lrms + irms thresholds (Table 3) |
-| Basu S, Wallner B (2016). *PLoS ONE* 11(8):e0161879 | [10.1371/journal.pone.0161879](https://doi.org/10.1371/journal.pone.0161879) | DockQ fallback thresholds |
+| Basu S, Wallner B (2016). *PLoS ONE* 11(8):e0161879 | [10.1371/journal.pone.0161879](https://doi.org/10.1371/journal.pone.0161879) | DockQ tier thresholds |
+| Lensink MF, Velankar S, Wodak SJ (2016). *Proteins* 84(S1):323-348 | [10.1002/prot.25007](https://doi.org/10.1002/prot.25007) | The CAPRI tiers that DockQ's thresholds reproduce |

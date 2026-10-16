@@ -22,7 +22,7 @@ This project builds a tool to benchmark protein–protein interaction (PPI) pred
 
 - **Model Execution Outputs:** The PPI models will output standardized artifacts and metrics to support cross-model comparison. The format in which each predictor organizes their output data may differ between models. Roughly, each model will return: DockQ score, RMSD, confidence metrics, protein IDs, predicted complex structures (PDB/mmCIF), and the FASTA file of the aligned protein sequences.
 
-- **Model Execution Outputs:** The tool generates on-screen and exportable visualizations through `ppinsight compare`. Supported compare plot types are `violin`, `ridge`, `roc`, `scatter`, `quality_bar`, `difference`, and `cdf` (with prerequisite checks where required). The command also prints tabular summaries used to interpret the plots.
+- **Model Execution Outputs:** The tool generates on-screen and exportable visualizations through `ppinsight compare`. Supported compare plot types are `violin`, `strip`, `roc`, `scatter`, `quality_bar`, `cdf`, `funnel`, and `topn` (with prerequisite checks where required). `funnel` and `topn` are reserved for the native-reference rank audit: each engine's own score against DockQ for the same poses, and the best DockQ within each engine's top N poses. The command also prints tabular summaries used to interpret the plots.
 
 ## Use Case 1 - Compare models on one protein pair
 - **Objective:** Determine which PPI model gives the best score for a given pair (e.g., proteinA-proteinB).

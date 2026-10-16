@@ -525,18 +525,27 @@ def evaluate_scores_dataframe(
     return pd.DataFrame(rows)
 
 
-def summarize_engine_ranking(
+def rank_engine_poses_by_dockq(
     scores_df: pd.DataFrame,
     quality_df: pd.DataFrame,
-    *,
-    top_n: int = 20,
 ) -> pd.DataFrame:
-    """Summarize whether each engine generated and ranked native-like poses.
+    """Align each engine's own pose ranking with DockQ for the same pose IDs.
 
-    The result compares each engine's native score ordering with explicit DockQ
-    values for the same pose IDs. It answers whether an acceptable pose was
-    generated and, when one exists, where the best-DockQ pose ranked according
-    to the engine's own score.
+    This is the shared core of the native-reference rank audit
+    (:func:`summarize_engine_ranking`) and the funnel plot
+    (:func:`ppinsight.visualizer.funnel_plot`).  Each engine is ranked by its
+    own primary score separately for every protein pair (and run, when both
+    tables carry ``run_id``); DockQ values are joined on ``pose_id`` plus
+    those keys, so a pose ID such as ``rigidbody_10`` reused by two pairs can
+    never pick up the other pair's DockQ.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per pose with columns ``model``, ``proteinA``, ``proteinB``,
+        ``run_id`` (empty when not available), ``native_score_type``,
+        ``pose_id``, ``native_score``, ``engine_rank``, ``poses_ranked``,
+        and ``DockQ``.  Poses without a matching DockQ value are dropped.
     """
     score_model_col = find_column(scores_df.columns, "model")
     score_type_col = find_column(scores_df.columns, "score_type")
@@ -568,9 +577,29 @@ def summarize_engine_ranking(
     quality = quality_df.copy()
     quality["DockQ"] = pd.to_numeric(quality["DockQ"], errors="coerce")
     quality = quality.dropna(subset=["DockQ"])
-    rows: list[dict[str, Any]] = []
+    frames: list[pd.DataFrame] = []
 
-    for engine, engine_scores in scores_df.groupby(score_model_col):
+    # Pair (and run) columns present in both tables become join keys.
+    scores = scores_df.copy()
+    context_keys: list[str] = []
+    for key, aliases in (
+        ("proteinA", ("proteinA", "proteina")),
+        ("proteinB", ("proteinB", "proteinb")),
+        ("run_id", ("run_id",)),
+    ):
+        score_col = find_column(scores.columns, *aliases)
+        quality_col = find_column(quality.columns, *aliases)
+        if score_col and quality_col:
+            scores[f"_ctx_{key}"] = scores[score_col].fillna("").astype(str)
+            quality[f"_ctx_{key}"] = quality[quality_col].fillna("").astype(str)
+            context_keys.append(f"_ctx_{key}")
+
+    for group_key, engine_scores in scores.groupby(
+        [score_model_col, *context_keys], sort=True,
+    ):
+        group_key = group_key if isinstance(group_key, tuple) else (group_key,)
+        engine = group_key[0]
+        context = dict(zip(context_keys, group_key[1:], strict=True))
         engine_name = str(engine)
         preferred_metric = preferred_metrics.get(engine_name.lower())
         available_metrics = engine_scores[score_type_col].astype(str).str.lower()
@@ -603,10 +632,14 @@ def summarize_engine_ranking(
         ).reset_index(drop=True)
         ranked["engine_rank"] = ranked.index + 1
 
-        engine_quality = quality[
-            quality[quality_model_col].astype(str).str.lower()
-            == engine_name.lower()
-        ][[quality_pose_col, "DockQ"]].drop_duplicates(quality_pose_col)
+        in_context = (
+            quality[quality_model_col].astype(str).str.lower() == engine_name.lower()
+        )
+        for key, value in context.items():
+            in_context &= quality[key] == value
+        engine_quality = quality[in_context][
+            [quality_pose_col, "DockQ"]
+        ].drop_duplicates(quality_pose_col)
         merged = ranked.merge(
             engine_quality,
             left_on=score_pose_col,
@@ -616,15 +649,60 @@ def summarize_engine_ranking(
         if merged.empty:
             continue
 
+        frames.append(pd.DataFrame({
+            "model": engine_name,
+            "proteinA": context.get("_ctx_proteinA", ""),
+            "proteinB": context.get("_ctx_proteinB", ""),
+            "run_id": context.get("_ctx_run_id", ""),
+            "native_score_type": metric,
+            "pose_id": merged[score_pose_col].astype(str),
+            "native_score": merged[score_value_col].astype(float),
+            "engine_rank": merged["engine_rank"].astype(int),
+            "poses_ranked": len(ranked),
+            "DockQ": merged["DockQ"].astype(float),
+        }))
+
+    columns = [
+        "model", "proteinA", "proteinB", "run_id", "native_score_type",
+        "pose_id", "native_score", "engine_rank", "poses_ranked", "DockQ",
+    ]
+    if not frames:
+        return pd.DataFrame(columns=columns)
+    return pd.concat(frames, ignore_index=True)[columns]
+
+
+def summarize_engine_ranking(
+    scores_df: pd.DataFrame,
+    quality_df: pd.DataFrame,
+    *,
+    top_n: int = 20,
+) -> pd.DataFrame:
+    """Summarize whether each engine generated and ranked native-like poses.
+
+    The result compares each engine's native score ordering with explicit DockQ
+    values for the same pose IDs. It answers whether an acceptable pose was
+    generated and, when one exists, where the best-DockQ pose ranked according
+    to the engine's own score.
+    """
+    ranked = rank_engine_poses_by_dockq(scores_df, quality_df)
+    # One summary row per engine, protein pair and run; context columns that
+    # are empty for every row are left out of the table.
+    context = [
+        col for col in ("proteinA", "proteinB", "run_id")
+        if ranked[col].astype(str).str.strip().ne("").any()
+    ]
+    rows: list[dict[str, Any]] = []
+    for _, merged in ranked.groupby(["model", *context], sort=False):
         best_row = merged.loc[merged["DockQ"].idxmax()]
         top_quality = merged[merged["engine_rank"] <= top_n]
         rows.append({
-            "model": engine_name,
-            "native_score_type": metric,
-            "poses_ranked": len(ranked),
+            "model": best_row["model"],
+            **{col: best_row[col] for col in context},
+            "native_score_type": best_row["native_score_type"],
+            "poses_ranked": int(best_row["poses_ranked"]),
             "poses_evaluated": len(merged),
             "best_dockq": float(best_row["DockQ"]),
-            "best_dockq_pose_id": str(best_row[score_pose_col]),
+            "best_dockq_pose_id": str(best_row["pose_id"]),
             "engine_rank_of_best_dockq": int(best_row["engine_rank"]),
             "best_dockq_in_top_n": float(top_quality["DockQ"].max()),
             "acceptable_pose_generated": bool((merged["DockQ"] >= 0.23).any()),

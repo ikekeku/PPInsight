@@ -407,6 +407,31 @@ class TestEngineRankingSummary:
         assert row["best_dockq_in_top_n"] == pytest.approx(0.05)
         assert bool(row["acceptable_pose_generated"])
 
+    def test_pose_ids_reused_across_pairs_stay_separate(self):
+        scores = pd.DataFrame({
+            "model": ["haddock"] * 4,
+            "score_type": ["score"] * 4,
+            "score_value": [-90.0, -50.0, -80.0, -40.0],
+            "proteinA": ["A", "A", "C", "C"],
+            "proteinB": ["B", "B", "D", "D"],
+            "pose_id": ["rigidbody_1", "rigidbody_2"] * 2,
+        })
+        quality = pd.DataFrame({
+            "model": ["haddock"] * 4,
+            "proteinA": ["A", "A", "C", "C"],
+            "proteinB": ["B", "B", "D", "D"],
+            "pose_id": ["rigidbody_1", "rigidbody_2"] * 2,
+            "DockQ": [0.9, 0.1, 0.05, 0.6],
+        })
+
+        result = summarize_engine_ranking(scores, quality).set_index("proteinA")
+
+        assert len(result) == 2
+        assert result.loc["A", "best_dockq"] == pytest.approx(0.9)
+        assert result.loc["A", "engine_rank_of_best_dockq"] == 1
+        assert result.loc["C", "best_dockq"] == pytest.approx(0.6)
+        assert result.loc["C", "engine_rank_of_best_dockq"] == 2
+
 
 # ---------------------------------------------------------------------------
 # _find_model_files
