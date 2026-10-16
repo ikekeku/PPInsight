@@ -508,6 +508,12 @@ class TestBatchDock:
         assert kw["tolerance"] == 25
         assert kw["skip_flexref"] is True
         assert kw["skip_emref"] is True
+        # No image given: the HADDOCK runner keeps its own default.
+        assert "container_image" not in kw
+
+        args.haddock_container_image = "ghcr.io/haddocking/haddock3:2026.8.0"
+        kw = batch_dock._engine_kwargs_from_args(args)["haddock"]
+        assert kw["container_image"] == "ghcr.io/haddocking/haddock3:2026.8.0"
 
     def test_screening_preset_uses_reduced_end_to_end_values(self):
         from ppinsight import batch_dock

@@ -645,6 +645,17 @@ def _engine_kwargs_from_args(args) -> dict[str, dict]:
         or haddock_skip_refinement
     )
 
+    haddock_kwargs = {
+        "ncores": args.cores,
+        "sampling": args.haddock_sampling,
+        "select_top": args.haddock_select_top,
+        "tolerance": args.haddock_tolerance,
+        "skip_flexref": haddock_skip_flexref,
+        "skip_emref": haddock_skip_emref,
+    }
+    if getattr(args, "haddock_container_image", None):
+        haddock_kwargs["container_image"] = args.haddock_container_image
+
     return {
         "lightdock": {
             "steps": args.lightdock_steps,
@@ -655,14 +666,7 @@ def _engine_kwargs_from_args(args) -> dict[str, dict]:
             "scoring": args.lightdock_scoring,
             "auto_clean_pdb": args.lightdock_auto_clean_pdb,
         },
-        "haddock": {
-            "ncores": args.cores,
-            "sampling": args.haddock_sampling,
-            "select_top": args.haddock_select_top,
-            "tolerance": args.haddock_tolerance,
-            "skip_flexref": haddock_skip_flexref,
-            "skip_emref": haddock_skip_emref,
-        },
+        "haddock": haddock_kwargs,
         "rosetta": {
             "n_runs": args.rosetta_n_runs,
             "top_n": args.rosetta_top_n,
@@ -920,6 +924,19 @@ def main(argv=None):
         help=(
             "HADDOCK module output-fault tolerance percentage for rigidbody, "
             "flexref, and emref (default: 5)."
+        ),
+    )
+    haddock_group.add_argument(
+        "--haddock-container-image",
+        default=None,
+        metavar="IMAGE",
+        help=(
+            "Container image used when HADDOCK runs through Docker or "
+            "Apptainer, e.g. 'ghcr.io/haddocking/haddock3:2026.8.0' or a "
+            "digest such as 'ghcr.io/haddocking/haddock3@sha256:...'.  Set "
+            "this for benchmark runs you need to reproduce: without it the "
+            "image tag is 'latest', which points to whatever HADDOCK version "
+            "was released most recently."
         ),
     )
     haddock_group.add_argument(

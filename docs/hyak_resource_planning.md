@@ -7,9 +7,14 @@ size, input quality, queue conditions, and engine versions all affect runtime.
 
 ## What a job requests
 
-The supplied VEGFA-VEGFR Slurm script requests one node, 24 CPU cores, 32 GB
-of memory, and up to three days of wall time.
+The supplied VEGFA-VEGFR Slurm scripts dock one receptor each:
+`scripts/hyak_run_vegfa_vegfr1.slurm` and `scripts/hyak_run_vegfa_vegfr2.slurm`.
+Each job requests one node, 24 CPU cores, 40 GB of memory, and up to three
+days of wall time.
 
+- None of the three docking engines uses a GPU, so the scripts request CPU
+  partitions only. They list several (e.g., `cpu-g2,compute,compute-hugemem`),
+  and Slurm starts each job on whichever one can run it first.
 - LightDock and HADDOCK receive the requested core count.
 - The current Rosetta batch runner executes trajectories serially, so it does
   not use all 24 requested cores during its phase.
@@ -30,9 +35,14 @@ Slurm script:
 | Total | Engines run sequentially | about 18 h 37 m | about 13 GB |
 
 The job's measured peak resident memory was about 25 GB. A 32 GB request was
-enough for this run, but it leaves limited headroom. Request 40 GB or more when
-the partition allows it if the inputs are larger or you want more protection
-from memory-related failure.
+enough for this run, but it leaves limited headroom, so the script now
+requests 40 GB.
+
+The current script runs Rosetta at PPInsight's analysis-grade default of 5,000
+trajectories instead of the 1,000 measured above. Rosetta trajectories run one
+after another, so expect roughly five times the Rosetta time: about 22 hours
+for VEGFR1 and, judging from the 8.7 hours VEGFR2 took for 1,000 trajectories,
+about 43 hours for VEGFR2. That is why each pair is its own job.
 
 ## Choosing wall time
 
@@ -95,7 +105,11 @@ the job log and prefer either:
 1. the tested `haddock3` executable in the activated Hyak environment, or
 2. a container image pinned to a specific verified version or digest.
 
-Avoid `latest` for benchmark runs that you expect to reproduce later.
+Avoid `latest` for benchmark runs that you expect to reproduce later: it moved
+from 2026.8.0 (the first VEGFR1 run) to 2026.10.0 within days.
+`ppinsight batch --haddock-container-image IMAGE` selects the image, and the
+VEGFA-VEGFR scripts pin 2026.8.0 by digest and print `haddock3 --version` in
+their logs.
 
 ## Interpreting partial runs
 

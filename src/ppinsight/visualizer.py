@@ -2305,7 +2305,7 @@ def funnel_plot(
         poses_ranked = int(sub["poses_ranked"].iloc[0])
         ax.set_title(
             f"{_engine_label(model)}\n"
-            f"n = {len(sub)} of {poses_ranked} ranked poses\n"
+            f"n = {len(sub):,} of {poses_ranked:,} ranked poses\n"
             f"best DockQ {best['DockQ']:.2f} at engine rank "
             f"{int(best['engine_rank'])}",
             fontsize=FACET_TITLE_SIZE - 1,
@@ -2824,10 +2824,13 @@ def _annotate_plot_source(
     n_obs = int(summary_df["count"].sum())
     note = (
         f"metric: {metric}  |  {n_models} engine(s)  |  "
-        f"{n_obs} observations  |  see tabular summary"
+        f"{n_obs:,} observations  |  see tabular summary"
     )
+    # Sit below everything already drawn (x-labels, below-plot legends).
+    renderer = fig.canvas.get_renderer()
+    lowest = fig.get_tightbbox(renderer).y0 / fig.get_figheight()
     fig.text(
-        0.5, -0.01, note,
+        0.5, min(-0.01, lowest - 0.02), note,
         ha="center", va="top", fontsize=7, fontstyle="italic",
         color="grey",
     )
