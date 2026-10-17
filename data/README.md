@@ -142,7 +142,7 @@ ppinsight collect \
 #    (repeat collection per pair as needed, then combine score files if desired)
 
 # 6. Compare / classify / plot
-ppinsight compare data/output/scores/scores.tsv -m dockq --classify
+ppinsight compare data/output/scores/scores.tsv -m score --classify
 ppinsight compare data/output/scores/scores.tsv -m score \
     --plot-type roc -o data/output/plots/roc.png
 ```

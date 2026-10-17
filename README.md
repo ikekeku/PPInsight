@@ -180,10 +180,9 @@ ppinsight haddock --help
 ppinsight rosetta --help
 ```
 
-### 2b. Comfortable Ab-initio Settings (Cited, All Docking)
+### 2b. Recommended sampling for ab-initio docking
 
-For ab-initio docking (little or no prior interface information), practical
-"comfortable" ranges are:
+For ab-initio docking (no prior interface information), use these ranges:
 
 | Engine | Quick Validation | Analysis-grade Default | Heavy/Production |
 |---|---:|---:|---:|
@@ -191,19 +190,10 @@ For ab-initio docking (little or no prior interface information), practical
 | HADDOCK3 rigidbody | `sampling=100-1000` (1000 is minimum defensible analysis-level global sampling), `seletop=50-200` | `sampling=10000`, `seletop=400` | `sampling>=10000`, often with intermediate clustering/selection |
 | RosettaDock (global) | `n_runs=100-1000` | `n_runs=5000` | `n_runs=10000-100000` |
 
-These ranges reflect published engine guidance and PPInsight defaults designed
-for more meaningful ab-initio analysis while staying runnable on workstation
-hardware [1-6].
-
-The vendor examples do not prescribe one universal setting for every protein
-pair. HADDOCK's guided protein-protein `*-full.cfg` example uses `sampling=1000`
-and `seletop=200`, while its ab-initio guide explicitly recommends increasing
-rigid-body sampling when interface information is unavailable. PPInsight's
-`sampling=10000` and `seletop=400` batch defaults are that intentionally more
-extensive ab-initio choice. Conversely, Rosetta recommends 10,000–100,000
-decoys for a fully global production search; PPInsight's default 5,000 is a
-workstation-oriented compromise, not a substitute for a larger published
-production campaign.
+The analysis-grade column is PPInsight's batch default [1-6]. HADDOCK's guide
+recommends more rigid-body sampling when no interface information is available,
+hence `sampling=10000`. Rosetta recommends 10,000–100,000 decoys for a full
+global search; PPInsight's 5,000 is a workstation-sized compromise.
 
 References:
 
@@ -383,7 +373,7 @@ Useful batch flags when you need tighter control:
 
 - `--cores N`: set CPU cores for supported runners.
 - `--preflight`: validate inputs and engine prerequisites without launching docking.
-- `--resume`: skip engine runs already marked successful and periodically save progress to disk; reuse the same `-o` results path when resuming. A successful retry replaces its prior failed manifest row.
+- `--resume`: skip engine runs already marked successful and save progress after each engine run; reuse the same `-o` results path when resuming. A successful retry replaces its prior failed manifest row.
 - `--clean-failed`: with `--resume`, remove a safely recorded failed directory under `--output-root` before retrying it.
 - `--screening`: apply the reduced end-to-end preset described below; explicit engine flags override individual preset values.
 - `--output-root DIR`: put engine runs and the default batch results table under one root.
@@ -438,8 +428,7 @@ ppinsight batch data/input/pairs/pairs.csv \
 Any explicit engine flag overrides its screening value. For example,
 `--screening --haddock-sampling 2000 --rosetta-n-runs 200` keeps the screening
 profile but raises sampling for those two engines. `--resume` skips only rows
-already marked `ok` in the specified results table and periodically persists
-newly completed engine results to disk.
+already marked `ok` in the specified results table.
 
 ### Preflight, retry, and cleanup
 
@@ -456,10 +445,9 @@ ppinsight batch data/input/pairs/pairs.csv \
     -o data/output/scores/preflight_results.csv
 ```
 
-Batch manifests now include `error_type`, `error_message`, and `log_path` for
-new failures. This preserves diagnostics while retaining the failed `output_dir`
-for deliberate cleanup. To retry only failed jobs while removing their recorded
-partial directories first, reuse the same manifest:
+Failed runs are recorded in the manifest with `error_type`, `error_message`,
+and `log_path`, and their `output_dir` is kept for inspection. To retry only
+failed runs, removing their partial directories first, reuse the same manifest:
 
 ```bash
 ppinsight batch data/input/pairs/pairs.csv \
@@ -500,9 +488,8 @@ ppinsight quality data/output/lightdock_runs/2UUY_rec_vs_2UUY_lig/ native.pdb \
     -o quality.tsv
 ```
 
-> Requires the optional `quality` extra. From this repo checkout, install it with
-> `pip install -e '.[quality]'`. If you are installing by package name in `zsh`, quote
-> the brackets: `pip install 'ppinsight[quality]'`.
+> Requires the optional `quality` extra: `pip install -e '.[quality]'` from the
+> repo root (keep the quotes in `zsh`).
 
 If your scores file came from `ppinsight collect`, `ppinsight quality` reads
 each pose from its `output_path` value and appends DockQ/CAPRI evaluation rows
@@ -554,9 +541,8 @@ It uses pre-computed docking outputs from all three engines, so no external
 tools are required.  Start there to see every `ppinsight compare` plot type
 and the full collect → compare → classify workflow.
 
-Additional walkthrough assets live under [`examples/`](examples/) (including
-fabricated plotting galleries and engine-specific sample outputs). For common
-troubleshooting questions, see [`docs/FAQ.md`](docs/FAQ.md).
+Example output for every plot type is in
+[`examples/example_plots/`](examples/example_plots/).
 
 ## FAQ
 
@@ -596,7 +582,7 @@ data/                   # User I/O: input PDBs & pairs → output docking runs
 tests/                  # pytest test suite
 tutorials/              # End-to-end walkthrough with pre-built scores & sample plots
 examples/               # Per-engine sample I/O and test fixtures
-docs/                   # Specs, use cases, and slide deck
+docs/                   # FAQ, guides, specs, and use cases
 ```
 
 ### User input & output directories
@@ -647,7 +633,7 @@ for the full layout and pairs file format.
 ### Notes
 
 - For HPC runs, pass an absolute `--output-root` to place outputs on a
-  shared filesystem (e.g. `/gscratch/...`).
+  shared or scratch filesystem.
 - `--output-root` controls where engine run directories are created in
     batch mode; it does not set the batch results table path (use `-o`).
 - External docking tools must be installed separately for the engines
@@ -677,7 +663,7 @@ See [LICENSE](LICENSE).
 - [Biopython Entrez guide](https://biopython.org/wiki/Entrez)
 - [RCSB API docs](https://data.rcsb.org/)
 - [DockQ](https://github.com/bjornwallner/DockQ)
-- [HADDOCK docs](https://wenmr.science.uu.nl/haddock2.4/)
+- [HADDOCK3 docs](https://www.bonvinlab.org/haddock3-user-manual/)
 - [LightDock](https://github.com/lightdock/lightdock)
 - [Rosetta / PyRosetta](https://rosettacommons.org)
 

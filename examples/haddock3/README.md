@@ -1,4 +1,4 @@
-This folder contains sample output from the HADDOCK3 tutorial (https://github.com/haddocking/haddock3/blob/main/docs/USAGE.md) for the purpose of buildling Task #3 of PPInsight.
+This folder contains sample output from the HADDOCK3 tutorial (https://github.com/haddocking/haddock3/blob/main/docs/USAGE.md). PPInsight's tutorial uses it as example HADDOCK output.
 'run1-test' is a result of running the following commands after correctly installing HADDOCK3 (refer to USAGE.md for additional help):
 ```bash
 cd examples/docking-protein-protein

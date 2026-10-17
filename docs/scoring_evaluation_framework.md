@@ -1,7 +1,7 @@
 # Scoring Evaluation & Cross-Model Comparison Framework
 
-> **Status**: Design document — directly usable for implementation.
-> **Depends on**: `METRIC_METADATA` (visualizer.py), `quality.py`, `normalize_scores()`
+What each engine's score means, which thresholds exist, and how PPInsight
+compares engines.
 
 ---
 
@@ -66,7 +66,7 @@ All three engines can be evaluated post-hoc via the **DockQ** tool, which is eng
 | `quality_irmsd` | Lower is better (Å) | Interface RMSD |
 | `quality_lrmsd` | Lower is better (Å) | Ligand RMSD |
 
-PPInsight already implements this via `ppinsight.quality.evaluate_complex()`.
+`ppinsight quality` computes these.
 
 ---
 
@@ -83,9 +83,10 @@ These are the only universally accepted, publication-defined thresholds across d
 | **Acceptable** | ≥ 0.23 | ≥ 0.10 | ≤ 4.0 | ≤ 10.0 |
 | **Incorrect** | < 0.23 | < 0.10 | > 4.0 | > 10.0 |
 
-**Source**: Basu & Wallner (2016), *PLoS ONE* 11(8), e0161879. Already implemented in PPInsight at `quality.py:CAPRI_THRESHOLDS`.
+**Source**: Basu & Wallner (2016), *PLoS ONE* 11(8), e0161879.
 
-The full CAPRI protocol uses Fnat + L-RMSD + I-RMSD jointly (as in `visualizer.capri_quality()`). DockQ is a single scalar that approximates this multi-metric classification.
+The full CAPRI protocol uses Fnat, L-RMSD and I-RMSD jointly; DockQ
+approximates it with one number. PPInsight assigns tiers from DockQ alone.
 
 ### 2.2 Engine-Native Scores — No Universal Thresholds ❌
 
@@ -98,11 +99,11 @@ The full CAPRI protocol uses Fnat + L-RMSD + I-RMSD jointly (as in `visualizer.c
 **Rosetta `I_sc`**:
 > No formal thresholds are published. The RosettaDock documentation provides only a rough empirical guideline: *"Typical values for I_sc of good decoys are in the range of −5 to −10."* This is not a formal classification system and varies with system size, scoring function version (ref2015 vs. earlier), and prepacking quality. Rosetta scores are in REU (not kcal/mol) and are not calibrated for absolute binding affinity prediction.
 
-### 2.3 Alternative Scoring Metrics That *Do* Offer Thresholds
+### 2.3 With and Without a Native Structure
 
-Since engine-native scores lack thresholds, the only path to universal binning is through **DockQ/CAPRI metrics**, which are already implemented in PPInsight. For users who have a native reference structure, this is the recommended path.
-
-For users who **lack** a native reference structure (the common real-world case), the scoring metrics can only be used for **within-run relative ranking** — there is no scientifically defensible way to assign absolute quality labels.
+With a native structure, use DockQ/CAPRI to label pose quality. Without one,
+engine scores support only **within-run ranking**; there is no defensible way
+to assign quality labels.
 
 ### 2.4 Native-Reference Rank Audit
 
@@ -140,15 +141,10 @@ Engine-native scores are on incomparable scales:
 
 Comparing raw values across engines is meaningless.
 
-### 3.2 Recommended Approach: Proportional (0–100%) Quality Classification
+### 3.2 With a Native Reference: CAPRI Tier Proportions
 
-**When a native reference is available**: Use DockQ/CAPRI classification, then compare at the **classification level**:
-
-$$\text{Proportion}_{\text{category}} = \frac{N_{\text{models in category}}}{N_{\text{total models}}} \times 100\%$$
-
-For each engine, compute the percentage of models in each CAPRI bin (high / medium / acceptable / incorrect). This allows direct cross-engine comparison as proportions.
-
-**Example**: "LightDock produced 15% high-quality models vs. HADDOCK's 22% vs. Rosetta's 18%."
+Compare the percentage of each engine's poses in each CAPRI tier (high /
+medium / acceptable / incorrect), as the `quality_bar` plot does.
 
 ### 3.3 When No Native Reference Is Available
 
@@ -171,65 +167,9 @@ This preserves ordering within each engine and places all scores on a common [0,
 
 ---
 
-## 4. Visualization Design
+## 4. Key Interpretation Notes
 
-### 4.1 Visualization A — Normalized Stacked Bar Chart (CAPRI Proportions)
-
-**Purpose**: Compare the distribution of model quality across engines at a glance.
-
-**Specification**:
-
-| Element | Detail |
-|---|---|
-| **x-axis** | Engine name (one bar per engine) |
-| **y-axis** | Proportion (0–100%) |
-| **Segments** | 4 stacked segments per bar: high (green), medium (gold), acceptable (orange), incorrect (red) |
-| **Annotation** | Total N (number of models) printed above each bar |
-| **Data source** | DockQ scores → `classify_capri()` → count per category → proportion |
-| **Requires** | Native reference structure |
-
-**Implementation notes**:
-- This is an extension of the existing `quality_bar_chart()` in `visualizer.py`.
-- The existing function already plots CAPRI proportions per model. The new version groups by engine when multiple engines are present in a combined DataFrame.
-- Color palette: use the existing `CAPRI_COLORS` or define a consistent 4-color mapping.
-
-**Pseudocode sketch**:
-```
-for each engine:
-    counts = df[df.model == engine].capri_quality.value_counts()
-    proportions = counts / counts.sum()
-    plot stacked bar
-annotate total N above each bar
-```
-
-### 4.2 Visualization B — Cumulative Distribution Function (CDF) Plot
-
-**Purpose**: Compare how scores (or DockQ values) distribute across engines. The CDF reveals not just averages but the full shape — are there a few excellent models, or a broad plateau of mediocre ones?
-
-**Specification**:
-
-| Element | Detail |
-|---|---|
-| **x-axis** | DockQ score (0–1) — or normalized engine-native score |
-| **y-axis** | Cumulative proportion (0–1) |
-| **Lines** | One line per engine, different color |
-| **Reference lines** | Vertical dashed lines at DockQ = 0.23, 0.49, 0.80 (CAPRI thresholds) |
-| **Legend** | Engine name + total N |
-| **Requires** | DockQ scores (with native), or rank-normalized scores (without native) |
-
-**Implementation notes**:
-- Use `numpy.sort()` + `numpy.arange()` / `len` for empirical CDF.
-- Or use `seaborn.ecdfplot()` for a one-liner.
-- When plotting DockQ, the CAPRI threshold lines provide interpretive anchors.
-- When plotting rank-normalized scores (no native), omit the threshold lines since the axis is not DockQ.
-
-**Interpretation**: A CDF curve that rises steeply early (left side) means most models are low quality. A curve that stays low until the right side means the engine found many high-quality models. The engine whose CDF curve is furthest to the right "wins."
-
----
-
-## 5. Key Interpretation Notes
-
-### 5.1 Engine Scores ≠ Binding Affinity
+### 4.1 Engine Scores ≠ Binding Affinity
 
 None of the three engine-native scores (luciferin, HADDOCK score, Rosetta I_sc) are calibrated predictions of binding affinity (ΔG). They are **internal ranking functions** optimized for each engine's search algorithm:
 - LightDock luciferin drives the GSO swarm dynamics.
@@ -238,27 +178,25 @@ None of the three engine-native scores (luciferin, HADDOCK score, Rosetta I_sc) 
 
 Comparing absolute values across engines is not meaningful.
 
-### 5.2 Within-Run Ranking Is Valid; Cross-Run Comparison Is Not
+### 4.2 Within-Run Ranking Is Valid; Cross-Run Comparison Is Not
 
 All three engines are designed so that **better-scoring models within a single run for a single target** are more likely to be near-native. This is their intended use. Comparing an I_sc from one target to an I_sc from a different target, or comparing an I_sc to a HADDOCK score, is not supported by the scoring functions.
 
-### 5.3 DockQ/CAPRI Is the Common Currency
+### 4.3 DockQ/CAPRI Is the Common Currency
 
 The only scientifically defensible cross-engine comparison uses DockQ/CAPRI, which:
 - Is computed independently from any engine's scoring function.
 - Requires a known native structure (the "ground truth").
 - Has published, well-accepted thresholds (Basu & Wallner 2016).
 
-PPInsight already implements this via `quality.py` and `visualizer.capri_quality()`.
+### 4.4 The "No Native" Case
 
-### 5.4 The "No Native" Case
-
-In real-world use, users typically do **not** have a native structure (that's why they're docking!). In this case:
+Without a native structure:
 - Engine-native scores are used for relative ranking only.
-- Rank normalization can place scores on a common scale for visual comparison.
-- **No quality labels should be assigned.** The stacked bar chart (§4.1) is not applicable; only the CDF plot (§4.2) with rank-normalized scores is valid.
+- Rank normalization can place scores on a common scale for visual comparison (for example, a CDF).
+- **No quality labels should be assigned**, so `quality_bar` does not apply.
 
-### 5.5 Score Directions Are Non-Negotiable
+### 4.5 Score Directions
 
 `METRIC_METADATA` in `visualizer.py` is the single source of truth for score directions. The `normalize_scores()` function uses `higher_is_better` to flip lower-is-better metrics before normalization. Any new metric must be registered in `METRIC_METADATA` with its correct direction.
 

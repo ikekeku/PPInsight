@@ -20,15 +20,14 @@ Python ≥ 3.11.
 
 ### How do I install PPInsight?
 
+PPInsight is installed from this repository, not PyPI. From the repo root:
+
 ```bash
-# Core install
-pip install ppinsight
-
-# With DockQ quality assessment
-pip install "ppinsight[quality]"
-
-# Everything
-pip install "ppinsight[quality,dev]"
+bash setup.sh                  # conda env, PyRosetta, and PPInsight
+# or, inside an existing environment:
+pip install -e .               # core
+pip install -e ".[quality]"    # with DockQ quality assessment
+pip install -e ".[quality,dev]"  # everything
 ```
 
 ### Does `ppinsight fetch` accept gene names like `VEGFA`?
@@ -41,6 +40,16 @@ Yes. `ppinsight fetch` accepts:
 
 Name-based inputs are resolved against reviewed human UniProt records
 (`organism_id=9606`) before sequence/PDB download.
+
+### Which PDB entry did `ppinsight fetch` download?
+
+The first entry UniProt lists for that protein, saved under the name you typed
+(for example `P15692.pdb`). That entry may be a complex with other proteins,
+and it is not necessarily the complex with your docking partner. Check it:
+
+```bash
+grep -m1 '^HEADER' data/input/P15692.pdb
+```
 
 ### What do `--fasta FILE` and `--csv FILE` write in `ppinsight fetch`?
 
@@ -83,6 +92,18 @@ specific protein partner named in your pair file. Auto-filtering keeps the
 input aligned with that intent and avoids docking unrelated co-crystallized
 chains by accident.
 
+### Can PPInsight benchmark a complex with several chains, such as a 2:2 dimer?
+
+Not as a full assembly. Each run docks two partners, and the HADDOCK adapter
+merges each partner's chains into one. DockQ therefore measures a single
+receptor–ligand interface, so report results as single-interface benchmarks.
+
+### HADDOCK fails with "Bad CPU type in executable"
+
+HADDOCK's CNS binary was built for a different CPU than yours (for example, an
+arm64 binary from conda on an Intel Mac). Run HADDOCK on Linux x86_64, or in
+its container with `--container docker` or `--container apptainer`.
+
 ---
 
 ## CAPRI Quality Assessment
@@ -121,8 +142,7 @@ DockQ alone keeps every plot on one scale.  DockQ measured against your
 native (`quality_dockq`) is used when a pose has it; HADDOCK's own `dockq`
 only when it does not.
 
-**Non-negotiable:** `quality_bar_chart` and `capri_summary_table` require
-DockQ rows.  Passing engine-only scores (e.g. HADDOCK energy, Rosetta
+`quality_bar_chart` and `capri_summary_table` require DockQ rows.  Passing engine-only scores (e.g. HADDOCK energy, Rosetta
 total_score) raises a `ValueError`.  This is intentional — CAPRI tiers are
 only meaningful when evaluated against a reference structure.
 `quality_bar_chart` also shows one protein pair at a time; use `--pair` when
@@ -152,7 +172,7 @@ poses that were classified.
 ### DockQ is not installed — how do I get quality scores?
 
 ```bash
-pip install "ppinsight[quality]"
+pip install -e ".[quality]"
 # or:
 pip install "dockq @ git+https://github.com/nrontsis/DockQ.git@update-to-numpy>2"
 ```
@@ -244,10 +264,8 @@ hundred poses per engine.  Nothing is smoothed, so a handful of near-native
 poses stays visible.  Use `violin` for large pose ensembles, where
 thousands of points would merge into a solid block.
 
-Violin outlines are smoothed with 0.75 × seaborn's default bandwidth: the
-default blurred the gap between two clusters of poses (e.g. many incorrect
-poses plus a near-native group), and half the default looked too bumpy.
-Above 5,000 poses per engine, both plots draw a random sample of 5,000 dots
+Violin outlines use 0.75 × seaborn's default smoothing, so separate groups of
+poses stay visible.  Above 5,000 poses per engine, both plots draw a random sample of 5,000 dots
 (the outline, box and n still use every pose) and always draw the rare good
 poses on top; the legend says which.
 
@@ -271,17 +289,6 @@ ppinsight compare data/output/scores/scores_with_dockq.tsv --plot-type funnel
 If DockQ was computed on a separate folder of copied or renamed pose files,
 the DockQ rows get different `pose_id` values and the funnel plot stops
 with an error instead of guessing which poses match.
-
-### The legend overlaps the x-axis title in `quality_bar_chart`
-
-This was fixed in the current release.  The legend is placed below the
-x-axis title as a figure-level legend.  If you are using a custom figure
-size, you can move it:
-
-```python
-fig = quality_bar_chart(df)
-fig.legends[0].set_bbox_to_anchor((0.5, -0.05))
-```
 
 ### How do I add a CAPRI threshold line to a CDF plot?
 
@@ -310,4 +317,4 @@ ax.legend()
 | `ValueError: CAPRI tiers are assigned from DockQ` | Passing engine scores to a CAPRI-only function | Add DockQ with `ppinsight quality` first |
 | `ValueError: No data found for metric 'X'` | Wrong metric name or empty DataFrame | Check `score_type` values with `df["score_type"].unique()` |
 | `ValueError: No shared protein pairs` | Two models have no pairs in common | Check proteinA/proteinB columns match |
-| `ModuleNotFoundError: No module named 'dockq'` | DockQ not installed | `pip install ppinsight[quality]` |
+| `ModuleNotFoundError: No module named 'dockq'` | DockQ not installed | `pip install -e ".[quality]"` |

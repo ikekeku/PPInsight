@@ -208,8 +208,7 @@ def _draw_capri_lines(
 def _soften_violin_bodies(ax) -> None:
     """Make violin fills translucent while keeping their outlines solid.
 
-    Threshold lines drawn behind the bodies then show through, as they did
-    in the ridge plot.
+    Threshold lines drawn behind the bodies then show through.
     """
     from matplotlib.collections import PolyCollection
 

@@ -1,17 +1,10 @@
 # PPInsight End-to-End Tutorial
 
-This tutorial is split into two honest paths:
+This tutorial has two parts:
 
-1. **Real pipeline map** — fetch → dock → collect → compare.
-2. **Prebuilt tutorial-data walkthrough** — explore the precomputed
-    tutorial scores file in `tutorials/all_scores.tsv`.
-
-By the end you will have:
-
-1. A clear map of the real PPInsight pipeline and its intermediate files
-2. A rebuilt tutorial scores file from repo example outputs
-3. Verified compare commands that actually work on the shipped tutorial data
-4. CAPRI quality summaries from the shipped example outputs
+1. **Part 1, the real pipeline:** fetch → dock → collect → compare.
+2. **Part 2, prebuilt scores:** explore `tutorials/all_scores.tsv` without
+   running any docking engine.
 
 ---
 
@@ -25,14 +18,8 @@ pip install -e .
 pip install -e ".[quality]"
 ```
 
-For the prebuilt tutorial-data walkthrough, you do **not** need HADDOCK,
-LightDock, or Rosetta installed because the repo already includes example
-outputs under `examples/`.
-
-For an end-to-end run, install the engine runtimes you plan to
-use. In this environment, `lightdock3_setup.py` and `lightdock3.py` are
-available, but HADDOCK is not, so the examples below distinguish
-verified commands from the intended full workflow.
+Part 2 needs no docking engines: the repo includes example outputs under
+`examples/`. For Part 1, install the engines you plan to use.
 
 ---
 
@@ -77,8 +64,6 @@ ppinsight batch --list-engines
 
 ### Step 1 — Fetch protein data
 
-Verified here with real UniProt accessions:
-
 ```bash
 ppinsight fetch P69905 P68871 \
     --fasta tutorials/fetch_demo.fasta \
@@ -86,18 +71,13 @@ ppinsight fetch P69905 P68871 \
     --pdb-dir data/input
 ```
 
-That command was run in this environment successfully.  It wrote:
+This writes the FASTA and CSV files plus `data/input/P69905.pdb` and
+`data/input/P68871.pdb`. The files are named by accession, so you can use
+the same accessions in `proteinA` and `proteinB`. Each file holds the first
+PDB entry UniProt lists for that protein; check which one with
+`grep -m1 '^HEADER' data/input/P69905.pdb`.
 
-- `tutorials/fetch_demo.fasta`
-- `tutorials/fetch_demo.csv`
-- `data/input/P69905.pdb`
-- `data/input/P68871.pdb`
-
-This step is only to show the fetch-to-pairs handoff. The shipped
-docking walkthrough switches back to the bundled `2UUY` example below.
-
-The fetch step now writes pair-ready accession aliases, so the same
-accessions can be used directly in `proteinA` and `proteinB`.
+The docking steps below use the bundled `2UUY` example instead.
 
 ### Step 2 — Prepare identifiers for docking inputs
 
@@ -134,7 +114,7 @@ When this works, move on to batch mode.
 
 ### Step 3.5 — Batch docking (optional once single-run is validated)
 
-Verified here as a dry-run against the shipped example input PDBs:
+Preview a batch against the bundled example PDBs:
 
 ```bash
 ppinsight batch tutorials/demo_pairs.tsv \
@@ -144,39 +124,9 @@ ppinsight batch tutorials/demo_pairs.tsv \
     -o data/output/scores/batch_results.csv
 ```
 
-In this environment the dry-run completed successfully for the pair
-`2UUY_rec` vs `2UUY_lig`.
-
-That step writes a batch results table plus engine-specific run
-directories. It does not create the unified scores file; `collect` is
-still the next step.
-
-For a real run, remove `--dry-run`.  If you have all engine runtimes
-installed, the intended form is:
-
-```bash
-ppinsight batch data/input/pairs/pairs.csv \
-    --engines lightdock haddock rosetta \
-    --pdb-dir data/input/ \
-    -o data/output/scores/batch_results.csv
-```
-
-Batch-mode defaults used when you do not pass extra engine flags:
-
-| Engine | Defaults in `ppinsight batch` |
-|---|---|
-| LightDock | `steps=10`, `cores=1`, `ANM=enabled`, swarms auto, glowworms auto, scoring uses the LightDock default |
-| HADDOCK | `ncores` follows `--cores` (batch stages HADDOCK runs by default) |
-| Rosetta | Enabled by default in batch mode (requires PyRosetta); defaults are `n_runs=10`, `top_n=20`, `relax=enabled`, `cluster=enabled`, `cluster_top_n=200`, `rmsd_cutoff=4.0`, `auto_filter=enabled`. |
-
-Useful batch controls:
-
-- `--cores N` sets CPU cores for supported runners.
-- `--lightdock-no-anm` runs LightDock rigid-body from the start.
-- `--lightdock-auto-clean-pdb` retries unsupported-residue failures with protein-only cleaned copies.
-
-On known LightDock ANM setup atom-mismatch failures, PPInsight prompts for
-confirmation before retrying that pair with ANM disabled.
+Remove `--dry-run` to run it. Batch writes a results table and engine run
+directories, not a scores file; `collect` is still the next step. For batch
+defaults and flags, see the README's batch section.
 
 ### Step 4 — Collect scores from run directories
 
@@ -184,16 +134,13 @@ confirmation before retrying that pair with ANM disabled.
 pair, pass `--pair`. When you are annotating rows from a parsed pairs
 file, use `--label-file` (legacy alias: `--pairs`) as needed.
 
-Verified here with the shipped LightDock example output:
+Try it on the bundled LightDock output:
 
 ```bash
 ppinsight collect examples/lightdock/simulation \
     --pair 2UUY_rec:2UUY_lig \
-    -o /tmp/ppinsight_lightdock_collect.tsv
+    -o data/output/scores/lightdock_example.tsv
 ```
-
-That command completed successfully in this environment and wrote 200
-rows plus a provenance sidecar.
 
 For your own pair-level run directories the pattern is:
 
@@ -433,10 +380,12 @@ ppinsight compare tutorials/all_scores.tsv --metric dockq --rank
 ## Step 18 — Classify interactions
 
 If your collected scores file includes `label` values (`interaction` /
-`non-interaction`), `--classify` produces a confusion-matrix summary:
+`non-interaction`), `--classify` produces a confusion-matrix summary. Use an
+engine's own score; DockQ is refused because non-binding pairs have no native
+structure:
 
 ```bash
-ppinsight compare data/output/scores/scores.tsv --metric dockq --classify
+ppinsight compare data/output/scores/scores.tsv --metric score --classify
 ```
 
 This is not available on the shipped `tutorials/all_scores.tsv` because
@@ -467,47 +416,7 @@ commands.  Use them as a reference for what to expect.
 
 ---
 
-## Condensed pipeline reference
-
-If you have your own prepared PDB files and all required engine runtimes
-installed, the end-to-end PPInsight sequence is:
-
-```bash
-# 1. Fetch or prepare structures
-ppinsight fetch P69905 P68871 --pdb-dir data/input
-
-# 2. Create a flat pairs file
-ppinsight parse data/input/pairs/my_table.tsv \
-    -o data/input/pairs/pairs.csv --stats
-
-# 3. Run one engine for one pair (recommended first)
-ppinsight lightdock PAIR_A PAIR_B --input-dir data/input/
-
-# 3b. Optional: run many pairs/engines with batch mode
-ppinsight batch data/input/pairs/pairs.csv \
-    --engines lightdock haddock rosetta \
-    --pdb-dir data/input/ \
-    -o data/output/scores/batch_results.csv
-
-# 4. Collect from pair-level run directories (single-engine or batch)
-ppinsight collect data/output/lightdock_runs/PAIR_A_vs_PAIR_B/ \
-    --pair PAIR_A:PAIR_B \
-    -o data/output/scores/scores.tsv
-
-# 5. Compare
-ppinsight compare data/output/scores/scores.tsv --metric dockq
-ppinsight compare data/output/scores/scores.tsv --capri-quality
-ppinsight compare data/output/scores/scores.tsv --metric dockq --rank
-
-# 6. (Optional) Evaluate against a native structure
-ppinsight quality data/output/scores/scores.tsv native.pdb \
-    -o data/output/scores/scores_quality.tsv
-ppinsight quality data/output/lightdock_runs/PAIR_A_vs_PAIR_B/ native.pdb \
-    --engine lightdock \
-    -o quality.tsv
-```
-
-> See `data/README.md` for details on the `data/` directory layout.
+See `data/README.md` for the `data/` directory layout.
 
 ---
 
@@ -516,8 +425,7 @@ ppinsight quality data/output/lightdock_runs/PAIR_A_vs_PAIR_B/ native.pdb \
 | Problem | Solution |
 |---------|----------|
 | `--metric X not found` | Run `--list-metrics` to see available metrics |
-| `--plot-type scatter` errors | Both models must share the same pairs on the same metric |
+| `--plot-type scatter` errors | Both `--models` must have scored the same pairs on the same metric |
 | `--plot-type funnel` says no pose_id matched | Run `ppinsight quality` on the collected scores file, not on a folder of copied or renamed poses |
-| Scatter errors about alignment | Both `--models` must have scored the same pairs |
 | `ModuleNotFoundError: DockQ` | Install with `pip install -e ".[quality]"` |
 | `lightdock` not found | Verify the CLI tools are on `$PATH`, for example: `which lightdock3_setup.py` |

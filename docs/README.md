@@ -1,7 +1,11 @@
 # PPInsight Documentation
 
 This directory contains design notes, operational guidance, and background
-material for PPInsight.
+material for PPInsight. Other pages:
+
+- [FAQ](FAQ.md): setup, plotting, and CAPRI questions.
+- [Scoring evaluation](scoring_evaluation_framework.md): what each engine's score means.
+- [Component spec](component_spec.md) and [use cases](use_cases.md): how the pieces fit together.
 
 ## Contents
 

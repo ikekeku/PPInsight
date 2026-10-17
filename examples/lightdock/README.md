@@ -1,5 +1,5 @@
-This folder contains sample output from the Lightdock simple protein-protein docking tutorial (https://lightdock.org/tutorials/0.9.3/simple_docking) for the purpose of buildling Task #3 of PPInsight.
-'simulation/swarm_0' is a folder containg expected example output files from running the simulation in the tutorial linked above after correctly installing Rosetta (https://github.com/lightdock/lightdock/tree/master?tab=readme-ov-file#3-installation). Some folders/files have been omitted to make navigation simpler (i.e., swarm_(11-19 and 21-181):
+This folder contains sample output from the LightDock simple protein-protein docking tutorial (https://lightdock.org/tutorials/0.9.3/simple_docking). PPInsight's tutorial uses it as example LightDock output.
+'simulation/swarm_0' is a folder containing expected example output files from running the simulation in the tutorial linked above after correctly installing LightDock (https://github.com/lightdock/lightdock/tree/master?tab=readme-ov-file#3-installation). Some folders/files have been omitted to make navigation simpler (i.e., swarm_(11-19 and 21-181):
 
 **The values we want are in the 'gso_X.out' files under 'Scoring'** (where 'X' is the step number):
 > "If the [simulation] run is successful... we will find the output files for each of the independent swarms. In this case since we only simulated 1 swarm, the results will be inside swarm_0. The output files will be named as gso_X.out, being X is the step number.

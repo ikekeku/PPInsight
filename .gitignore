@@ -53,3 +53,16 @@ src/ppinsight.egg-info/
 .pytest_cache/
 .ipynb_checkpoints/
 .ruff_cache/
+
+# Maintainer's own run notes, HPC guides, and job logs (kept local)
+docs/docking_input_provenance.md
+docs/dimeric_benchmarking.md
+docs/hyak_resource_planning.md
+docs/run_haddock_hyak.md
+hyak-*.out
+hyak-*.err
+
+# Course deliverables (kept local)
+docs/functional_spec.md
+docs/PPInsight Final Presentation.pdf
+docs/PPInsight_Technology_Review.pptx

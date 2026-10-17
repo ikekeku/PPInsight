@@ -38,9 +38,8 @@ success criteria.
 - System: Aggregator script
 - Preconditions: model runs completed, output files available
 - Steps:
-  1. Parse model outputs to extract numeric metrics (DockQ, RMSD, Fnat, E-values).
+  1. Parse model outputs to extract each engine's scores (plus HADDOCK's own DockQ, Fnat and RMSDs).
   2. Normalize metric names and write rows to `scores.tsv` with provenance.
-  3. Add entries for unsuccessful runs with an error tag.
 - Outputs: `scores.tsv` or `scores.csv`
 - Success criteria: each row contains required columns and a parsable numeric
   score_value when applicable.
@@ -82,10 +81,10 @@ success criteria.
      `ppinsight compare scores.tsv -m luciferin_score --classify`
      `ppinsight compare scores.tsv -m score --plot-type roc`
   5. Optionally normalise and aggregate for cross-engine comparison:
-     `ppinsight compare scores.tsv -m score --normalize minmax --agg best`
+     `ppinsight compare scores.tsv -m score --normalize rank`
 - Outputs: `pairs.csv`, `batch_results.csv`, `scores.tsv`, confusion-matrix
     tables, ROC plots, and compare-CLI visualisations
 - Success criteria: every pair × engine combination produces a row in
-  `batch_results.csv` with status `success` or a logged error;
+  `batch_results.csv` with status `ok` or `failed` (with a logged error);
   `scores.tsv` contains labelled scores for all successful runs; ROC AUC
   is computable for engines with both interaction and non-interaction pairs.
