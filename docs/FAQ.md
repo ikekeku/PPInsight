@@ -218,6 +218,16 @@ When a file has both, CAPRI tiers (`quality_bar`, `--capri-quality`) use the
 native-referenced value for each pose and fall back to HADDOCK's own value
 only when no native-referenced value exists; the legend says which was used.
 
+### What counts as a docking success?
+
+The usual test is at least one acceptable-or-better pose (DockQ ≥ 0.23) among
+an engine's top 1 or top 10 poses; CAPRI scores each group's top 10 models.
+Use a fixed N rather than a percentage, which would mean very different pose
+counts for different engines.  The top-N plot shows this directly at N = 1
+and N = 10.  Sources: [Koukos et al. 2020](https://researchinformation.umcutrecht.nl/en/publications/an-overview-of-data-driven-haddock-strategies-in-capri-rounds-38-/),
+[CAPRI scoring, PLOS ONE 2016](https://hal.univ-lille.fr/hal-03172949v1/document),
+[PUMBA](https://arxiv.org/pdf/2510.16674).
+
 ### What does the top-N plot show, and how do I read it?
 
 For each engine, it ranks the poses by the engine's own score and plots the
@@ -265,9 +275,19 @@ poses stays visible.  Use `violin` for large pose ensembles, where
 thousands of points would merge into a solid block.
 
 Violin outlines use 0.75 × seaborn's default smoothing, so separate groups of
-poses stay visible.  Above 5,000 poses per engine, both plots draw a random sample of 5,000 dots
-(the outline, box and n still use every pose) and always draw the rare good
-poses on top; the legend says which.
+poses stay visible.  Above 10,000 poses per engine, both plots draw a random
+sample of 10,000 dots; the outline, box and n still use every pose.  A dot that
+touches no other dot gets a thin outline so it stays visible.  For DockQ, the
+numbers on the acceptable line give each engine's count of poses at or above
+0.23, counted from every pose.
+
+### Why does the scatter plot show Spearman ρ, not Pearson r?
+
+Each point is one protein pair, and ρ measures whether two engines rank the
+pairs the same way.  Pearson r assumes a straight-line relationship, which
+DockQ breaks: it is bounded (0–1) and piles up near 0, so a few joint successes
+among many joint failures can inflate r.  Near +1, the engines rank the pairs
+alike; near 0, no agreement; near −1, opposite order.
 
 ### What is the funnel plot for, and why does it not take `--metric`?
 
@@ -277,6 +297,11 @@ one pose, with its DockQ against the native structure on the x-axis and
 the engine's own ranking score on the y-axis (better scores point down).
 Scores and DockQ are matched by `pose_id`, so every point is a real pose.
 Because the axes are fixed to that question, the plot takes no `--metric`.
+
+Each panel also gives Spearman ρ between the engine's ranking and DockQ.
+Positive always means better-scored poses tend to be closer to native, for
+every engine.  Most poses sit near DockQ 0, so read ρ alongside the best pose's
+rank, not instead of it.
 
 To make the input, run `ppinsight quality` on the collected scores file:
 

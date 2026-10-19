@@ -56,6 +56,8 @@ src/ppinsight.egg-info/
 
 # Maintainer's own run notes, HPC guides, and job logs (kept local)
 docs/docking_input_provenance.md
+docs/future_plans.md
+docs/findings.md
 docs/dimeric_benchmarking.md
 docs/hyak_resource_planning.md
 docs/run_haddock_hyak.md

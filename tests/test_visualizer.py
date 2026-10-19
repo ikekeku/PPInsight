@@ -429,11 +429,10 @@ class TestMetricPresentation:
         assert dashed_thresholds == {
             round(threshold, 2) for threshold, _, _ in vis.DOCKQ_CAPRI_THRESHOLDS
         }
-        legend_labels = {text.get_text() for text in fig.legends[0].get_texts()}
-        assert {
-            f"CAPRI {label} ({threshold:.2f})"
-            for threshold, label, _ in vis.DOCKQ_CAPRI_THRESHOLDS
-        }.issubset(legend_labels)
+        legend_labels = [text.get_text() for text in fig.legends[0].get_texts()]
+        for threshold, label, _ in vis.DOCKQ_CAPRI_THRESHOLDS:
+            expected = f"CAPRI {label} ({threshold:.2f})"
+            assert any(text.startswith(expected) for text in legend_labels)
         _plt.close(fig)
 
     def test_strip_plot_draws_every_pose(self, monkeypatch):
@@ -469,12 +468,20 @@ class TestMetricPresentation:
         ax = fig.axes[0]
         tick_labels = [t.get_text() for t in ax.get_xticklabels()]
         assert tick_labels == ["HADDOCK3\n(n = 4)", "RosettaDock\n(n = 4)"]
+        from matplotlib.collections import PathCollection
+
+        def fill_alpha(c):
+            # Outlined (isolated) dots carry their opacity in the RGBA colours.
+            if c.get_alpha() is not None:
+                return c.get_alpha()
+            return c.get_facecolor()[:, 3].max()
+
         strip_points = [
             c for c in ax.collections
-            if len(c.get_offsets()) == 4 and c.get_alpha() is not None
+            if isinstance(c, PathCollection) and len(c.get_offsets()) == 4
         ]
         assert strip_points
-        assert all(c.get_alpha() >= 0.3 for c in strip_points)
+        assert all(fill_alpha(c) >= 0.3 for c in strip_points)
         assert all(c.get_zorder() > 1 for c in strip_points)
         assert fig.legends
         from matplotlib.collections import PolyCollection
@@ -549,6 +556,9 @@ class TestFunnelPlot:
         assert len(panels) == 2
         assert panels[0].get_title().startswith("HADDOCK3")
         assert "best DockQ 0.85 at engine rank 1" in panels[0].get_title()
+        # HADDOCK's score order matches DockQ exactly; LightDock's barely does.
+        assert "Spearman ρ (score vs DockQ) = +1.00" in panels[0].get_title()
+        assert "Spearman ρ (score vs DockQ) = -0.20" in panels[1].get_title()
         assert panels[0].get_xlim() == (0.0, 1.0)
         # LightDock: higher luciferin is better, so the axis is inverted
         # to keep "better" pointing down in every panel.
@@ -654,7 +664,7 @@ class TestReferenceBasedGuards:
 
 
 class TestLargeRuns:
-    def test_strip_draws_capped_subset_but_keeps_best_poses(self, monkeypatch):
+    def test_strip_samples_large_runs_and_counts_acceptable_poses(self, monkeypatch):
         import matplotlib.pyplot as _plt
         import numpy as np
 
@@ -670,13 +680,51 @@ class TestLargeRuns:
         fig = vis.strip_plot(df, metric="quality_dockq")
         ax = fig.axes[0]
         drawn = np.concatenate([c.get_offsets()[:, 1] for c in ax.collections])
-        # A uniform sample of MAX_DRAWN_POSES, plus the rare acceptable pose
-        # if the sample missed it.
-        assert vis.MAX_DRAWN_POSES <= len(drawn) <= vis.MAX_DRAWN_POSES + 1
-        assert drawn.max() == pytest.approx(0.95)
-        assert "5,000 sampled" in ax.get_xticklabels()[0].get_text()
+        # A plain uniform sample: no pose is picked out or added back.
+        assert len(drawn) == vis.MAX_DRAWN_POSES
+        assert f"{vis.MAX_DRAWN_POSES:,} sampled" in ax.get_xticklabels()[0].get_text()
+        # The count uses every pose, including any the sample missed.
+        texts = [t.get_text() for t in ax.texts]
+        assert "1" in texts
         legend_labels = {t.get_text() for t in fig.legends[0].get_texts()}
-        assert any("always drawn" in label for label in legend_labels)
+        assert any("numbers count poses ≥ 0.23" in label for label in legend_labels)
+        assert not any("dot" in label.lower() for label in legend_labels)
+        _plt.close(fig)
+
+    def test_strip_outlines_only_isolated_dots(self, monkeypatch):
+        import matplotlib.pyplot as _plt
+        import numpy as np
+
+        monkeypatch.setattr(_plt, "show", lambda: None)
+        # A dense cloud plus one lone dot.
+        values = np.r_[np.linspace(0.01, 0.02, 500), 0.9]
+        df = pd.DataFrame({
+            "model": ["lightdock"] * len(values),
+            "score_type": ["quality_dockq"] * len(values),
+            "score_value": values,
+        })
+        fig = vis.strip_plot(df, metric="quality_dockq")
+        outlined = [
+            c for c in fig.axes[0].collections
+            if len(c.get_edgecolor()) and c.get_edgecolor()[:, 3].max() > 0
+        ]
+        assert len(outlined) == 1
+        lone_y = np.asarray(outlined[0].get_offsets())[:, 1].tolist()
+        assert lone_y == pytest.approx([0.9])
+        _plt.close(fig)
+
+    def test_violin_counts_acceptable_poses_per_engine(self, monkeypatch):
+        import matplotlib.pyplot as _plt
+
+        monkeypatch.setattr(_plt, "show", lambda: None)
+        df = pd.DataFrame({
+            "model": ["lightdock"] * 4 + ["rosetta"] * 3,
+            "score_type": ["quality_dockq"] * 7,
+            "score_value": [0.1, 0.3, 0.5, 0.05, 0.1, 0.15, 0.2],
+        })
+        fig = vis.violin_plot(df, metric="quality_dockq")
+        texts = [t.get_text() for t in fig.axes[0].texts]
+        assert texts == ["2", "0"]
         _plt.close(fig)
 
 

@@ -85,10 +85,12 @@ MIN_SCATTER_PAIRS = 10
 VIOLIN_BW_ADJUST = 0.75
 
 # Most points drawn per engine in strip and violin plots.  Above this a
-# uniform random sample is drawn (so density stays honest) and rare good
-# poses are overlaid; statistics still use all poses.
-MAX_DRAWN_POSES = 5000
-ALWAYS_DRAWN_BEST = 50
+# uniform random sample is drawn (so density stays honest); statistics and
+# counts still use all poses.
+MAX_DRAWN_POSES = 10000
+
+# Strip-plot dot area (points²), the same for every engine.
+STRIP_DOT_SIZE = 8.0
 
 # Metrics on the CAPRI DockQ scale: HADDOCK's own ``dockq`` and the
 # native-referenced ``quality_dockq`` written by ``ppinsight quality``.
@@ -102,6 +104,10 @@ CAPRI_TIER_COLORS = {
     "medium": "#3182bd",
     "high": "#6a51a3",
 }
+
+# Darker shade of the acceptable green, for the count text drawn on the plot
+# (the threshold line itself keeps the tier colour).
+ACCEPTABLE_TEXT_COLOR = "#006d2c"
 
 DOCKQ_CAPRI_THRESHOLDS = [
     (0.23, "acceptable", CAPRI_TIER_COLORS["acceptable"]),
@@ -181,13 +187,19 @@ def _point_size(n: int) -> float:
     return 4.0
 
 
-def _capri_legend_handles() -> list[Line2D]:
-    """Legend entries for the CAPRI DockQ threshold lines."""
-    return [
-        Line2D([0], [0], color=color, lw=2.0, ls="--",
-               label=f"CAPRI {label} ({threshold:.2f})")
-        for threshold, label, color in DOCKQ_CAPRI_THRESHOLDS
-    ]
+def _capri_legend_handles(count_note: bool = False) -> list[Line2D]:
+    """Legend entries for the CAPRI DockQ threshold lines.
+
+    With *count_note*, the acceptable entry also explains the per-engine
+    counts drawn on that line (see :func:`_draw_acceptable_counts`).
+    """
+    handles = []
+    for threshold, label, color in DOCKQ_CAPRI_THRESHOLDS:
+        text = f"CAPRI {label} ({threshold:.2f})"
+        if count_note and label == "acceptable":
+            text += f"; numbers count poses ≥ {threshold:.2f}"
+        handles.append(Line2D([0], [0], color=color, lw=2.0, ls="--", label=text))
+    return handles
 
 
 def _draw_capri_lines(
@@ -657,7 +669,6 @@ def violin_plot(
     )
     axes = list(axes[0])
     capri_drawn = False
-    highlight_handle = None
 
     for idx, (ax, (panel_title, data)) in enumerate(zip(axes, panels, strict=False)):
         panel_models = sorted(data["model"].unique())
@@ -684,13 +695,13 @@ def violin_plot(
                 hue_order=panel_models, palette=model_palette,
                 dodge=False, legend=False,
             )
-            shown, handle = _draw_deterministic_stripplot(
+            shown = _draw_deterministic_stripplot(
                 ax=ax, data=data, order=panel_models, metric=metric,
             )
-            highlight_handle = handle or highlight_handle
         _set_engine_ticks(ax, data, panel_models, shown)
         _soften_violin_bodies(ax)
         capri_drawn = _draw_capri_lines(ax, metric, zorder=0.5) or capri_drawn
+        _draw_acceptable_counts(ax, data, panel_models, metric)
         _apply_metric_bounds(ax, metric)
         if panel_title:
             ax.set_title(panel_title, fontsize=FACET_TITLE_SIZE)
@@ -705,11 +716,8 @@ def violin_plot(
             f"{metric_name} distribution", models, pair_tuples,
         ),
         xlabel="Docking Engine",
-        legend_handles=(
-            ([highlight_handle] if highlight_handle else [])
-            + (_capri_legend_handles() if capri_drawn else [])
-        ) or None,
-        legend_ncol=2 if highlight_handle else 3,
+        legend_handles=_capri_legend_handles(count_note=True) if capri_drawn else None,
+        legend_ncol=3,
     )
 
     if output:
@@ -849,9 +857,9 @@ def model_agreement_scatter(
     engines rank pairs the same way, points cluster along the diagonal
     — indicating harmonious scoring.
 
-    Pearson *r* is annotated on the plot so users can immediately
-    quantify the agreement.  Points are coloured by label when
-    interaction annotations are available.
+    Spearman ρ is annotated on the plot so users can immediately
+    quantify how similarly the engines rank the pairs.  Points are
+    coloured by label when interaction annotations are available.
 
     Parameters
     ----------
@@ -918,8 +926,8 @@ def model_agreement_scatter(
 
         _warnings.warn(
             f"Only {len(common)} protein pair(s) are shared by {label_x} and "
-            f"{label_y}.  With fewer than {MIN_SCATTER_PAIRS} pairs, Pearson r "
-            "and Spearman ρ can change a lot from a single pair, so treat the "
+            f"{label_y}.  With fewer than {MIN_SCATTER_PAIRS} pairs, Spearman ρ "
+            "can change a lot from a single pair, so treat the "
             "agreement shown as a rough impression, not a measurement.",
             stacklevel=2,
         )
@@ -975,24 +983,24 @@ def model_agreement_scatter(
                           alpha=0.8),
             )
 
-    # Pearson r (linear agreement) and Spearman ρ (same pair ordering)
+    # Spearman ρ: do both engines rank the pairs the same way?  Rank
+    # agreement suits bounded, skewed scores such as DockQ.  Pearson r
+    # (straight-line agreement) is not shown: a pile-up of pairs where both
+    # engines fail near 0 can make it look high when the engines disagree.
     if len(common) >= 2:
-        r = np.corrcoef(x_vals, y_vals)[0, 1]
         rho = np.corrcoef(
             pd.Series(x_vals).rank().values, pd.Series(y_vals).rank().values,
         )[0, 1]
         stats_text = (
-            f"Pearson r = {r:.2f}" if not np.isnan(r) else "Pearson r = n/a"
-        ) + "\n" + (
             f"Spearman ρ = {rho:.2f}" if not np.isnan(rho) else "Spearman ρ = n/a"
         )
     else:
-        stats_text = "r = n/a (< 2 points)"
+        stats_text = "Spearman ρ = n/a (< 2 points)"
     stats_text += f"\nn = {len(common)} pairs"
     if few_pairs:
         stats_text += (
             f"\nWarning: fewer than {MIN_SCATTER_PAIRS} pairs,\n"
-            "correlations are unstable"
+            "ρ is unstable"
         )
     ax.annotate(
         stats_text,
@@ -1313,70 +1321,117 @@ def _engines_title(subject: str, models, pair_tuples) -> str:
     return title
 
 
-def _rare_good_tier(value_arrays, metric: str, limit: int):
-    """CAPRI tier whose poses are rare enough to always draw, if any.
+def _draw_selection(n: int, limit: int):
+    """Indices of the poses to draw, and how many that is.
 
-    For DockQ-scale metrics, returns the lowest ``(threshold, name)`` tier
-    that has at most a fifth of *limit* poses in every engine with more than
-    *limit* poses — acceptable first, then medium, then high.  ``None`` when
-    no engine needs sampling, the metric is not on the DockQ scale, or even
-    high-quality poses are plentiful (the sample then shows them anyway).
+    Every pose when there are at most *limit*; otherwise a fixed-seed
+    uniform random sample of *limit*, so the drawn density matches the real
+    one.  No pose is singled out: for DockQ, :func:`_draw_acceptable_counts`
+    reports how many good poses each engine has.
     """
     import numpy as np
 
+    if n <= limit:
+        return np.arange(n), n
+    sample = np.random.default_rng(0).choice(n, size=limit, replace=False)
+    return np.sort(sample), limit
+
+
+def _y_span(metric: str, values) -> float:
+    """Data range of a metric's y-axis, for converting dot widths."""
+    bounds = get_metric_bounds(metric)
+    if bounds is not None:
+        return bounds[1] - bounds[0]
+    values = pd.to_numeric(pd.Series(values), errors="coerce").dropna()
+    return float(values.max() - values.min()) * 1.1 or 1.0
+
+
+def _isolated_dots(x, y, diameter_pt: float, ax, x_span: float, y_span: float,
+                   max_check: int = 60):
+    """Mask of dots that overlap no other dot.
+
+    Positions are converted to points from the axes size (*x_span* and
+    *y_span* are the axis data ranges), and a dot is isolated when no other
+    dot's centre lies within one dot width.  A dot with more than
+    *max_check* dots within one dot width vertically sits in a dense cloud
+    and is never isolated.
+    """
+    import numpy as np
+
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    n = len(y)
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    box = ax.get_position()
+    px = x / x_span * box.width * ax.figure.get_figwidth() * 72
+    py = y / y_span * box.height * ax.figure.get_figheight() * 72
+    order = np.argsort(py)
+    px, py = px[order], py[order]
+    near_lo = np.searchsorted(py, py - diameter_pt, side="left")
+    near_hi = np.searchsorted(py, py + diameter_pt, side="right")
+    lonely = (near_hi - near_lo - 1) <= max_check
+    # Every vertical neighbour of a non-dense dot is within max_check places
+    # in sorted order, so comparing those offsets checks all close pairs.
+    for k in range(1, min(max_check, n - 1) + 1):
+        close = np.hypot(px[k:] - px[:-k], py[k:] - py[:-k]) < diameter_pt
+        lonely[:-k] &= ~close
+        lonely[k:] &= ~close
+    mask = np.empty(n, dtype=bool)
+    mask[order] = lonely
+    return mask
+
+
+def _scatter_dots(ax, x, y, *, size, color, alpha, x_span, y_span, zorder) -> None:
+    """Scatter one engine's dots; isolated dots get a thin, opaque outline.
+
+    Dense clouds need low opacity to stay readable, which makes a lone dot
+    nearly invisible.  A dot that overlaps nothing (see
+    :func:`_isolated_dots`) keeps the same fill but gets a 1px outline in
+    its own colour, so it stays visible without looking special.
+    """
+    import numpy as np
+
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    rgb = mcolors.to_rgb(color)
+    lonely = _isolated_dots(x, y, float(np.sqrt(size)), ax, x_span, y_span)
+    if (~lonely).any():
+        ax.scatter(
+            x[~lonely], y[~lonely], s=size, color=rgb, alpha=alpha,
+            edgecolors="none", zorder=zorder, clip_on=False,
+            rasterized=int((~lonely).sum()) > 2000,
+        )
+    if lonely.any():
+        ax.scatter(
+            x[lonely], y[lonely], s=size, facecolors=[(*rgb, alpha)],
+            edgecolors=[(*rgb, 0.9)], linewidths=0.5, zorder=zorder,
+            clip_on=False,
+        )
+
+
+def _draw_acceptable_counts(
+    ax, data: pd.DataFrame, order: list[str], metric: str,
+) -> None:
+    """Show each engine's number of poses at or above CAPRI acceptable.
+
+    Shown when *metric* is on the DockQ scale, counted from every pose (not
+    only the drawn sample).  Each number sits on the acceptable line just
+    right of its engine's box, bold, translucent and drawn in front; the
+    legend's acceptable entry says what the numbers mean.
+    """
     if metric.lower() not in DOCKQ_METRICS:
-        return None
-    large = [np.asarray(v, dtype=float) for v in value_arrays if len(v) > limit]
-    if not large:
-        return None
-    for threshold, name, _ in DOCKQ_CAPRI_THRESHOLDS:
-        if all((v >= threshold).sum() <= limit // 5 for v in large):
-            return threshold, name
-    return None
-
-
-def _draw_selection(values, metric: str, limit: int, tier=None):
-    """Choose which poses to draw when an engine has more than *limit*.
-
-    Returns ``(background, highlight, sampled)``.  *sampled* is the size of
-    a fixed-seed uniform random sample, so the drawn density matches the
-    real one.  *highlight* holds rare good poses that a sample would likely
-    miss: every pose in *tier* or better for DockQ-scale metrics (see
-    :func:`_rare_good_tier`), or the :data:`ALWAYS_DRAWN_BEST` best poses for
-    other metrics.  They are drawn only in the highlight style, so
-    *background* is the sample minus *highlight*.  At or below *limit*,
-    every pose is in *background*.
-    """
-    import numpy as np
-
-    values = np.asarray(values, dtype=float)
-    empty = np.array([], dtype=int)
-    if len(values) <= limit:
-        return np.arange(len(values)), empty, len(values)
-    sample = np.sort(
-        np.random.default_rng(0).choice(len(values), size=limit, replace=False)
-    )
-    if metric.lower() in DOCKQ_METRICS:
-        if tier is None:
-            return sample, empty, limit
-        tail = np.flatnonzero(values >= tier[0])
-    else:
-        order = np.argsort(values)
-        if get_metric_direction(metric):
-            order = order[::-1]
-        tail = np.sort(order[:ALWAYS_DRAWN_BEST])
-    return np.setdiff1d(sample, tail), tail, limit
-
-
-def _highlight_legend_handle(metric: str, tier=None) -> Line2D:
-    """Legend entry for the always-drawn rare good poses of large runs."""
-    if tier is not None:
-        text = f"Every pose ≥ CAPRI {tier[1]} ({tier[0]:.2f}), always drawn"
-    else:
-        text = f"Each engine's {ALWAYS_DRAWN_BEST} best poses, always drawn"
-    return Line2D([0], [0], marker="o", linestyle="None", markersize=6,
-                  markerfacecolor=".45", markeredgecolor="black",
-                  markeredgewidth=0.8, label=text)
+        return
+    threshold = DOCKQ_CAPRI_THRESHOLDS[0][0]
+    for pos, model in enumerate(order):
+        values = data.loc[data["model"] == model, "score_value"]
+        count = int((values >= threshold).sum())
+        # Anchored at the box edge (half-width 0.25) with a fixed gap in
+        # points, so narrow panels still leave room between box and number.
+        ax.annotate(
+            f"{count:,}", (pos + 0.25, threshold), xytext=(5, 3),
+            textcoords="offset points", ha="left", va="bottom",
+            fontweight="bold", fontsize=ANNOTATION_FONT_SIZE,
+            color=ACCEPTABLE_TEXT_COLOR, alpha=0.4, zorder=10,
+        )
 
 
 def _draw_deterministic_stripplot(
@@ -1385,65 +1440,41 @@ def _draw_deterministic_stripplot(
     order: list[str],
     metric: str = "",
     color: str = ".15",
-) -> tuple[dict[str, int], Line2D | None]:
+) -> dict[str, int]:
     """Draw a deterministic strip overlay on top of violin bodies.
 
     Points sit above the violin fill so they stay visible; opacity scales
     with the largest per-engine pose count so small runs show every pose
-    and large ensembles do not turn into a solid block.  Above
+    and large ensembles do not turn into a solid block, and isolated dots
+    get a thin outline (see :func:`_scatter_dots`).  Above
     :data:`MAX_DRAWN_POSES` per engine a uniform random sample of dots is
-    drawn, with rare good poses drawn in full on top (see
-    :func:`_draw_selection`); the violin itself still uses every pose.
+    drawn (see :func:`_draw_selection`); the violin itself still uses every
+    pose.
 
-    Returns the number of sampled dots per engine and, when rare good poses
-    were overlaid, the legend entry describing them (else ``None``).
+    Returns the number of dots drawn per engine.
     """
     import numpy as np
 
-    sampled_parts = []
-    highlight_parts = []
+    picks: dict[str, np.ndarray] = {}
     shown: dict[str, int] = {}
-    tier = _rare_good_tier(
-        [g.to_numpy(float) for _, g in data.groupby("model")["score_value"]],
-        metric, MAX_DRAWN_POSES,
-    )
     for model, group in data.groupby("model"):
-        background, highlight, n_sampled = _draw_selection(
-            group["score_value"].to_numpy(), metric, MAX_DRAWN_POSES, tier,
-        )
-        sampled_parts.append(group.iloc[background])
-        highlight_parts.append(group.iloc[highlight])
-        shown[model] = n_sampled
-    sampled = pd.concat(sampled_parts)
-    highlights = pd.concat(highlight_parts)
+        drawn, n_drawn = _draw_selection(len(group), MAX_DRAWN_POSES)
+        picks[model] = group["score_value"].to_numpy(float)[drawn]
+        shown[model] = n_drawn
 
-    rng_state = np.random.get_state()
-    np.random.seed(0)
-    try:
-        sns.stripplot(
-            data=sampled,
-            x="model",
-            y="score_value",
-            size=2.2,
-            alpha=_point_alpha(max(shown.values())),
-            jitter=0.12,
-            ax=ax,
-            color=color,
-            order=order,
-            zorder=3,
-            rasterized=max(shown.values()) > 2000,
+    alpha = _point_alpha(max(shown.values()))
+    y_span = _y_span(metric, data["score_value"])
+    rng = np.random.default_rng(0)
+    for pos, model in enumerate(order):
+        if model not in picks:
+            continue
+        y = picks[model]
+        _scatter_dots(
+            ax, pos + rng.uniform(-0.12, 0.12, len(y)), y,
+            size=2.2 ** 2, color=color, alpha=alpha,
+            x_span=len(order), y_span=y_span, zorder=3,
         )
-        if not highlights.empty:
-            # Rare good poses from a large run: drawn in full on top.
-            sns.stripplot(
-                data=highlights, x="model", y="score_value", size=3.5,
-                alpha=0.9, jitter=0.12, ax=ax, color=color, order=order,
-                zorder=4,
-            )
-    finally:
-        np.random.set_state(rng_state)
-    handle = None if highlights.empty else _highlight_legend_handle(metric, tier)
-    return shown, handle
+    return shown
 
 
 def _set_engine_ticks(
@@ -2008,11 +2039,16 @@ def strip_plot(
     CAPRI tier thresholds are drawn when *metric* is on the DockQ scale, and
     bounded metrics always span their full range (DockQ: 0 to 1).
 
+    Every engine's dots are the same size.  Opacity drops as an engine's dot
+    count grows, so dense clouds stay readable, and a dot that overlaps no
+    other gets a thin outline so it stays visible (see :func:`_scatter_dots`).
+
     Very large runs (more than :data:`MAX_DRAWN_POSES` poses for an engine)
     draw a fixed-seed uniform random sample of that size, so the dot
-    density stays true, and overlay every rare good pose in an outlined
-    style (see :func:`_draw_selection`).  The box and the pose count still
-    use every pose, and the tick label says how many dots were sampled.
+    density stays true (see :func:`_draw_selection`).  The box, the pose
+    count and, for DockQ, the count of poses at or above CAPRI acceptable
+    (shown on that line beside each box) still use every pose; the tick label says
+    how many dots were sampled.
 
     When the data contains **≥ 2 protein pairs**, each pair gets its own
     side-by-side panel so poses from different targets are never pooled.
@@ -2063,12 +2099,7 @@ def strip_plot(
     axes = list(axes[0])
     rng = np.random.default_rng(0)
     capri_drawn = False
-    highlighted = False
-    tier = _rare_good_tier(
-        [g.to_numpy(float) for _, data in panels
-         for _, g in data.groupby("model")["score_value"]],
-        metric, MAX_DRAWN_POSES,
-    )
+    y_span = _y_span(metric, df["score_value"])
 
     for idx, (ax, (panel_title, data)) in enumerate(zip(axes, panels, strict=False)):
         panel_models = [m for m in models if m in set(data["model"])]
@@ -2077,27 +2108,14 @@ def strip_plot(
         tick_labels = []
         for pos, model in zip(positions, panel_models, strict=False):
             vals = data.loc[data["model"] == model, "score_value"].to_numpy(float)
-            background, highlight, sampled = _draw_selection(
-                vals, metric, MAX_DRAWN_POSES, tier,
-            )
-            drawn = vals[background]
-            ax.scatter(
-                pos + rng.uniform(-0.18, 0.18, len(drawn)), drawn,
-                s=_point_size(len(drawn)),
-                color=model_palette[model],
+            drawn_idx, sampled = _draw_selection(len(vals), MAX_DRAWN_POSES)
+            drawn = vals[drawn_idx]
+            _scatter_dots(
+                ax, pos + rng.uniform(-0.18, 0.18, len(drawn)), drawn,
+                size=STRIP_DOT_SIZE, color=model_palette[model],
                 alpha=_point_alpha(len(drawn)),
-                edgecolors="none",
-                zorder=2,
-                clip_on=False,
-                rasterized=len(drawn) > 2000,
+                x_span=len(panel_models) + 0.2, y_span=y_span, zorder=2,
             )
-            if len(highlight):
-                highlighted = True
-                ax.scatter(
-                    pos + rng.uniform(-0.18, 0.18, len(highlight)), vals[highlight],
-                    s=18, color=model_palette[model], alpha=0.9,
-                    edgecolors="black", linewidths=0.5, zorder=4, clip_on=False,
-                )
             box_data.append(vals)
             tick_labels.append(_engine_tick_label(model, len(vals), sampled))
         ax.boxplot(
@@ -2113,6 +2131,7 @@ def strip_plot(
             zorder=3,
         )
         capri_drawn = _draw_capri_lines(ax, metric) or capri_drawn
+        _draw_acceptable_counts(ax, data, panel_models, metric)
         ax.set_xticks(positions)
         ax.set_xticklabels(tick_labels)
         ax.set_xlim(-0.6, len(panel_models) - 0.4)
@@ -2125,16 +2144,11 @@ def strip_plot(
         sns.despine(ax=ax)
 
     legend_handles = [
-        Line2D([0], [0], marker="o", linestyle="None", markersize=6,
-               markerfacecolor=".45", markeredgecolor="none",
-               label="One dot = one pose"),
         Line2D([0], [0], color="#111111", lw=2.0,
                label="Box: median and IQR (whiskers 1.5 × IQR)"),
     ]
-    if highlighted:
-        legend_handles.append(_highlight_legend_handle(metric, tier))
     if capri_drawn:
-        legend_handles += _capri_legend_handles()
+        legend_handles += _capri_legend_handles(count_note=True)
 
     _finish_figure(
         fig, axes,
@@ -2214,8 +2228,10 @@ def funnel_plot(
     The y-axis is oriented so the engine's preferred direction is always
     down.  A scoring function that recognises near-native poses produces a
     funnel: the best-scored poses (bottom) sit at high DockQ (right).  Each
-    panel reports how many poses were evaluated, the best DockQ, and that
-    pose's rank by the engine's own score.
+    panel reports how many poses were evaluated, the best DockQ, that pose's
+    rank by the engine's own score, and Spearman ρ between that rank and
+    DockQ, signed so positive always means better-scored poses tend to have
+    higher DockQ, whichever direction the engine's score runs.
 
     This plot deliberately takes no metric argument.  It is not a general
     metric-versus-metric scatter: it always pairs an engine's own score
@@ -2302,11 +2318,19 @@ def funnel_plot(
         # Plain words: an arrow glyph would rotate with the vertical label.
         ax.set_ylabel(f"{get_metric_display_name(score_type)} (best at bottom)")
         poses_ranked = int(sub["poses_ranked"].iloc[0])
+        # "of N ranked" only when DockQ covers a subset of the ranked poses.
+        n_text = f"n = {len(sub):,}" + (
+            f" of {poses_ranked:,} ranked" if len(sub) < poses_ranked else ""
+        )
+        # Spearman ρ, oriented so positive means better-ranked poses tend to
+        # have higher DockQ (engine_rank 1 is the engine's best score).
+        rho = -sub["engine_rank"].rank().corr(sub["DockQ"].rank())
+        rho_text = "n/a" if pd.isna(rho) else f"{rho:+.2f}"
         ax.set_title(
-            f"{_engine_label(model)}\n"
-            f"n = {len(sub):,} of {poses_ranked:,} ranked poses\n"
+            f"{_engine_label(model)} ({n_text})\n"
             f"best DockQ {best['DockQ']:.2f} at engine rank "
-            f"{int(best['engine_rank'])}",
+            f"{int(best['engine_rank'])}\n"
+            f"Spearman ρ (score vs DockQ) = {rho_text}",
             fontsize=FACET_TITLE_SIZE - 1,
         )
         ax.grid(True, color=".92", linewidth=0.6)
@@ -3146,7 +3170,7 @@ def _print_plot_guide(scores_df: pd.DataFrame) -> None:
         rows.append((
             "scatter",
             "⚠️  limited",
-            f"Only {len(shared_pairs)} shared pair(s); correlations are "
+            f"Only {len(shared_pairs)} shared pair(s); Spearman ρ is "
             f"unstable below {MIN_SCATTER_PAIRS}.  The plot still draws, "
             "with a warning.",
         ))
@@ -3704,10 +3728,10 @@ def main(argv=None):
             "haddock rosetta; display names such as HADDOCK3 also work).  "
             "Each protein pair becomes one point: x = model A's mean score "
             "for that pair, y = model B's.  Points along the diagonal mean "
-            "the engines agree.  Pearson r and Spearman ρ are annotated.  "
-            "With fewer than 10 shared pairs the plot still draws, but a "
-            "warning is printed and shown on the figure because the "
-            "correlations are unstable."
+            "the engines agree.  Spearman ρ (do both engines rank the pairs "
+            "the same way?) is annotated.  With fewer than 10 shared pairs "
+            "the plot still draws, but a warning is printed and shown on the "
+            "figure because ρ is unstable."
         ),
     )
     parser.add_argument(
